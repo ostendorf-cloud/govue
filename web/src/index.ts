@@ -6,9 +6,15 @@
  * that it did not ask for.
  *
  * No component exists yet. This foundation is the token contract, the theme
- * files and the composable that switches between them; the Wk* components are
- * built on it one at a time.
+ * files, the composable that switches between them and the API client; the
+ * Wk* components are built on it one at a time.
  */
 
 export { themeNames, useTheme } from './composables/useTheme'
 export type { ColorMode, ThemeName, ThemeOptions, ThemeState } from './composables/useTheme'
+
+// The API client, which is the only place an app calls fetch.
+export { createClient } from './api/client'
+export type { ApiClient, ClientOptions, RequestOptions } from './api/client'
+export { ApiError, ErrorCode, isApiError } from './api/errors'
+export type { ApiErrorPayload, ErrorCodeValue } from './api/errors'
