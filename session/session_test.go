@@ -487,6 +487,50 @@ func TestRotateIssuesANewID(t *testing.T) {
 	}
 }
 
+func TestRotateRefusesASessionTheStoreNoLongerHolds(t *testing.T) {
+	f := newFixture(t, nil)
+	// The value a handler read a moment ago, before the account was disabled.
+	stale, _ := f.login(t, "u1")
+
+	if err := f.manager.EndAll(context.Background(), "u1"); err != nil {
+		t.Fatalf("EndAll: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	rotated, err := f.manager.Rotate(context.Background(), rec, stale)
+	if !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("Rotate = %v, want an error wrapping ErrNotFound", err)
+	}
+	if rotated.ID != "" {
+		t.Errorf("session = %+v, want the zero value", rotated)
+	}
+	// Nothing was written, so the end-all stands.
+	if f.store.Len() != 0 {
+		t.Errorf("the store holds %d sessions, want none after the end-all", f.store.Len())
+	}
+	if cookies := rec.Result().Cookies(); len(cookies) != 0 {
+		t.Errorf("cookies = %+v, want none", cookies)
+	}
+	if _, ok := f.manager.Read(context.Background(), withCookies(rec)); ok {
+		t.Error("the ended session came back")
+	}
+}
+
+func TestRotateRefusesAnExpiredSession(t *testing.T) {
+	f := newFixture(t, func(cfg *session.Config) {
+		cfg.Idle = time.Hour
+		cfg.Lifetime = time.Hour
+	})
+	started, _ := f.login(t, "u1")
+
+	// At the absolute expiry the store no longer hands the session out, so a
+	// rotation cannot write it back either.
+	f.now = f.now.Add(time.Hour)
+	if _, err := f.manager.Rotate(context.Background(), httptest.NewRecorder(), started); !errors.Is(err, session.ErrNotFound) {
+		t.Errorf("Rotate = %v, want an error wrapping ErrNotFound", err)
+	}
+}
+
 func TestRotateSetsTheCookieOnlyOnceTheOldIDIsGone(t *testing.T) {
 	clock := func() time.Time { return start }
 	store := &undeletableStore{MemoryStore: session.NewMemoryStore(clock)}
@@ -536,7 +580,7 @@ func TestRotateDoesNotExtendTheLifetime(t *testing.T) {
 	// Rotating every half hour would reset the absolute expiry if the expiry
 	// were recomputed, and the session would then never end.
 	current := started
-	for range 5 {
+	for range 3 {
 		f.now = f.now.Add(30 * time.Minute)
 		rec := httptest.NewRecorder()
 		rotated, err := f.manager.Rotate(context.Background(), rec, current)
@@ -553,10 +597,17 @@ func TestRotateDoesNotExtendTheLifetime(t *testing.T) {
 
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 		req.AddCookie(&http.Cookie{Name: session.DefaultCookieName, Value: rotated.ID})
-		_, ok := f.manager.Read(context.Background(), req)
-		if want := f.now.Before(started.ExpiresAt); ok != want {
-			t.Fatalf("at %s the session is %t, want %t", f.now, ok, want)
+		if _, ok := f.manager.Read(context.Background(), req); !ok {
+			t.Fatalf("at %s the session had already ended", f.now)
 		}
+	}
+
+	// Two hours in, the session is over however often it was rotated.
+	f.now = f.now.Add(30 * time.Minute)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: session.DefaultCookieName, Value: current.ID})
+	if _, ok := f.manager.Read(context.Background(), req); ok {
+		t.Errorf("at %s the session outlived its lifetime", f.now)
 	}
 }
 

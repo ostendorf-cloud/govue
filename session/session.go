@@ -240,13 +240,26 @@ func (m *Manager) Start(ctx context.Context, w http.ResponseWriter, s Session) (
 //
 // The absolute expiry and the issue time do not move, so rotating is not a way
 // to extend a session past its lifetime.
+//
+// The session has to still exist: the store is asked for the current id first,
+// and a rotation of an id it no longer holds is refused with an error wrapping
+// [ErrNotFound]. Without that, a caller holding a [Session] value read before a
+// [Manager.EndAll] would write it back and undo the end, which is the one thing
+// a disabled account must not survive. [Manager.Start] is deliberately exempt:
+// a fresh login writes whatever the authentication just established.
 func (m *Manager) Rotate(ctx context.Context, w http.ResponseWriter, s Session) (Session, error) {
+	previous := s.ID
+	if previous != "" {
+		if _, err := m.cfg.Store.Get(ctx, previous); err != nil {
+			return Session{}, fmt.Errorf("session: rotate: %w", err)
+		}
+	}
+
 	id, err := NewID()
 	if err != nil {
 		return Session{}, err
 	}
 
-	previous := s.ID
 	s.ID = id
 	s.LastSeen = m.cfg.Now().UTC()
 
