@@ -65,9 +65,8 @@ task check
 `task setup` installs the pinned toolchain through `mise`. `task check` runs every check one
 after another; `task --list` shows one target per check, and CI runs one job per target.
 
-The Go checks that need at least one package to analyse, `go vet`, `golangci-lint run` and
-`go test`, are not wired yet: all three fail on a module without a single `.go` file. The pull
-request adding the first package adds them.
+`task check` also runs `go vet`, `golangci-lint run` and `go test -race` now that the first
+package exists.
 
 ## Releasing
 
