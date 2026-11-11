@@ -77,6 +77,17 @@ const { theme, mode, resolvedMode, setTheme, setMode, cycleMode } = useTheme({ t
 The choice is persisted, so it survives a reload, and it wins over the system setting in both
 directions. No component exists yet; they are built on this foundation one at a time.
 
+An app also gets a typed client for the Go `api` package's JSON error shape. It sends the session
+cookie, attaches the CSRF token to every unsafe method and turns a refusal, a timeout or a lost
+connection into one `ApiError`:
+
+```ts
+import { createClient } from '@ostendorf-cloud/web-kit'
+
+const client = createClient({ csrfToken: () => csrf.value })
+const things = await client.get<Thing[]>('/things')
+```
+
 ## Configuration
 
 Every package takes its settings as a struct and applies a documented default when a field is
