@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.app.json",
+  // The tests plus the sources they import: a project has to list every file it
+  // pulls in, so this one checks the whole package with Node types added.
+  "include": ["env.d.ts", "src/**/*", "src/**/*.vue", "vitest.setup.ts"],
+  "exclude": [],
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.vitest.tsbuildinfo",
+    "types": ["node"],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
+}
