@@ -1,0 +1,64 @@
+version: "3"
+
+# The Go checks that need at least one package to analyse are not here yet:
+# go vet, golangci-lint run and go test all fail on a module without a single
+# .go file. The pull request that adds the first package adds lint:vet,
+# lint:golangci and test:go back, together with one CI job each.
+
+tasks:
+  setup:
+    desc: Install the pinned toolchain
+    cmds:
+      - mise trust
+      - mise install
+
+  lint:fmt:
+    desc: Go format check through golangci-lint
+    cmds:
+      - golangci-lint fmt --diff
+
+  lint:golangci-config:
+    desc: golangci-lint configuration check
+    cmds:
+      - golangci-lint config verify
+
+  lint:markdown:
+    desc: Markdown lint
+    cmds:
+      - markdownlint-cli2 "**/*.md"
+
+  lint:yaml:
+    desc: YAML lint
+    cmds:
+      - yamllint .
+
+  lint:actions:
+    desc: GitHub Actions workflow lint
+    cmds:
+      - actionlint
+
+  lint:secrets:
+    desc: Secret scan over the git history
+    cmds:
+      - gitleaks git --no-banner --redact
+
+  build:
+    desc: Compile every package
+    cmds:
+      - go build ./...
+
+  check:
+    desc: Every check, one after another
+    cmds:
+      - task: lint:fmt
+      - task: lint:golangci-config
+      - task: lint:markdown
+      - task: lint:yaml
+      - task: lint:actions
+      - task: lint:secrets
+      - task: build
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - golangci-lint fmt

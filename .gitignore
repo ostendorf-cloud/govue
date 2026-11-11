@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Agents
+.claude/settings.local.json
+.claude/.cc-writes/
+.worktrees/
+
+# Go
+*.exe
+*.test
+*.out
+*.prof
+coverage.out
+bin/
+
+# Node, for the web/ package
+node_modules/
+dist/
+coverage/
+*.log
+*.tsbuildinfo
+.eslintcache
+
+# pnpm puts its store inside the project when the global one is not writable,
+# which is what a sandboxed run does.
+.pnpm-store/
