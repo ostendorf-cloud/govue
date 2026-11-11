@@ -16,10 +16,13 @@ repeated here.
   a package.
 - `web/` holds the token contract, the example themes, the `useTheme` composable, the overlay
   and feedback components (`WkDialog`, `WkConfirmDialog`, `WkToastHost`, `WkEmptyState`,
-  `WkErrorState`) with `useToasts`, and the form input components (`WkField`, `WkInput`,
+  `WkErrorState`) with `useToasts`, the form input components (`WkField`, `WkInput`,
   `WkSelect`, `WkCheckbox`, `WkSwitch`, `WkTextarea`, `WkButton`) with `useForm`, and the layout
   components (`WkPage`, `WkHeader`, `WkFooter`, `WkNav`, `WkSkipLink`, `WkCard`, `WkBadge`,
   `WkSkeleton`).
+- `web/` also holds a theme generator (`web/src/theme/`, run through
+  `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
+  colours, never committed here.
 - No Go package exists yet: each one is its own issue.
 
 ## Commands

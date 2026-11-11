@@ -113,6 +113,55 @@ const client = createClient({ csrfToken: () => csrf.value })
 const things = await client.get<Thing[]>('/things')
 ```
 
+## Generating a theme
+
+A consumer with no design background can still get a full, accessible theme: the `web/` package
+ships a generator that turns a handful of seed colours into a complete `base.css`-shaped theme
+file, validated against the same WCAG 2.2 AA check `contrast.test.ts` runs on every theme in this
+repository.
+
+The generator's code is public and lives here. A consumer's own seed colours and the CSS file the
+generator produces for them are not: they are never committed to web-kit. They belong in the
+consumer's own repository, imported next to `base.css` exactly like a hand-authored theme.
+
+A seed configuration is a small JSON file. `neutral` and `accent` are required; the four semantic
+colours are optional and default to generic hues already documented in `base.css`:
+
+```json
+{
+  "name": "acme",
+  "seeds": {
+    "neutral": "#51637a",
+    "accent": "#d4863a"
+  }
+}
+```
+
+Running it means checking out web-kit at the version the consumer depends on, installing `web/`'s
+dependencies, and running the generator against that file:
+
+```sh
+git clone https://github.com/ostendorf-cloud/web-kit
+cd web-kit
+git checkout v0.1.0
+cd web
+pnpm install
+pnpm theme:generate -- --config seeds.json --out theme.css
+```
+
+The command prints the theme's name and the output path, and any warning about the seed colours
+themselves, for instance an accent too close in hue to the neutral ramp to read as an accent. A
+seed combination that cannot clear WCAG 2.2 AA is rejected with the failing pairs named, and no
+file is written.
+
+`theme.css` then moves into the consumer's own repository and is imported the same way `sample.css`
+is above:
+
+```css
+@import '@ostendorf-cloud/web-kit/styles.css';
+@import './theme.css';
+```
+
 ## Configuration
 
 Every package takes its settings as a struct and applies a documented default when a field is

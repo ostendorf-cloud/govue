@@ -175,11 +175,11 @@ it states intent, not a description of what is there.
   ever does, stays open until a second consumer exists and the two agree on one. Next step: the
   first application that needs more than one replica writes its own and reports what the
   interface made awkward.
-- A theme generator. A small public tool that derives a full accessible light and dark role
-  palette from a handful of seed colours, OKLCH being the obvious basis, validated by the same
-  contrast test. The generator would be public here; a consumer's seed configuration and the CSS
-  it produces stay in the consumer's own repository. Next step: its own issue, not part of the
-  first theming work.
+- A theme generator. Done: `web/src/theme/` derives a full accessible light and dark role palette
+  from a handful of seed colours in OKLCH, re-verified against the same `contrast.ts` the shipped
+  themes are checked with, and `web/scripts/generate-theme.ts` is the CLI entry point. The
+  generator's code is public here; a consumer's seed configuration and the CSS it produces stay in
+  the consumer's own repository, as before.
 - End-to-end tests. jsdom cannot do focus trapping, an inert background or a real Escape on a
   modal. Whether a browser runner is worth it here, or belongs to the consuming application, is
   open until the first component with real focus behaviour lands.
