@@ -23,7 +23,8 @@
     "typecheck": "vue-tsc --build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "vite build"
+    "build": "vite build",
+    "theme:generate": "node scripts/generate-theme.ts"
   },
   "peerDependencies": {
     "tailwindcss": "^4.1.0",
