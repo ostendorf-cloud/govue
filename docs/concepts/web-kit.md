@@ -144,9 +144,12 @@ it states intent, not a description of what is there.
 
 ## Open questions
 
-- A shared session store. The in-memory store is correct for one replica only. Which backend,
-  and whether it ships here or in the first application that needs it, is open until a second
-  consumer exists. Next step: decide in the `session` issue.
+- A shared session store. The in-memory store is correct for one replica only, and the `session`
+  issue settled that nothing else ships here for now: `session.Store` is four methods an
+  application implements against whatever it already runs. Which backend would ship here, if any
+  ever does, stays open until a second consumer exists and the two agree on one. Next step: the
+  first application that needs more than one replica writes its own and reports what the
+  interface made awkward.
 - A theme generator. A small public tool that derives a full accessible light and dark role
   palette from a handful of seed colours, OKLCH being the obvious basis, validated by the same
   contrast test. The generator would be public here; a consumer's seed configuration and the CSS
