@@ -250,17 +250,21 @@ func (m *Manager) Rotate(ctx context.Context, w http.ResponseWriter, s Session) 
 	s.ID = id
 	s.LastSeen = m.cfg.Now().UTC()
 
+	// The new session is saved first, so a failed write leaves the old one
+	// intact rather than destroying the login. The old id is dropped next, and
+	// only then is the new one promised to the client: a cookie set in between
+	// would mean handing out a second valid credential before knowing the first
+	// one is gone, and it buys nothing, because http.SetCookie only writes a
+	// header and nothing reaches the client until the handler returns.
 	if err := m.cfg.Store.Save(ctx, s); err != nil {
 		return Session{}, fmt.Errorf("session: save: %w", err)
 	}
-	// The cookie is set before the old id is dropped. The other order leaves a
-	// client holding an id that is already gone if the response is cut short.
-	m.setCookie(w, s)
 	if previous != "" && previous != s.ID {
 		if err := m.cfg.Store.Delete(ctx, previous); err != nil {
 			return s, fmt.Errorf("session: delete the previous id: %w", err)
 		}
 	}
+	m.setCookie(w, s)
 	return s, nil
 }
 

@@ -487,6 +487,45 @@ func TestRotateIssuesANewID(t *testing.T) {
 	}
 }
 
+func TestRotateSetsTheCookieOnlyOnceTheOldIDIsGone(t *testing.T) {
+	clock := func() time.Time { return start }
+	store := &undeletableStore{MemoryStore: session.NewMemoryStore(clock)}
+	manager, err := session.New(session.Config{Store: store, Now: clock})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	started, err := manager.Start(context.Background(), httptest.NewRecorder(), session.Session{Subject: "u1"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	store.refuseDelete = true
+
+	rec := httptest.NewRecorder()
+	rotated, err := manager.Rotate(context.Background(), rec, started)
+	if err == nil {
+		t.Fatal("a rotation whose delete failed reported success")
+	}
+
+	// Nothing is promised to the client while two ids are still valid, so the
+	// caller can fail the request instead of having handed out a credential it
+	// cannot withdraw.
+	if cookies := rec.Result().Cookies(); len(cookies) != 0 {
+		t.Errorf("cookies = %+v, want none after a failed rotation", cookies)
+	}
+	// The client keeps the cookie it already had, and that session is intact.
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: session.DefaultCookieName, Value: started.ID})
+	if _, ok := manager.Read(context.Background(), req); !ok {
+		t.Error("the failed rotation left the caller without a session")
+	}
+	// The new id is in the store, which is what saving first buys, and the
+	// caller has it in the returned session to clean up or retry with.
+	if rotated.ID == started.ID {
+		t.Error("the returned session does not carry the new id")
+	}
+}
+
 func TestRotateDoesNotExtendTheLifetime(t *testing.T) {
 	f := newFixture(t, func(cfg *session.Config) {
 		cfg.Idle = time.Hour
@@ -717,4 +756,20 @@ func (s *readOnlyStore) DeleteSubject(ctx context.Context, subject string) error
 		return errStore
 	}
 	return s.inner.DeleteSubject(ctx, subject)
+}
+
+// undeletableStore refuses Delete once refuseDelete is set, standing in for a
+// store that takes a write and then cannot be reached for the delete that
+// follows it.
+type undeletableStore struct {
+	*session.MemoryStore
+
+	refuseDelete bool
+}
+
+func (s *undeletableStore) Delete(ctx context.Context, id string) error {
+	if s.refuseDelete {
+		return errStore
+	}
+	return s.MemoryStore.Delete(ctx, id)
 }
