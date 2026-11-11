@@ -100,18 +100,22 @@ function round(value: number): number {
   return Math.round(value * 100) / 100
 }
 
-/** failures lists the pairs of one palette that stay under the minimum. */
+/** failures lists the pairs of one palette that stay under the minimum. A pair
+ *  with a token the palette never declares is reported as such: the ratio
+ *  cannot be computed, and saying which token is missing beats a TypeError. */
 function failures(
   palette: Palette,
   pairs: Array<[fg: string, bg: string]>,
   minimum: number,
 ): string[] {
-  return pairs
-    .filter(([fg, bg]) => ratio(palette[fg], palette[bg]) < minimum)
-    .map(
-      ([fg, bg]) =>
-        `${fg} on ${bg} is ${round(ratio(palette[fg], palette[bg]))}:1, want ${minimum}:1`,
-    )
+  return pairs.flatMap(([fg, bg]) => {
+    const missing = [fg, bg].filter((token) => palette[token] === undefined)
+    if (missing.length > 0) {
+      return [`${fg} on ${bg} cannot be checked, ${missing.join(' and ')} is not defined`]
+    }
+    const value = ratio(palette[fg], palette[bg])
+    return value < minimum ? [`${fg} on ${bg} is ${round(value)}:1, want ${minimum}:1`] : []
+  })
 }
 
 /** themeFiles is every theme shipped with the package, found rather than
@@ -154,6 +158,15 @@ describe('the check itself fails a bad palette', () => {
 
   it('passes the same pair once it is dark enough', () => {
     expect(failures({ text: '#595959', bg: '#ffffff' }, [['text', 'bg']], TEXT_MINIMUM)).toEqual([])
+  })
+
+  it('names the token a palette is missing instead of throwing', () => {
+    expect(failures({ bg: '#ffffff' }, [['text', 'bg']], TEXT_MINIMUM)).toEqual([
+      'text on bg cannot be checked, text is not defined',
+    ])
+    expect(failures({}, [['text', 'bg']], TEXT_MINIMUM)).toEqual([
+      'text on bg cannot be checked, text and bg is not defined',
+    ])
   })
 })
 

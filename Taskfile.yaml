@@ -62,6 +62,9 @@ tasks:
   web:deps:
     desc: Install the web/ dependencies from the lockfile
     dir: web
+    # Five targets depend on this one, so check would otherwise install five
+    # times in a row. Once per task run is enough.
+    run: once
     cmds:
       - pnpm install --frozen-lockfile
 

@@ -3,6 +3,8 @@ import { basename, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { themeNames } from '../composables/useTheme'
+
 const stylesDir = resolve(import.meta.dirname, '.')
 const themesDir = resolve(stylesDir, 'themes')
 const componentsDir = resolve(stylesDir, '..', 'components')
@@ -233,6 +235,19 @@ describe('the token contract', () => {
     const base = colourTokens(resolve(stylesDir, 'base.css'))
     const theme = colourTokens(resolve(themesDir, name))
     expect([...base].filter((token) => !theme.has(token))).toEqual([])
+  })
+
+  // themeNames cannot discover the directory itself: it ships in the browser
+  // bundle, where there is no filesystem. This case is what keeps the one list
+  // a consumer reads in step with the files on disk. Its order is the order an
+  // app would offer the themes in rather than the directory order, so the two
+  // are compared as sets.
+  it('lists every theme on disk in themeNames', () => {
+    expect([...themeNames].sort()).toEqual(
+      themeFiles()
+        .map((name) => name.replace(/\.css$/, ''))
+        .sort(),
+    )
   })
 
   it.each(themeFiles())('%s invents no role of its own', (name) => {
