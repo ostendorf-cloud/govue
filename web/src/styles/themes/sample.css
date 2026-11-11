@@ -1,0 +1,49 @@
+/*
+ * sample: the example theme.
+ *
+ * A cool neutral with a violet accent. It exists to show what filling the
+ * contract looks like and to give an app with no design of its own something
+ * readable to start from. The values are arbitrary and belong to no product:
+ * a real brand's palette is authored in that brand's own repository against
+ * this same contract, never committed here.
+ */
+
+:root[data-theme='sample'] {
+  --color-bg: light-dark(#f7f7fb, #131318);
+  --color-bg-subtle: light-dark(#eeeef5, #1a1a21);
+  --color-surface: light-dark(#ffffff, #1e1e26);
+  --color-surface-hover: light-dark(#f2f2f8, #26262f);
+  --color-overlay: light-dark(rgb(23 23 35 / 0.45), rgb(0 0 0 / 0.65));
+
+  --color-border: light-dark(#e3e3ec, #2f2f3a);
+  --color-border-strong: light-dark(#86869a, #70708a);
+
+  --color-text: light-dark(#1a1a24, #ebebf2);
+  --color-text-muted: light-dark(#53536a, #a7a7b8);
+  --color-text-faint: light-dark(#66667d, #8f8fa2);
+
+  --color-accent: light-dark(#6648c8, #a593ea);
+  --color-accent-text: light-dark(#5a3cb8, #bcaef2);
+  --color-accent-strong: light-dark(#5a3cb8, #c6baf5);
+  --color-accent-strong-hover: light-dark(#492f96, #d6cef8);
+  --color-accent-on: light-dark(#ffffff, #17131f);
+  --color-accent-subtle: light-dark(#edeafa, #26222f);
+  --color-focus: light-dark(#5a3cb8, #a593ea);
+
+  --color-success-text: light-dark(#116335, #68d79b);
+  --color-success-subtle: light-dark(#e5f2ea, #142620);
+  --color-warning-text: light-dark(#754603, #efb257);
+  --color-warning-subtle: light-dark(#faefda, #2a2013);
+  --color-danger-text: light-dark(#9c1a26, #ff939d);
+  --color-danger-subtle: light-dark(#fae8ea, #2b1619);
+  --color-danger-strong: light-dark(#9c1a26, #ff939d);
+  --color-danger-strong-hover: light-dark(#7f141e, #ffadb5);
+  --color-danger-on: light-dark(#ffffff, #2b1619);
+  --color-info-text: light-dark(#1b4a86, #8ac0ff);
+  --color-info-subtle: light-dark(#e6effa, #141f2e);
+
+  --shadow-card: 0 1px 2px light-dark(rgb(23 23 35 / 0.07), rgb(0 0 0 / 0.5));
+  --shadow-dialog:
+    0 10px 30px -12px light-dark(rgb(23 23 35 / 0.26), rgb(0 0 0 / 0.75)),
+    0 2px 6px light-dark(rgb(23 23 35 / 0.09), rgb(0 0 0 / 0.5));
+}

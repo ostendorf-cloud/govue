@@ -1,0 +1,197 @@
+/*
+ * The token contract every theme fills, and the base layer the components
+ * expect. Import this once, then at most one theme file.
+ *
+ * Tokens are named by role, never by value: --color-accent, not --color-cyan.
+ * A component uses a role, so changing a theme changes the look and nothing
+ * else.
+ *
+ * Light and dark come from one declaration per token with light-dark(), so the
+ * two values of a role sit next to each other and cannot drift apart. The
+ * system setting decides unless an app sets data-mode on the root element,
+ * which is what the theme composable persists.
+ *
+ * The values below are the plain neutral default. An app that imports no theme
+ * file gets a readable grey page rather than a broken one; it is not a brand,
+ * and no brand's palette is committed here.
+ */
+
+@import 'tailwindcss';
+
+/* Consumers install this package from git, and Tailwind does not scan
+   dependencies by default, so an app has to point at these sources itself:
+     @source "../node_modules/@ostendorf-cloud/web-kit/src";
+   See the repository README. */
+
+/*
+ * The dark variant follows the same two states as the tokens: the explicit
+ * choice wins, the system setting decides without one. Most components need
+ * none of it, because the tokens already carry both values.
+ */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-mode='light']), :root:not([data-mode='light']) *) {
+      @slot;
+    }
+  }
+  &:where([data-mode='dark'], [data-mode='dark'] *) {
+    @slot;
+  }
+}
+
+@theme {
+  /* Type. System faces only: nothing is fetched, so there is no flash of
+     unstyled text and no third party request to explain in a privacy policy. */
+  --font-sans:
+    system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji',
+    'Segoe UI Emoji';
+  --font-mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  /* A 1.2 scale from a 16px body. Nothing outside these steps. */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.45;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 1rem;
+  --text-base--line-height: 1.55;
+  --text-lg: 1.2rem;
+  --text-lg--line-height: 1.45;
+  --text-xl: 1.44rem;
+  --text-xl--line-height: 1.3;
+  --text-2xl: 1.728rem;
+  --text-2xl--line-height: 1.25;
+  --text-3xl: 2.074rem;
+  --text-3xl--line-height: 1.2;
+
+  /* Radius. Three steps, used on their own kinds of thing: controls, cards,
+     dialogs. */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 1rem;
+
+  /* Motion. Short, eased out on the way in, and only opacity, transform and
+     colour are animated. The two defaults are what a plain transition-colors
+     uses, so no component repeats a duration. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+  --default-transition-duration: 160ms;
+  --default-transition-timing-function: var(--ease-out);
+  --duration-fast: 120ms;
+  --duration-slow: 240ms;
+
+  /* Layout. The reading measure is what holds a text column at 60 to 75
+     characters; the shell width is for pages with a sidebar or a wide table. */
+  --container-reading: 68ch;
+  --container-shell: 76rem;
+  --spacing-header: 3.5rem;
+
+  /* Surfaces. */
+  --color-bg: light-dark(#f6f6f6, #111111);
+  --color-bg-subtle: light-dark(#ededed, #191919);
+  --color-surface: light-dark(#ffffff, #1f1f1f);
+  --color-surface-hover: light-dark(#f1f1f1, #272727);
+  --color-overlay: light-dark(rgb(17 17 17 / 0.45), rgb(0 0 0 / 0.65));
+
+  /* Lines. border is decorative, border-strong is what a control's own outline
+     uses, which needs 3:1 against the surface behind it. */
+  --color-border: light-dark(#e0e0e0, #303030);
+  --color-border-strong: light-dark(#8c8c8c, #707070);
+
+  /* Text. */
+  --color-text: light-dark(#1a1a1a, #ebebeb);
+  --color-text-muted: light-dark(#575757, #a8a8a8);
+  --color-text-faint: light-dark(#6c6c6c, #8f8f8f);
+
+  /* Accent. accent carries fills and icons at 3:1, accent-text is for text and
+     links at 4.5:1, accent-strong is the solid primary control that pairs with
+     accent-on, accent-subtle is a tint to sit text on. */
+  --color-accent: light-dark(#5e5e5e, #a0a0a0);
+  --color-accent-text: light-dark(#4c4c4c, #bebebe);
+  --color-accent-strong: light-dark(#4c4c4c, #c8c8c8);
+  --color-accent-strong-hover: light-dark(#3b3b3b, #d8d8d8);
+  --color-accent-on: light-dark(#ffffff, #161616);
+  --color-accent-subtle: light-dark(#ebebeb, #272727);
+  --color-focus: light-dark(#2f68d8, #8fb6ff);
+
+  /* Semantic. Each role has the text colour and the tint it sits on; meaning is
+     never carried by colour alone, there is always a word or an icon. */
+  --color-success-text: light-dark(#136b3d, #68d79b);
+  --color-success-subtle: light-dark(#e6f3ec, #13251b);
+  --color-warning-text: light-dark(#7b4903, #efb257);
+  --color-warning-subtle: light-dark(#fbf0dc, #2a2012);
+  --color-danger-text: light-dark(#a11a24, #ff939d);
+  --color-danger-subtle: light-dark(#fbe8ea, #2b1518);
+  --color-danger-strong: light-dark(#a11a24, #ff939d);
+  --color-danger-strong-hover: light-dark(#84151d, #ffadb5);
+  --color-danger-on: light-dark(#ffffff, #2b1518);
+  --color-info-text: light-dark(#1c4e8d, #8ac0ff);
+  --color-info-subtle: light-dark(#e6eff9, #131f2d);
+
+  /* Elevation. Dark surfaces lean on the border and the surface step instead of
+     a shadow, so the shadow is barely there. */
+  --shadow-card: 0 1px 2px light-dark(rgb(17 17 17 / 0.06), rgb(0 0 0 / 0.5));
+  --shadow-dialog:
+    0 10px 30px -12px light-dark(rgb(17 17 17 / 0.25), rgb(0 0 0 / 0.75)),
+    0 2px 6px light-dark(rgb(17 17 17 / 0.08), rgb(0 0 0 / 0.5));
+}
+
+@layer base {
+  :root {
+    /* Without data-mode the system setting decides, which is what makes
+       light-dark() resolve. */
+    color-scheme: light dark;
+    /* Only the explicit choice pins it. */
+    &[data-mode='light'] {
+      color-scheme: light;
+    }
+    &[data-mode='dark'] {
+      color-scheme: dark;
+    }
+  }
+
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: var(--text-base--line-height);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The app is a column of header, page and footer, filling at least the
+     window. Without this a page with little on it leaves the footer floating
+     where the content happened to end, with the background below it. The mount
+     point is #app, which an app's index.html prescribes; a skip link is out of
+     flow and a toast host is fixed, so neither is a row here. */
+  #app {
+    display: flex;
+    min-height: 100dvh;
+    flex-direction: column;
+  }
+
+  /* The one main landmark takes whatever the other two leave. */
+  #app > main {
+    flex: 1 0 auto;
+  }
+
+  /* A focus ring that is visible on every surface, and never removed. Pointer
+     focus stays quiet, keyboard focus does not. */
+  :focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+
+  /* An animation is a hint, so it is dropped entirely when the visitor asked
+     for that. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
