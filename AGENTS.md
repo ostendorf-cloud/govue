@@ -14,8 +14,9 @@ repeated here.
 - `web/` is the Vue package, consumed as a pnpm git dependency pinned to a release tag.
 - `docs/concepts/web-kit.md` holds the design and the reasoning behind it. Read it before adding
   a package.
-- Nothing exists yet beyond this baseline: each package and the `web/` directory is its own
-  issue.
+- `web/` holds the token contract, the example themes and the `useTheme` composable. No component
+  exists yet; each one is its own issue.
+- No Go package exists yet: each one is its own issue.
 
 ## Commands
 
@@ -23,6 +24,7 @@ repeated here.
 task setup           # mise install
 task check           # every check, one after another
 task --list          # one target per check
+task web:test        # one half on its own, here the Vue package
 ```
 
 - One task target per check and one CI job per target. `check` aggregates them and holds no

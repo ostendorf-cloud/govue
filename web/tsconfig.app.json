@@ -1,0 +1,16 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "include": ["env.d.ts", "src/**/*", "src/**/*.vue"],
+  // The tests read files and use process, which is Node and not the browser, so
+  // they are checked by tsconfig.vitest.json instead. The shipped sources stay
+  // free of Node types.
+  "exclude": ["src/**/*.test.ts"],
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
+}

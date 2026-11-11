@@ -1,0 +1,54 @@
+/*
+ * sample-contrast: the second example theme.
+ *
+ * The same contract filled for maximum separation instead of for a look: pure
+ * white and pure black grounds carrying pure black and pure white text, and
+ * every other role pushed well past the minimum the contrast test enforces. It
+ * is here because one example cannot show that swapping a theme swaps nothing
+ * but the values, and because an app that needs headroom above AA has somewhere
+ * to start.
+ *
+ * The rest of the palette is round HSL coordinates: the near-grounds on hue
+ * 300, the accent and the focus ring on hue 282, the semantic roles on hues
+ * 130, 50, 5 and 200. The palette belongs to no product.
+ */
+
+:root[data-theme='sample-contrast'] {
+  --color-bg: light-dark(#ffffff, #000000);
+  --color-bg-subtle: light-dark(#dfc8df, #311631);
+  --color-surface: light-dark(#ffffff, #391e39);
+  --color-surface-hover: light-dark(#e8c9e8, #453045);
+  --color-overlay: light-dark(rgb(0 0 0 / 0.58), rgb(0 0 0 / 0.82));
+
+  --color-border: light-dark(#d7c1d7, #4d384d);
+  --color-border-strong: light-dark(#957595, #897089);
+
+  --color-text: light-dark(#000000, #ffffff);
+  --color-text-muted: light-dark(#654865, #bea7be);
+  --color-text-faint: light-dark(#7b5b7b, #a290a2);
+
+  --color-accent: light-dark(#7a4790, #bc89d2);
+  --color-accent-text: light-dark(#5e3371, #d2abe3);
+  --color-accent-strong: light-dark(#5e3371, #d6b3e6);
+  --color-accent-strong-hover: light-dark(#472357, #e1c3ee);
+  --color-accent-on: light-dark(#ffffff, #3a1c40);
+  --color-accent-subtle: light-dark(#d9c2e5, #392442);
+  --color-focus: light-dark(#9322c3, #d589f5);
+
+  --color-success-text: light-dark(#126821, #70db7e);
+  --color-success-subtle: light-dark(#d6f0d9, #1a3d20);
+  --color-warning-text: light-dark(#6e5e0c, #f0d342);
+  --color-warning-subtle: light-dark(#f5edc7, #373215);
+  --color-danger-text: light-dark(#962f17, #f68379);
+  --color-danger-subtle: light-dark(#f8dbd8, #431d19);
+  --color-danger-strong: light-dark(#962f17, #f68379);
+  --color-danger-strong-hover: light-dark(#75180f, #fbc6c1);
+  --color-danger-on: light-dark(#ffffff, #44201d);
+  --color-info-text: light-dark(#0e6281, #5abff2);
+  --color-info-subtle: light-dark(#d1e9f5, #17393f);
+
+  --shadow-card: 0 1px 2px light-dark(rgb(0 0 0 / 0.15), rgb(0 0 0 / 0.62));
+  --shadow-dialog:
+    0 10px 30px -12px light-dark(rgb(0 0 0 / 0.42), rgb(0 0 0 / 0.88)),
+    0 2px 6px light-dark(rgb(0 0 0 / 0.17), rgb(0 0 0 / 0.62));
+}

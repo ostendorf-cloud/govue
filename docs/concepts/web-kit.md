@@ -104,6 +104,12 @@ it states intent, not a description of what is there.
   the same contract, imported next to these base styles. It is never committed here. The
   mechanism is identical either way, only the file's home differs, and a public repository then
   carries no real brand's colour values for anyone to copy.
+- That rule reaches further than the identity colours. A near-white page ground has about twenty
+  usable levels, so a grey one is always within a unit or two of some real theme's ground, and
+  "no value anyone can copy" then rules out a grey default rather than only a branded accent.
+  The committed palettes therefore carry a deliberate hue in the neutral ramp, and every value is
+  a round HSL coordinate whose saturation and lightness follow from the contrast requirement, so
+  the palette can be re-derived from the rules instead of being taken on trust.
 - Contrast is a test, not a review step: the theme files are parseable, so a test fails any pair
   below WCAG 2.2 AA in either mode.
 

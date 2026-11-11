@@ -1,0 +1,54 @@
+/*
+ * sample: the example theme.
+ *
+ * A violet grey neutral with a raspberry accent. It exists to show what filling
+ * the contract looks like and to give an app with no design of its own
+ * something readable to start from.
+ *
+ * Every value is a round HSL coordinate: the neutral ramp on hue 288, the
+ * accent and the focus ring on hue 332, the semantic roles on hues 130, 50, 5
+ * and 200. Saturation and lightness follow from the ratios contrast.test.ts
+ * enforces. The palette belongs to no product: a real brand's palette is
+ * authored in that brand's own repository against this same contract, never
+ * committed here.
+ */
+
+:root[data-theme='sample'] {
+  --color-bg: light-dark(#dac8df, #2d1532);
+  --color-bg-subtle: light-dark(#d4bfd9, #371f3d);
+  --color-surface: light-dark(#ffffff, #3e2744);
+  --color-surface-hover: light-dark(#e3c8e4, #453149);
+  --color-overlay: light-dark(rgb(45 21 50 / 0.45), rgb(39 3 48 / 0.68));
+
+  --color-border: light-dark(#cdb7d1, #503a55);
+  --color-border-strong: light-dark(#806487, #917595);
+
+  --color-text: light-dark(#3c223f, #e1c4e8);
+  --color-text-muted: light-dark(#614568, #bca3c2);
+  --color-text-faint: light-dark(#67496f, #ae92b5);
+
+  --color-accent: light-dark(#904769, #d289ab);
+  --color-accent-text: light-dark(#713350, #e3abc5);
+  --color-accent-strong: light-dark(#713350, #e6b3ca);
+  --color-accent-strong-hover: light-dark(#57233b, #f1d0df);
+  --color-accent-on: light-dark(#ffffff, #401c2d);
+  --color-accent-subtle: light-dark(#eacdda, #3f222f);
+  --color-focus: light-dark(#c3226d, #f589bc);
+
+  --color-success-text: light-dark(#126821, #70db7e);
+  --color-success-subtle: light-dark(#d6f0d9, #1a3d20);
+  --color-warning-text: light-dark(#6e5e0c, #f0d342);
+  --color-warning-subtle: light-dark(#f5edc7, #373215);
+  --color-danger-text: light-dark(#962f17, #f68379);
+  --color-danger-subtle: light-dark(#f8dbd8, #431d19);
+  --color-danger-strong: light-dark(#962f17, #f68379);
+  --color-danger-strong-hover: light-dark(#75180f, #fbc6c1);
+  --color-danger-on: light-dark(#ffffff, #44201d);
+  --color-info-text: light-dark(#0e6281, #5abff2);
+  --color-info-subtle: light-dark(#d1e9f5, #17393f);
+
+  --shadow-card: 0 1px 2px light-dark(rgb(45 21 50 / 0.07), rgb(0 0 0 / 0.52));
+  --shadow-dialog:
+    0 10px 30px -12px light-dark(rgb(45 21 50 / 0.26), rgb(0 0 0 / 0.78)),
+    0 2px 6px light-dark(rgb(45 21 50 / 0.09), rgb(0 0 0 / 0.52));
+}
