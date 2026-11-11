@@ -14,8 +14,10 @@ repeated here.
 - `web/` is the Vue package, consumed as a pnpm git dependency pinned to a release tag.
 - `docs/concepts/web-kit.md` holds the design and the reasoning behind it. Read it before adding
   a package.
-- `web/` holds the token contract, the example themes and the `useTheme` composable. No component
-  exists yet; each one is its own issue.
+- `web/` holds the token contract, the example themes, the `useTheme` composable and the overlay
+  and feedback components (`WkDialog`, `WkConfirmDialog`, `WkToastHost`, `WkEmptyState`,
+  `WkErrorState`) with `useToasts`. The form input components and layout components are separate,
+  not yet merged issues.
 - No Go package exists yet: each one is its own issue.
 
 ## Commands
@@ -66,10 +68,11 @@ task web:test        # one half on its own, here the Vue package
   decides whether the values are usable.
 - Focus is styled once, globally. A component never adds a focus ring and never removes one.
 - Touch targets are at least 44px.
-- For component behaviour nothing custom covers yet, modals, dropdowns, comboboxes, evaluate
-  adopting a maintained headless primitives library before writing one. Reka UI, the Vue port of
-  Radix, is the leading candidate. Nothing is wired up for it yet: the issue that needs the first
-  such component makes the call, and styles it with these tokens.
+- For component behaviour nothing custom covers yet, dropdowns and comboboxes, evaluate adopting
+  a maintained headless primitives library before writing one. Reka UI, the Vue port of Radix, is
+  wired up as a dependency for `WkDialog`, whose focus trap, inert background and Escape handling
+  are not something `jsdom` can verify on a hand-rolled implementation. It styles its primitives
+  entirely with these tokens.
 
 ## Documentation
 
