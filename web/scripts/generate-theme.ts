@@ -10,10 +10,11 @@
 // extension the way a bundler would.
 
 import { readFileSync, writeFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 
 import { generateTheme } from '../src/theme/generate.ts'
 
-const USAGE = `Usage: generate-theme --config <seeds.json> --out <theme.css>
+export const USAGE = `Usage: generate-theme --config <seeds.json> --out <theme.css>
 
 Generates a complete, WCAG 2.2 AA theme CSS file from a seed colour
 configuration. See README.md for the config file's shape.
@@ -30,11 +31,18 @@ interface Args {
   help: boolean
 }
 
-function parseArgs(argv: string[]): Args {
+// A bare "--" is tolerated and skipped wherever it appears, not just once at
+// the front: npm consumes the "script -- args" separator itself, but pnpm
+// and yarn forward it straight into argv, so a consumer invoking this script
+// through any of them, or reflexively typing it out of habit, must not hit
+// "unknown argument" for a token that carries no meaning of its own here.
+export function parseArgs(argv: string[]): Args {
   const args: Args = { help: false }
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]
-    if (flag === '--help' || flag === '-h') {
+    if (flag === '--') {
+      continue
+    } else if (flag === '--help' || flag === '-h') {
       args.help = true
     } else if (flag === '--config') {
       args.config = argv[++i]
@@ -47,7 +55,7 @@ function parseArgs(argv: string[]): Args {
   return args
 }
 
-function main(): number {
+export function main(): number {
   let args: Args
   try {
     args = parseArgs(process.argv.slice(2))
@@ -103,4 +111,10 @@ function main(): number {
   return 0
 }
 
-process.exitCode = main()
+// Only run as a side effect of being executed directly, not of being
+// imported, so generate-theme.test.ts can exercise parseArgs and main() on
+// their own without triggering a second, unwanted CLI run against this
+// process's real argv.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  process.exitCode = main()
+}

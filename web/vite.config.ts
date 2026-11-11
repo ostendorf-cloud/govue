@@ -29,7 +29,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
-    include: ['src/**/*.test.ts'],
+    // scripts/ carries the CLI wrapper's own test alongside its source, not
+    // under src/, since it ships to a consumer's devDependency tree only
+    // through theme:generate and never through the package's own exports.
+    include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
     css: false,
   },
 })
