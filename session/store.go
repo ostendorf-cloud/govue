@@ -21,6 +21,12 @@ var ErrNotFound = errors.New("session not found")
 // every session of one account, a password change and a disabled account cannot
 // be enforced on the sessions that already exist.
 //
+// Every write is a whole session: there is no operation that changes one field.
+// [Manager.Read] moves the last use by writing the session back, so that touch
+// and a handler's concurrent [Store.Save] of the same session's Data or Groups
+// overwrite one another, last write wins. Anything an application cannot afford
+// to lose that way belongs in the record it owns, not in [Session.Data].
+//
 // [MemoryStore] ships with this package and is correct for a single replica. An
 // application running more than one, or one whose restart must not log everyone
 // out, implements these four methods against something shared. That is
