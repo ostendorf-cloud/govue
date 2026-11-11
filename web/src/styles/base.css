@@ -11,9 +11,22 @@
  * system setting decides unless an app sets data-mode on the root element,
  * which is what the theme composable persists.
  *
- * The values below are the plain neutral default. An app that imports no theme
- * file gets a readable grey page rather than a broken one; it is not a brand,
- * and no brand's palette is committed here.
+ * The values below are the default. An app that imports no theme file gets a
+ * readable page rather than a broken one; it is not a brand, and no brand's
+ * palette is committed here.
+ *
+ * Every colour value is a round HSL coordinate. The neutral ramp is a mauve
+ * grey on hue 310, the accent and the focus ring are a violet on hue 280, and
+ * the four semantic roles sit on hues 130, 50, 5 and 200. Saturation and
+ * lightness follow from the ratio each role has to reach against its own
+ * ground, which is what contrast.test.ts enforces.
+ *
+ * The default is a tinted neutral rather than a grey on purpose. A near-white
+ * grey has only about twenty usable levels, and the repository's rule that no
+ * committed value may sit near a real theme's value leaves none of them free,
+ * so the ramp carries a hue instead. Hue 310 is far from all four semantic
+ * hues, which is what keeps a success or a warning tint legible against the
+ * page.
  */
 
 @import 'tailwindcss';
@@ -86,54 +99,61 @@
   --container-shell: 76rem;
   --spacing-header: 3.5rem;
 
-  /* Surfaces. */
-  --color-bg: light-dark(#f6f6f6, #111111);
-  --color-bg-subtle: light-dark(#ededed, #191919);
-  --color-surface: light-dark(#ffffff, #1f1f1f);
-  --color-surface-hover: light-dark(#f1f1f1, #272727);
-  --color-overlay: light-dark(rgb(17 17 17 / 0.45), rgb(0 0 0 / 0.65));
+  /* Surfaces. The mauve neutral, hue 310, light from 85% down to 78% and dark
+     from 15% up to 28%. */
+  --color-bg: light-dark(#dfc8dc, #341930);
+  --color-bg-subtle: light-dark(#d9bfd5, #3c2037);
+  --color-surface: light-dark(#ffffff, #43283e);
+  --color-surface-hover: light-dark(#e7cbe2, #473344);
+  --color-overlay: light-dark(rgb(52 25 48 / 0.45), rgb(12 6 11 / 0.68));
 
   /* Lines. border is decorative, border-strong is what a control's own outline
      uses, which needs 3:1 against the surface behind it. */
-  --color-border: light-dark(#e0e0e0, #303030);
-  --color-border-strong: light-dark(#8c8c8c, #707070);
+  --color-border: light-dark(#d3bbce, #513d4e);
+  --color-border-strong: light-dark(#82647d, #977892);
 
   /* Text. */
-  --color-text: light-dark(#1a1a1a, #ebebeb);
-  --color-text-muted: light-dark(#575757, #a8a8a8);
-  --color-text-faint: light-dark(#6c6c6c, #8f8f8f);
+  --color-text: light-dark(#3f223b, #e4c8df);
+  --color-text-muted: light-dark(#664761, #bca9b9);
+  --color-text-faint: light-dark(#6e4968, #b394ae);
 
   /* Accent. accent carries fills and icons at 3:1, accent-text is for text and
      links at 4.5:1, accent-strong is the solid primary control that pairs with
-     accent-on, accent-subtle is a tint to sit text on. */
-  --color-accent: light-dark(#5e5e5e, #a0a0a0);
-  --color-accent-text: light-dark(#4c4c4c, #bebebe);
-  --color-accent-strong: light-dark(#4c4c4c, #c8c8c8);
-  --color-accent-strong-hover: light-dark(#3b3b3b, #d8d8d8);
-  --color-accent-on: light-dark(#ffffff, #161616);
-  --color-accent-subtle: light-dark(#ebebeb, #272727);
-  --color-focus: light-dark(#2f68d8, #8fb6ff);
+     accent-on, accent-subtle is a tint to sit text on. Hue 280, a violet far
+     enough from the neutral ramp to read as an accent and quiet enough that the
+     default is not mistaken for a brand. */
+  --color-accent: light-dark(#774790, #ba89d2);
+  --color-accent-text: light-dark(#5c3371, #d0abe3);
+  --color-accent-strong: light-dark(#5c3371, #d5b3e6);
+  --color-accent-strong-hover: light-dark(#462357, #e0c3ee);
+  --color-accent-on: light-dark(#ffffff, #3a1c40);
+  --color-accent-subtle: light-dark(#dcc6e7, #392442);
+  /* The ring is the accent hue at full chroma, so it is unmistakable on every
+     ground without introducing a colour the palette does not already use. */
+  --color-focus: light-dark(#8e22c3, #d189f5);
 
   /* Semantic. Each role has the text colour and the tint it sits on; meaning is
-     never carried by colour alone, there is always a word or an icon. */
-  --color-success-text: light-dark(#136b3d, #68d79b);
-  --color-success-subtle: light-dark(#e6f3ec, #13251b);
-  --color-warning-text: light-dark(#7b4903, #efb257);
-  --color-warning-subtle: light-dark(#fbf0dc, #2a2012);
-  --color-danger-text: light-dark(#a11a24, #ff939d);
-  --color-danger-subtle: light-dark(#fbe8ea, #2b1518);
-  --color-danger-strong: light-dark(#a11a24, #ff939d);
-  --color-danger-strong-hover: light-dark(#84151d, #ffadb5);
-  --color-danger-on: light-dark(#ffffff, #2b1518);
-  --color-info-text: light-dark(#1c4e8d, #8ac0ff);
-  --color-info-subtle: light-dark(#e6eff9, #131f2d);
+     never carried by colour alone, there is always a word or an icon. Hues 130,
+     50, 5 and 200, all of them far from the neutral ramp's hue so a tint still
+     reads against the page. */
+  --color-success-text: light-dark(#126821, #70db7e);
+  --color-success-subtle: light-dark(#d6f0d9, #1a3d20);
+  --color-warning-text: light-dark(#6e5e0c, #f0d342);
+  --color-warning-subtle: light-dark(#f5edc7, #373215);
+  --color-danger-text: light-dark(#962f17, #f68379);
+  --color-danger-subtle: light-dark(#f8dbd8, #431d19);
+  --color-danger-strong: light-dark(#962f17, #f68379);
+  --color-danger-strong-hover: light-dark(#75180f, #fbc6c1);
+  --color-danger-on: light-dark(#ffffff, #44201d);
+  --color-info-text: light-dark(#0e6281, #5abff2);
+  --color-info-subtle: light-dark(#d1e9f5, #17393f);
 
   /* Elevation. Dark surfaces lean on the border and the surface step instead of
      a shadow, so the shadow is barely there. */
-  --shadow-card: 0 1px 2px light-dark(rgb(17 17 17 / 0.06), rgb(0 0 0 / 0.5));
+  --shadow-card: 0 1px 2px light-dark(rgb(52 25 48 / 0.07), rgb(0 0 0 / 0.52));
   --shadow-dialog:
-    0 10px 30px -12px light-dark(rgb(17 17 17 / 0.25), rgb(0 0 0 / 0.75)),
-    0 2px 6px light-dark(rgb(17 17 17 / 0.08), rgb(0 0 0 / 0.5));
+    0 10px 30px -12px light-dark(rgb(52 25 48 / 0.26), rgb(0 0 0 / 0.78)),
+    0 2px 6px light-dark(rgb(52 25 48 / 0.09), rgb(0 0 0 / 0.52));
 }
 
 @layer base {
