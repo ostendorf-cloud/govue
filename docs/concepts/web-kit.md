@@ -87,6 +87,31 @@ it states intent, not a description of what is there.
 - A short-lived signed cookie stays for the one thing a store is wrong for: the OIDC state,
   nonce and PKCE verifier, which have to survive the redirect before any session exists.
 
+### The OIDC key cache expires, and a failure is opaque
+
+- The ID token is verified in process against the provider's JWKS. The alternative, asking the
+  provider to introspect every token, puts a network call on the login path and still needs the
+  same claim checks afterwards.
+- A key id is looked up, never guessed: the token's `kid` selects one key and the signature is
+  checked against that key alone. Trying every key in the set until one verifies is what makes
+  algorithm confusion reachable, so the allowed algorithms are a fixed table and `none` and the
+  HMAC family are not in it.
+- The cached set expires. A cache with no expiry trusts a signing key the provider has withdrawn
+  for as long as the process runs, which is the one thing rotation is supposed to end. The TTL
+  comes from the JWKS response's own `Cache-Control` where there is one, clamped between a minute
+  and a day.
+- An unknown key id refetches, at most once a minute. Rotation introduces a key id nothing has
+  seen before, so a miss has to be able to refetch, and the limit is what stops a made-up key id
+  from being one request to the provider per login attempt.
+- A set past its TTL is still used for an hour when the provider cannot be reached to replace it.
+  Refusing every login over a blip is worse than briefly accepting a key the provider published
+  minutes ago, and an outage longer than that stops the logins rather than trusting keys nobody
+  has confirmed since.
+- Every failure of a login reaches the caller as one of two errors, one meaning start over and
+  one meaning the provider is unreachable. The cause goes to the log with the request id. A
+  caller is an HTTP handler, and a bad client secret, a drifted clock and a forged token must not
+  be distinguishable from outside.
+
 ### Theming through a published token contract
 
 - `web/src/styles/base.css` registers every role token as a Tailwind v4 theme variable with a
