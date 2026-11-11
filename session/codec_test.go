@@ -143,6 +143,35 @@ func TestCodecExpiry(t *testing.T) {
 	}
 }
 
+func TestCodecExpiryIsExclusiveAtTheBoundary(t *testing.T) {
+	cases := map[string]struct {
+		elapsed time.Duration
+		want    bool
+	}{
+		"a second under the expiry": {9 * time.Minute, true},
+		"exactly at the expiry":     {10 * time.Minute, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			now := start
+			codec := newCodec(t, &now)
+
+			value, err := codec.Encode(inFlight{State: "abc"}, 10*time.Minute)
+			if err != nil {
+				t.Fatalf("Encode: %v", err)
+			}
+
+			// The same exclusive bound both session timeouts use.
+			now = now.Add(tc.elapsed)
+			var got inFlight
+			err = codec.Decode(value, &got)
+			if accepted := err == nil; accepted != tc.want {
+				t.Errorf("after %s the value is accepted = %t, want %t (%v)", tc.elapsed, accepted, tc.want, err)
+			}
+		})
+	}
+}
+
 func TestCodecRefusesANonPositiveLifetime(t *testing.T) {
 	now := start
 	codec := newCodec(t, &now)

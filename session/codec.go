@@ -140,7 +140,9 @@ func (c *Codec) Decode(value string, into any) error {
 	if err := json.Unmarshal(body, &wrapper); err != nil {
 		return ErrInvalid
 	}
-	if wrapper.Expires == 0 || c.now().After(time.Unix(wrapper.Expires, 0)) {
+	// The expiry is exclusive, the same bound both session timeouts apply: a
+	// value at exactly its expiry second is over, not good for one last use.
+	if wrapper.Expires == 0 || !c.now().Before(time.Unix(wrapper.Expires, 0)) {
 		return ErrInvalid
 	}
 	if err := json.Unmarshal(wrapper.Payload, into); err != nil {
