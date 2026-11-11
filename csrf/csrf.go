@@ -24,6 +24,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"net/http"
 )
 
@@ -139,7 +140,10 @@ func New(expected Expected) *Protector {
 // error for anything that is not a scheme and host without a trailing slash,
 // so a typo cannot silently widen what is trusted.
 func (p *Protector) TrustOrigin(origin string) error {
-	return p.cross.AddTrustedOrigin(origin)
+	if err := p.cross.AddTrustedOrigin(origin); err != nil {
+		return fmt.Errorf("csrf: trusted origin %q: %w", origin, err)
+	}
+	return nil
 }
 
 // OnRefusal replaces what a refused request is answered with, for an
@@ -167,7 +171,7 @@ func (p *Protector) Middleware(next http.Handler) http.Handler {
 // is refused whatever token it carries.
 func (p *Protector) Check(r *http.Request) error {
 	if err := p.cross.Check(r); err != nil {
-		return err
+		return fmt.Errorf("csrf: cross origin check: %w", err)
 	}
 	if safe(r.Method) {
 		return nil
