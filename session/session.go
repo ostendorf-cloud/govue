@@ -281,23 +281,40 @@ func (m *Manager) Rotate(ctx context.Context, w http.ResponseWriter, s Session) 
 	return s, nil
 }
 
-// Read returns the session the request carries and reports whether there is
-// one. It is false for a request without the cookie, an id the store does not
-// hold, a session past either timeout, and a store that could not be reached:
-// every one of those means the caller asks for a login, and telling them apart
-// would only hand a caller a reason to let a request through.
+// Read returns the session the request carries, reports whether there is one,
+// and reports separately whether the store could answer at all.
 //
-// An expired session is deleted. An active one has its last use written back at
-// most every [Config.TouchEvery], so an ordinary read does not write.
-func (m *Manager) Read(ctx context.Context, r *http.Request) (Session, bool) {
+// The bool is the whole authorisation answer and is false for a request without
+// the cookie, an id the store does not hold, a session past either timeout, and
+// a store that could not be reached. A caller that ignores the error is exactly
+// as fail closed as one that reads it: the error is never accompanied by a
+// session, and true never comes with an error.
+//
+// The error says only that the store could not answer. Without it an outage is
+// indistinguishable from an ordinary logged out request, which sends every user
+// to the identity provider at the moment the infrastructure is already failing
+// and leaves nothing in the application's log to see it by. A caller that cares
+// answers 503 instead of a login redirect.
+//
+// An expired session is deleted, and a failed delete is not reported: the
+// session is over either way. An active one has its last use written back at
+// most every [Config.TouchEvery], so an ordinary read does not write, and a
+// failed write back is not reported either, because the session is valid and
+// the request is not worth failing over it.
+func (m *Manager) Read(ctx context.Context, r *http.Request) (Session, bool, error) {
 	cookie, err := r.Cookie(m.cfg.CookieName)
 	if err != nil || cookie.Value == "" {
-		return Session{}, false
+		return Session{}, false, nil
 	}
 
 	found, err := m.cfg.Store.Get(ctx, cookie.Value)
 	if err != nil {
-		return Session{}, false
+		// An id the store does not hold is the ordinary logged out case, not
+		// something a caller should answer differently.
+		if errors.Is(err, ErrNotFound) {
+			return Session{}, false, nil
+		}
+		return Session{}, false, fmt.Errorf("session: read: %w", err)
 	}
 
 	// Both bounds are exclusive: a session whose expiry is exactly now is
@@ -308,7 +325,7 @@ func (m *Manager) Read(ctx context.Context, r *http.Request) (Session, bool) {
 		// invalid: the checks above already decided that, and they run on
 		// every read whatever the store still holds.
 		_ = m.cfg.Store.Delete(ctx, found.ID)
-		return Session{}, false
+		return Session{}, false, nil
 	}
 
 	if now.Sub(found.LastSeen) >= m.cfg.TouchEvery {
@@ -318,11 +335,11 @@ func (m *Manager) Read(ctx context.Context, r *http.Request) (Session, bool) {
 			// The session is valid. Failing the request because its last use
 			// could not be written would be worse than the idle timeout being
 			// measured from the previous touch.
-			return found, true
+			return found, true, nil
 		}
-		return touched, true
+		return touched, true, nil
 	}
-	return found, true
+	return found, true, nil
 }
 
 // End logs out the session the request carries: gone from the store, cookie

@@ -55,6 +55,18 @@ func (f *fixture) login(t *testing.T, subject string) (session.Session, *http.Re
 	return started, withCookies(rec)
 }
 
+// read is Read with the store error asserted away, for the cases that are about
+// whether there is a session rather than about an outage.
+func (f *fixture) read(t *testing.T, req *http.Request) (session.Session, bool) {
+	t.Helper()
+
+	got, ok, err := f.manager.Read(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	return got, ok
+}
+
 // withCookies turns the Set-Cookie headers of a response into the request a
 // browser would make next.
 func withCookies(rec *httptest.ResponseRecorder) *http.Request {
@@ -269,7 +281,7 @@ func TestReadReturnsTheStoredSession(t *testing.T) {
 	f := newFixture(t, nil)
 	started, req := f.login(t, "u1")
 
-	got, ok := f.manager.Read(context.Background(), req)
+	got, ok := f.read(t, req)
 	if !ok {
 		t.Fatal("the session was not found")
 	}
@@ -295,7 +307,7 @@ func TestReadWithoutASession(t *testing.T) {
 			if cookie != nil {
 				req.AddCookie(cookie)
 			}
-			if _, ok := f.manager.Read(context.Background(), req); ok {
+			if _, ok := f.read(t, req); ok {
 				t.Error("Read reports a session")
 			}
 		})
@@ -311,8 +323,58 @@ func TestReadFailsClosedWhenTheStoreIsUnreachable(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: session.DefaultCookieName, Value: "any-id"})
 
-	if _, ok := manager.Read(context.Background(), req); ok {
+	got, ok, err := manager.Read(context.Background(), req)
+	if ok {
 		t.Error("a store that cannot be reached produced a session")
+	}
+	if got.ID != "" {
+		t.Errorf("session = %+v, want the zero value", got)
+	}
+	// Fail closed, and still say why, so the caller can answer 503 instead of
+	// sending the user to the identity provider during an outage.
+	if !errors.Is(err, errStore) {
+		t.Errorf("Read error = %v, want the store's own error", err)
+	}
+}
+
+func TestReadReportsNoErrorForAnOrdinaryLoggedOutRequest(t *testing.T) {
+	f := newFixture(t, nil)
+
+	cases := map[string]*http.Cookie{
+		"no cookie at all": nil,
+		"unknown id":       {Name: session.DefaultCookieName, Value: "made-up"},
+	}
+	for name, cookie := range cases {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
+			if cookie != nil {
+				req.AddCookie(cookie)
+			}
+			// No session is normal, so it is not an error: only a store that
+			// could not answer is.
+			_, ok, err := f.manager.Read(context.Background(), req)
+			if ok {
+				t.Error("Read reports a session")
+			}
+			if err != nil {
+				t.Errorf("Read error = %v, want none", err)
+			}
+		})
+	}
+}
+
+func TestReadReportsNoErrorForAnExpiredSession(t *testing.T) {
+	f := newFixture(t, func(cfg *session.Config) { cfg.Idle = 30 * time.Minute })
+	_, req := f.login(t, "u1")
+
+	f.now = f.now.Add(time.Hour)
+	_, ok, err := f.manager.Read(context.Background(), req)
+	if ok {
+		t.Error("the session survived the idle timeout")
+	}
+	// An expired session is a logged out request, not an outage.
+	if err != nil {
+		t.Errorf("Read error = %v, want none", err)
 	}
 }
 
@@ -324,13 +386,13 @@ func TestIdleTimeout(t *testing.T) {
 	_, req := f.login(t, "u1")
 
 	f.now = f.now.Add(29 * time.Minute)
-	if _, ok := f.manager.Read(context.Background(), req); !ok {
+	if _, ok := f.read(t, req); !ok {
 		t.Fatal("the session ended before the idle timeout")
 	}
 
 	// That read touched it, so the clock has to move the whole way again.
 	f.now = f.now.Add(31 * time.Minute)
-	if _, ok := f.manager.Read(context.Background(), req); ok {
+	if _, ok := f.read(t, req); ok {
 		t.Error("the session survived the idle timeout")
 	}
 	if f.store.Len() != 0 {
@@ -348,13 +410,13 @@ func TestAbsoluteLifetimeEndsAnActiveSession(t *testing.T) {
 	// Used every half hour, so the idle timeout never gets near firing.
 	for range 5 {
 		f.now = f.now.Add(30 * time.Minute)
-		if _, ok := f.manager.Read(context.Background(), req); !ok {
+		if _, ok := f.read(t, req); !ok {
 			t.Fatalf("the session ended early, at %s", f.now)
 		}
 	}
 
 	f.now = f.now.Add(31 * time.Minute)
-	if _, ok := f.manager.Read(context.Background(), req); ok {
+	if _, ok := f.read(t, req); ok {
 		t.Error("the session outlived its absolute lifetime")
 	}
 }
@@ -377,7 +439,7 @@ func TestBothTimeoutsAreExclusiveAtTheBoundary(t *testing.T) {
 			_, req := f.login(t, "u1")
 
 			f.now = f.now.Add(tc.elapsed)
-			if _, ok := f.manager.Read(context.Background(), req); ok != tc.want {
+			if _, ok := f.read(t, req); ok != tc.want {
 				t.Errorf("after %s the session is %t, want %t", tc.elapsed, ok, tc.want)
 			}
 		})
@@ -393,7 +455,7 @@ func TestReadTouchesAtMostEveryTouchEvery(t *testing.T) {
 
 	// Inside the interval the read is a read: nothing is written back.
 	f.now = f.now.Add(time.Minute)
-	if _, ok := f.manager.Read(context.Background(), req); !ok {
+	if _, ok := f.read(t, req); !ok {
 		t.Fatal("the session was lost")
 	}
 	if got := f.lastSeen(t, started.ID); !got.Equal(started.LastSeen) {
@@ -402,7 +464,7 @@ func TestReadTouchesAtMostEveryTouchEvery(t *testing.T) {
 
 	// Past it, the last use is written back once.
 	f.now = f.now.Add(5 * time.Minute)
-	touched, ok := f.manager.Read(context.Background(), req)
+	touched, ok := f.read(t, req)
 	if !ok {
 		t.Fatal("the session was lost")
 	}
@@ -448,9 +510,14 @@ func TestReadSurvivesAStoreThatCannotBeWritten(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: session.DefaultCookieName, Value: "s1"})
 
 	// The touch fails. The session is still valid, so the request is not.
-	got, ok := manager.Read(context.Background(), req)
+	got, ok, err := manager.Read(context.Background(), req)
 	if !ok {
 		t.Fatal("a failed touch ended a valid session")
+	}
+	// A valid session is never reported as an outage: true always comes with a
+	// nil error, whatever the write back did.
+	if err != nil {
+		t.Errorf("Read error = %v, want none for a valid session", err)
 	}
 	if !got.LastSeen.Equal(start) {
 		t.Errorf("last use = %s, want the stored one when the write failed", got.LastSeen)
@@ -474,7 +541,7 @@ func TestRotateIssuesANewID(t *testing.T) {
 	if _, err := f.store.Get(context.Background(), started.ID); !errors.Is(err, session.ErrNotFound) {
 		t.Errorf("the previous id is still in the store: %v", err)
 	}
-	if _, ok := f.manager.Read(context.Background(), req); ok {
+	if _, ok := f.read(t, req); ok {
 		t.Error("the old cookie still works")
 	}
 
@@ -482,7 +549,7 @@ func TestRotateIssuesANewID(t *testing.T) {
 	if len(cookies) != 1 || cookies[0].Value != rotated.ID {
 		t.Errorf("cookies = %+v, want the new id", cookies)
 	}
-	if _, ok := f.manager.Read(context.Background(), withCookies(rec)); !ok {
+	if _, ok := f.read(t, withCookies(rec)); !ok {
 		t.Error("the new cookie does not work")
 	}
 }
@@ -511,7 +578,7 @@ func TestRotateRefusesASessionTheStoreNoLongerHolds(t *testing.T) {
 	if cookies := rec.Result().Cookies(); len(cookies) != 0 {
 		t.Errorf("cookies = %+v, want none", cookies)
 	}
-	if _, ok := f.manager.Read(context.Background(), withCookies(rec)); ok {
+	if _, ok := f.read(t, withCookies(rec)); ok {
 		t.Error("the ended session came back")
 	}
 }
@@ -560,8 +627,8 @@ func TestRotateSetsTheCookieOnlyOnceTheOldIDIsGone(t *testing.T) {
 	// The client keeps the cookie it already had, and that session is intact.
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: session.DefaultCookieName, Value: started.ID})
-	if _, ok := manager.Read(context.Background(), req); !ok {
-		t.Error("the failed rotation left the caller without a session")
+	if _, ok, err := manager.Read(context.Background(), req); !ok || err != nil {
+		t.Errorf("the failed rotation left the caller without a session: %v", err)
 	}
 	// The new id is in the store, which is what saving first buys, and the
 	// caller has it in the returned session to clean up or retry with.
@@ -597,7 +664,7 @@ func TestRotateDoesNotExtendTheLifetime(t *testing.T) {
 
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 		req.AddCookie(&http.Cookie{Name: session.DefaultCookieName, Value: rotated.ID})
-		if _, ok := f.manager.Read(context.Background(), req); !ok {
+		if _, ok := f.read(t, req); !ok {
 			t.Fatalf("at %s the session had already ended", f.now)
 		}
 	}
@@ -606,7 +673,7 @@ func TestRotateDoesNotExtendTheLifetime(t *testing.T) {
 	f.now = f.now.Add(30 * time.Minute)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: session.DefaultCookieName, Value: current.ID})
-	if _, ok := f.manager.Read(context.Background(), req); ok {
+	if _, ok := f.read(t, req); ok {
 		t.Errorf("at %s the session outlived its lifetime", f.now)
 	}
 }
@@ -638,7 +705,7 @@ func TestEnd(t *testing.T) {
 	if _, err := f.store.Get(context.Background(), started.ID); !errors.Is(err, session.ErrNotFound) {
 		t.Errorf("the session is still in the store after the logout: %v", err)
 	}
-	if _, ok := f.manager.Read(context.Background(), req); ok {
+	if _, ok := f.read(t, req); ok {
 		t.Error("the cookie still works after the logout")
 	}
 
@@ -682,11 +749,11 @@ func TestEndAll(t *testing.T) {
 		t.Fatalf("EndAll: %v", err)
 	}
 	for i, req := range []*http.Request{first, second} {
-		if _, ok := f.manager.Read(context.Background(), req); ok {
+		if _, ok := f.read(t, req); ok {
 			t.Errorf("session %d of the account still works", i)
 		}
 	}
-	if _, ok := f.manager.Read(context.Background(), other); !ok {
+	if _, ok := f.read(t, other); !ok {
 		t.Error("another account's session was ended too")
 	}
 }
@@ -700,7 +767,7 @@ func TestEndAllRefusesAnEmptySubject(t *testing.T) {
 	if err := f.manager.EndAll(context.Background(), ""); err == nil {
 		t.Error("an empty subject was accepted")
 	}
-	if _, ok := f.manager.Read(context.Background(), req); !ok {
+	if _, ok := f.read(t, req); !ok {
 		t.Error("the session was ended by an empty subject")
 	}
 }
