@@ -22,6 +22,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ostendorf-cloud/web-kit/logging"
 )
 
 // DefaultTimeout bounds a check that was registered without one.
@@ -122,10 +124,11 @@ func (r *Registry) runChecks(ctx context.Context, checks []namedCheck) map[strin
 		wg.Add(1)
 		go func(c namedCheck) {
 			defer wg.Done()
-			reason, _ := runCheck(ctx, c)
+			reason, cause := runCheck(ctx, c)
 			if reason == "" {
 				return
 			}
+			logFailure(ctx, c.name, reason, cause)
 			mu.Lock()
 			failures[c.name] = reason
 			mu.Unlock()
@@ -166,6 +169,16 @@ func runCheck(ctx context.Context, c namedCheck) (string, error) {
 		}
 		return "failed", checkCtx.Err()
 	}
+}
+
+// logFailure logs a check's real cause once it has been classified as not
+// passing, with the request id from ctx, the same way api.Handle logs a
+// request failure: the detail that never reaches the client still reaches
+// the log, so an operator seeing a named check fail on /readyz can find out
+// why.
+func logFailure(ctx context.Context, name, reason string, cause error) {
+	logger := logging.FromContext(ctx).With("request_id", logging.RequestID(ctx))
+	logger.WarnContext(ctx, "readiness check did not pass", "check", name, "reason", reason, "error", cause.Error())
 }
 
 // Handle registers the liveness and readiness endpoints on mux, at GET

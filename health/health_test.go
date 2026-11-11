@@ -1,15 +1,19 @@
 package health
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ostendorf-cloud/web-kit/logging"
 )
 
 // get calls handler with a GET request for path and decodes the JSON body.
@@ -149,6 +153,39 @@ func TestReadyDoesNotWaitForACheckThatIgnoresItsTimeout(t *testing.T) {
 	}
 	if code != http.StatusServiceUnavailable || body.Checks["slow"] == "" {
 		t.Errorf("ready = %d %+v, want the overrunning check reported as not passing even though it returns nil", code, body)
+	}
+}
+
+func TestReadyLogsAFailedChecksCauseWithTheRequestID(t *testing.T) {
+	t.Parallel()
+
+	const (
+		name  = "database"
+		cause = "pq: password authentication failed for user wishlist"
+		reqID = "req-123"
+	)
+
+	var logged bytes.Buffer
+	ctx := logging.NewContext(t.Context(), logging.New(&logged, slog.LevelWarn))
+	ctx = logging.WithRequestID(ctx, reqID)
+
+	r := New()
+	r.Add(name, time.Second, func(context.Context) error { return errors.New(cause) })
+
+	rec := httptest.NewRecorder()
+	r.Ready(rec, httptest.NewRequestWithContext(ctx, http.MethodGet, "/readyz", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), cause) {
+		t.Errorf("the check's error text leaked into the response: %s", rec.Body.String())
+	}
+
+	for _, want := range []string{name, cause, reqID} {
+		if !strings.Contains(logged.String(), want) {
+			t.Errorf("log output = %s, want it to contain %q", logged.String(), want)
+		}
 	}
 }
 
