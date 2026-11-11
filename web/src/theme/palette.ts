@@ -426,15 +426,43 @@ export function buildPalette(config: ThemeSeedConfig): PaletteResult {
   const dark = buildOne('dark', config, warn)
   const ink = buildInk(config)
 
-  const errors = [
-    ...failures(light, TEXT_PAIRS, TEXT_MINIMUM).map((message) => `light mode, ${message}`),
-    ...failures(light, NON_TEXT_PAIRS, NON_TEXT_MINIMUM).map((message) => `light mode, ${message}`),
-    ...failures(dark, TEXT_PAIRS, TEXT_MINIMUM).map((message) => `dark mode, ${message}`),
-    ...failures(dark, NON_TEXT_PAIRS, NON_TEXT_MINIMUM).map((message) => `dark mode, ${message}`),
-  ]
+  // Defensive re-verification, not a path a valid seed config can reach: see
+  // collectFailures's own comment for why. Kept as a real check anyway, not
+  // deleted, because "the formulas below always produce a passing result" is
+  // exactly the kind of claim a future change to solve()'s anchors or
+  // margins could quietly break, and this is what would catch it.
+  const errors = collectFailures(light, dark)
   if (errors.length > 0) {
     return { ok: false, errors }
   }
 
   return { ok: true, light, dark, ink, warnings }
+}
+
+/** collectFailures re-checks a built light/dark pair against the real WCAG
+ *  failures() every shipped theme is checked with, and is what feeds
+ *  buildPalette's `ok: false` branch.
+ *
+ *  With the current config shape (ThemeSeedConfig carries only hex seed
+ *  colours) this branch is unreachable from any valid seed: neutralFamily
+ *  and accentFamily take only hue and chroma from a seed, never lightness,
+ *  and every role's lightness is solved by solve() against fixed-lightness
+ *  anchors that do not depend on the seed either. solve() always has room to
+ *  push a role's lightness to the extreme (0 or 1) where the WCAG ratio
+ *  against any realistic anchor approaches its 21:1 ceiling, so the
+ *  bisection always finds a passing lightness. palette.test.ts documents
+ *  this with the two most extreme seeds available, pure black and pure
+ *  white, and this function's own tests exercise the branch directly with a
+ *  synthetic palette instead, so its error formatting has real coverage
+ *  without needing a seed pair that cannot exist. A seed-level constraint
+ *  capable of conflicting with another (an explicit required lightness or
+ *  chroma, say) would make this branch reachable again; nothing in
+ *  ThemeSeedConfig expresses one today. */
+export function collectFailures(light: HexPalette, dark: HexPalette): string[] {
+  return [
+    ...failures(light, TEXT_PAIRS, TEXT_MINIMUM).map((message) => `light mode, ${message}`),
+    ...failures(light, NON_TEXT_PAIRS, NON_TEXT_MINIMUM).map((message) => `light mode, ${message}`),
+    ...failures(dark, TEXT_PAIRS, TEXT_MINIMUM).map((message) => `dark mode, ${message}`),
+    ...failures(dark, NON_TEXT_PAIRS, NON_TEXT_MINIMUM).map((message) => `dark mode, ${message}`),
+  ]
 }
