@@ -197,7 +197,7 @@ func Handle(h HandlerFunc) http.HandlerFunc {
 			return
 		}
 		apiErr := AsError(err)
-		logger := logging.FromContext(r.Context())
+		logger := logging.FromContext(r.Context()).With("request_id", logging.RequestID(r.Context()))
 		attrs := []any{"code", apiErr.Code, "status", apiErr.Status, "error", err.Error()}
 		if apiErr.Status >= http.StatusInternalServerError {
 			// A 5xx is this server's problem and the only level an operator
@@ -241,8 +241,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) error {
 	h.Set("Content-Type", "application/json; charset=utf-8")
 	h.Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	_, err = w.Write(body)
-	return err
+	if _, err := w.Write(body); err != nil {
+		return fmt.Errorf("api: write response: %w", err)
+	}
+	return nil
 }
 
 // Decode reads a JSON request body into into, with the default limit.
