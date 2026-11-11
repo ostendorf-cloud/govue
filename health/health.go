@@ -111,7 +111,9 @@ func (r *Registry) Ready(w http.ResponseWriter, req *http.Request) {
 
 // runChecks runs every check in checks concurrently, each under its own
 // timeout derived from ctx, and returns the name and classification of every
-// one that did not pass.
+// one that did not pass. A check that ignores ctx cancellation never holds
+// up the result past its own timeout: runCheck stops waiting on it once its
+// deadline fires, regardless of whether the check itself ever returns.
 func (r *Registry) runChecks(ctx context.Context, checks []namedCheck) map[string]string {
 	failures := make(map[string]string, len(checks))
 	var mu sync.Mutex
@@ -120,16 +122,9 @@ func (r *Registry) runChecks(ctx context.Context, checks []namedCheck) map[strin
 		wg.Add(1)
 		go func(c namedCheck) {
 			defer wg.Done()
-			checkCtx, cancel := context.WithTimeout(ctx, c.timeout)
-			defer cancel()
-
-			err := c.run(checkCtx)
-			if err == nil {
+			reason, _ := runCheck(ctx, c)
+			if reason == "" {
 				return
-			}
-			reason := "failed"
-			if errors.Is(checkCtx.Err(), context.DeadlineExceeded) {
-				reason = "timeout"
 			}
 			mu.Lock()
 			failures[c.name] = reason
@@ -138,6 +133,39 @@ func (r *Registry) runChecks(ctx context.Context, checks []namedCheck) map[strin
 	}
 	wg.Wait()
 	return failures
+}
+
+// runCheck runs c.run under a deadline of c.timeout derived from ctx and
+// reports whether it passed. reason is empty when it passed, "timeout" when
+// c's deadline fired before c.run returned, and "failed" otherwise.
+//
+// The Check contract does not require a check to select on ctx.Done(), so
+// runCheck never waits on c.run past the deadline it gave it: it races the
+// result against the deadline instead of trusting the check to respect it.
+// A check that keeps running after losing that race is left to finish or
+// not on its own; its eventual result, even a nil error, no longer reaches
+// anything.
+func runCheck(ctx context.Context, c namedCheck) (string, error) {
+	checkCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	result := make(chan error, 1)
+	go func() {
+		result <- c.run(checkCtx)
+	}()
+
+	select {
+	case err := <-result:
+		if err == nil {
+			return "", nil
+		}
+		return "failed", err
+	case <-checkCtx.Done():
+		if errors.Is(checkCtx.Err(), context.DeadlineExceeded) {
+			return "timeout", checkCtx.Err()
+		}
+		return "failed", checkCtx.Err()
+	}
 }
 
 // Handle registers the liveness and readiness endpoints on mux, at GET

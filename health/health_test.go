@@ -122,6 +122,36 @@ func TestReadyReportsATimeoutSeparatelyFromAFailure(t *testing.T) {
 	}
 }
 
+func TestReadyDoesNotWaitForACheckThatIgnoresItsTimeout(t *testing.T) {
+	t.Parallel()
+
+	const (
+		timeout = 20 * time.Millisecond
+		sleep   = 300 * time.Millisecond
+	)
+
+	r := New()
+	r.Add("slow", timeout, func(context.Context) error {
+		// A check is not required to select on ctx.Done(): nothing in the
+		// Check contract forces that cooperation. This one ignores
+		// cancellation entirely and reports success once it wakes up, well
+		// past its own configured timeout.
+		time.Sleep(sleep)
+		return nil
+	})
+
+	start := time.Now()
+	code, body := get(t, r.Ready, "/readyz")
+	elapsed := time.Since(start)
+
+	if elapsed >= sleep {
+		t.Errorf("/readyz took %s, waited for the full %s sleep instead of the %s timeout", elapsed, sleep, timeout)
+	}
+	if code != http.StatusServiceUnavailable || body.Checks["slow"] == "" {
+		t.Errorf("ready = %d %+v, want the overrunning check reported as not passing even though it returns nil", code, body)
+	}
+}
+
 func TestReadyRunsChecksInParallel(t *testing.T) {
 	t.Parallel()
 
