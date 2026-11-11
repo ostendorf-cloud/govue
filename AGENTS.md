@@ -17,8 +17,9 @@ repeated here.
 - `web/` holds the token contract, the example themes, the `useTheme` composable, the overlay
   and feedback components (`WkDialog`, `WkConfirmDialog`, `WkToastHost`, `WkEmptyState`,
   `WkErrorState`) with `useToasts`, and the form input components (`WkField`, `WkInput`,
-  `WkSelect`, `WkCheckbox`, `WkSwitch`, `WkTextarea`, `WkButton`) with `useForm`. Layout
-  components are a separate, not yet merged issue.
+  `WkSelect`, `WkCheckbox`, `WkSwitch`, `WkTextarea`, `WkButton`) with `useForm`, and the layout
+  components (`WkPage`, `WkHeader`, `WkFooter`, `WkNav`, `WkSkipLink`, `WkCard`, `WkBadge`,
+  `WkSkeleton`).
 - No Go package exists yet: each one is its own issue.
 
 ## Commands
