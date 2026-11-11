@@ -2,6 +2,10 @@ extends: default
 
 ignore:
   - .worktrees/
+  # An installed dependency's own YAML is not this repository's to lint, and
+  # pnpm writes the lockfile, so neither is read or edited by hand.
+  - web/node_modules/
+  - web/pnpm-lock.yaml
 
 rules:
   line-length:

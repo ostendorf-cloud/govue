@@ -57,6 +57,49 @@ tasks:
     cmds:
       - go test -race -count=1 ./...
 
+  # The web/ half. Every target below runs inside web/ and depends on web:deps,
+  # so one of them on its own is enough in a fresh checkout and in CI.
+  web:deps:
+    desc: Install the web/ dependencies from the lockfile
+    dir: web
+    cmds:
+      - pnpm install --frozen-lockfile
+
+  web:lint:
+    desc: ESLint over the web/ package
+    dir: web
+    deps: [web:deps]
+    cmds:
+      - pnpm run lint
+
+  web:format:
+    desc: Prettier format check over the web/ package
+    dir: web
+    deps: [web:deps]
+    cmds:
+      - pnpm run format:check
+
+  web:types:
+    desc: TypeScript and template typecheck of the web/ package
+    dir: web
+    deps: [web:deps]
+    cmds:
+      - pnpm run typecheck
+
+  web:test:
+    desc: Vitest suite of the web/ package
+    dir: web
+    deps: [web:deps]
+    cmds:
+      - pnpm run test
+
+  web:build:
+    desc: Build the web/ package standalone
+    dir: web
+    deps: [web:deps]
+    cmds:
+      - pnpm run build
+
   check:
     desc: Every check, one after another
     cmds:
@@ -70,8 +113,20 @@ tasks:
       - task: lint:secrets
       - task: build
       - task: test:go
+      - task: web:lint
+      - task: web:format
+      - task: web:types
+      - task: web:test
+      - task: web:build
 
   fmt:
     desc: Format Go code
     cmds:
       - golangci-lint fmt
+
+  web:fmt:
+    desc: Format the web/ package
+    dir: web
+    deps: [web:deps]
+    cmds:
+      - pnpm run format
