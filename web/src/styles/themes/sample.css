@@ -18,7 +18,7 @@
   --color-bg-subtle: light-dark(#d4bfd9, #371f3d);
   --color-surface: light-dark(#ffffff, #3e2744);
   --color-surface-hover: light-dark(#e3c8e4, #453149);
-  --color-overlay: light-dark(rgb(45 21 50 / 0.45), rgb(11 5 12 / 0.68));
+  --color-overlay: light-dark(rgb(45 21 50 / 0.45), rgb(39 3 48 / 0.68));
 
   --color-border: light-dark(#cdb7d1, #503a55);
   --color-border-strong: light-dark(#806487, #917595);

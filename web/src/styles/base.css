@@ -105,7 +105,10 @@
   --color-bg-subtle: light-dark(#d9bfd5, #3c2037);
   --color-surface: light-dark(#ffffff, #43283e);
   --color-surface-hover: light-dark(#e7cbe2, #473344);
-  --color-overlay: light-dark(rgb(52 25 48 / 0.45), rgb(12 6 11 / 0.68));
+  /* The dark scrim sits on hue 310 at 10% lightness and 90% saturation. A
+     desaturated near-black has too few levels to be placed clear of the
+     stylesheets the contract rules out, so the scrim keeps the neutral's tint. */
+  --color-overlay: light-dark(rgb(52 25 48 / 0.45), rgb(48 3 41 / 0.68));
 
   /* Lines. border is decorative, border-strong is what a control's own outline
      uses, which needs 3:1 against the surface behind it. */
