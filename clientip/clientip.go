@@ -161,6 +161,7 @@ func ParseCIDRs(raw string) ([]netip.Prefix, error) {
 // returns but a caller could still construct, keys on a fixed placeholder
 // rather than panicking.
 func Key(addr netip.Addr) string {
+	addr = addr.Unmap()
 	if !addr.IsValid() {
 		return "invalid"
 	}

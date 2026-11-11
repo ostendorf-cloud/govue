@@ -301,6 +301,16 @@ func TestKey(t *testing.T) {
 			want: "2001:db8:1:3::/64",
 		},
 		{name: "an invalid address does not panic", in: netip.Addr{}, want: "invalid"},
+		{
+			name: "an ipv4 mapped address keys on its unmapped form",
+			in:   netip.MustParseAddr("::ffff:198.51.100.7"),
+			want: "198.51.100.7",
+		},
+		{
+			name: "a different ipv4 mapped address keys distinctly",
+			in:   netip.MustParseAddr("::ffff:203.0.113.9"),
+			want: "203.0.113.9",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
