@@ -256,6 +256,34 @@ func TestHandleLogsAndWrites(t *testing.T) {
 	}
 }
 
+func TestHandleLogsTheRequestID(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	logger := logging.New(&buf, slog.LevelDebug)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/things", nil)
+	req = req.WithContext(logging.NewContext(req.Context(), logger))
+	req = req.WithContext(logging.WithRequestID(req.Context(), "req-42"))
+
+	Handle(func(http.ResponseWriter, *http.Request) error { return Internal(errors.New("disk gone")) })(rec, req)
+
+	var line struct {
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("log line is not JSON: %v: %s", err, buf.String())
+	}
+	if line.RequestID != "req-42" {
+		t.Errorf("log line request_id = %q, want req-42: %s", line.RequestID, buf.String())
+	}
+
+	if got := decodeEnvelope(t, rec.Body.Bytes()).RequestID; got != line.RequestID {
+		t.Errorf("response request_id = %q, log line request_id = %q, want them to match", got, line.RequestID)
+	}
+}
+
 func TestHandleWritesNothingExtraOnSuccess(t *testing.T) {
 	t.Parallel()
 
