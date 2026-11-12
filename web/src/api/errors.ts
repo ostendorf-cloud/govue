@@ -19,7 +19,6 @@ export const ErrorCode = {
   tooManyRequests: 'too_many_requests',
   requestTooLarge: 'request_too_large',
   unsupportedMediaType: 'unsupported_media_type',
-  methodNotAllowed: 'method_not_allowed',
   unavailable: 'unavailable',
   internal: 'internal',
   /** The request never reached the server, or the answer was not the error shape. */
