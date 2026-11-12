@@ -6,6 +6,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,7 +19,11 @@ func TestRateLimitAllowsThenDeniesWithDefaultResponder(t *testing.T) {
 	limiter.Now = func() time.Time { return time.Unix(0, 0) }
 
 	reached := 0
-	handler := RateLimit{Limiter: limiter}.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	rateLimit, err := NewRateLimit(RateLimitConfig{Limiter: limiter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := rateLimit.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		reached++
 	}))
 
@@ -51,7 +56,7 @@ func TestRateLimitRespondOverrideReplacesTheDefault(t *testing.T) {
 	limiter := ratelimit.New(0, time.Minute, 10)
 
 	var gotWait time.Duration
-	handler := RateLimit{
+	rateLimit, err := NewRateLimit(RateLimitConfig{
 		Limiter: limiter,
 		Respond: func(w http.ResponseWriter, _ *http.Request, retryAfter time.Duration) {
 			gotWait = retryAfter
@@ -59,7 +64,11 @@ func TestRateLimitRespondOverrideReplacesTheDefault(t *testing.T) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte("slow down"))
 		},
-	}.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := rateLimit.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Error("the handler must not run when the limiter denies the request")
 	}))
 
@@ -84,10 +93,14 @@ func TestRateLimitGivesEachClientItsOwnBucket(t *testing.T) {
 	limiter := ratelimit.New(1, time.Minute, 10)
 	limiter.Now = func() time.Time { return time.Unix(0, 0) }
 
-	handler := RateLimit{
+	rateLimit, err := NewRateLimit(RateLimitConfig{
 		Limiter:  limiter,
 		ClientIP: clientip.NewResolver(nil),
-	}.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := rateLimit.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -117,7 +130,11 @@ func TestRateLimitWithoutClientIPSharesOneBucket(t *testing.T) {
 	limiter := ratelimit.New(1, time.Minute, 10)
 	limiter.Now = func() time.Time { return time.Unix(0, 0) }
 
-	handler := RateLimit{Limiter: limiter}.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	rateLimit, err := NewRateLimit(RateLimitConfig{Limiter: limiter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := rateLimit.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -134,5 +151,15 @@ func TestRateLimitWithoutClientIPSharesOneBucket(t *testing.T) {
 	}
 	if got := requestFrom("192.0.2.2:2222"); got != http.StatusTooManyRequests {
 		t.Errorf("a different client without a ClientIP resolver = %d, want 429 from the shared bucket", got)
+	}
+}
+
+func TestNewRateLimitRequiresALimiter(t *testing.T) {
+	_, err := NewRateLimit(RateLimitConfig{})
+	if err == nil {
+		t.Fatal("an empty config was accepted")
+	}
+	if !strings.Contains(err.Error(), "limiter") {
+		t.Errorf("error %q does not name the missing limiter", err)
 	}
 }
