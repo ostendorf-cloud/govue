@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -254,6 +255,53 @@ func TestARedirectOntoPlainHTTPIsRefused(t *testing.T) {
 	login := loginAgainst(t, fake, testNow)
 	if _, err := p.Exchange(t.Context(), "the-code", login); !errors.Is(err, ErrProvider) {
 		t.Errorf("error = %v, want the downgrade to plain HTTP to be refused", err)
+	}
+}
+
+func TestACallersRedirectPolicyCannotAllowThePlainHTTPDowngrade(t *testing.T) {
+	// A redirect policy set for an unrelated reason must not take the scheme
+	// check with it. The policy here follows everything, which is what the
+	// downgrade needs and what it must not get.
+	fake := newIDP(t)
+	fake.redirectJWKSTo = "http://accounts.example.test" + plainJWKSPath
+
+	var calls atomic.Int64
+	p := provider(t, fake, fixed(testNow), func(c *Config) {
+		c.HTTPClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+			calls.Add(1)
+			return nil
+		}
+	})
+
+	login := loginAgainst(t, fake, testNow)
+	if _, err := p.Exchange(t.Context(), "the-code", login); !errors.Is(err, ErrProvider) {
+		t.Errorf("error = %v, want the downgrade to plain HTTP to be refused", err)
+	}
+	if got := calls.Load(); got != 0 {
+		t.Errorf("the caller's policy ran %d times on a refused downgrade, want 0", got)
+	}
+}
+
+func TestACallersRedirectPolicyStillRunsOnAnHTTPSRedirect(t *testing.T) {
+	// The composition keeps the caller's policy rather than dropping it: a
+	// redirect that stays on https reaches it.
+	fake := newIDP(t)
+	fake.redirectJWKSTo = "https://accounts.example.test" + plainJWKSPath
+
+	var calls atomic.Int64
+	p := provider(t, fake, fixed(testNow), func(c *Config) {
+		c.HTTPClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+			calls.Add(1)
+			return nil
+		}
+	})
+
+	login := loginAgainst(t, fake, testNow)
+	if _, err := p.Exchange(t.Context(), "the-code", login); err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("the caller's policy ran %d times, want it asked once about the https redirect", got)
 	}
 }
 

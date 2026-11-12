@@ -136,8 +136,8 @@ type Config struct {
 	// [DefaultTimeout] timeout.
 	//
 	// A client supplied here is copied, and a redirect onto plain HTTP is
-	// refused on it as well unless it already carries a redirect policy of its
-	// own.
+	// refused on it as well. A redirect policy it already carries is kept and
+	// runs after that refusal, so it cannot turn the check off.
 	HTTPClient *http.Client
 
 	// Now is the clock. Zero is [time.Now]. Tests replace it.
@@ -356,18 +356,30 @@ func isLoopback(host string) bool {
 // once, and a provider that answers a discovery or JWKS request with a
 // redirect could still move it onto plain HTTP afterwards. So every request
 // this package makes refuses that redirect, whether the client came from the
-// configuration or not. A caller that has set its own redirect policy keeps
-// it, because overriding a decision somebody made on purpose is worse than the
-// case it would cover.
+// configuration or not. A caller's own redirect policy is kept and asked
+// after the scheme check, never instead of it: a policy set for an unrelated
+// reason is not a decision to let a token endpoint move onto plain HTTP.
 func clientWith(configured *http.Client) *http.Client {
 	if configured == nil {
 		return &http.Client{Timeout: DefaultTimeout, CheckRedirect: refuseDowngrade}
 	}
 	client := *configured
-	if client.CheckRedirect == nil {
-		client.CheckRedirect = refuseDowngrade
-	}
+	client.CheckRedirect = refuseDowngradeThen(client.CheckRedirect)
 	return &client
+}
+
+// refuseDowngradeThen is the redirect policy for a configured client: the
+// scheme check first, and the caller's own policy only once that has passed.
+func refuseDowngradeThen(next func(*http.Request, []*http.Request) error) func(*http.Request, []*http.Request) error {
+	if next == nil {
+		return refuseDowngrade
+	}
+	return func(req *http.Request, via []*http.Request) error {
+		if err := refuseDowngrade(req, via); err != nil {
+			return err
+		}
+		return next(req, via)
+	}
 }
 
 // refuseDowngrade stops a redirect onto anything but https, and keeps the ten
