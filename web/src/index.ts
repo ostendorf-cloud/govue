@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The public surface of @ostendorf-cloud/web-kit.
+ * The public surface of @ostendorf-cloud/govue.
  *
  * The stylesheets are not imported here: an app imports the base stylesheet and
  * at most one theme itself, so it decides the order and nothing is pulled in

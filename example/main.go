@@ -8,7 +8,7 @@
 // chain is actually assembled and kept correct, rather than living only in
 // a document that can drift from the packages it describes. See
 // (*app).handler for the two chains and why each position is forced, and
-// docs/concepts/web-kit.md for the reasoning.
+// docs/concepts/govue.md for the reasoning.
 package main
 
 import (
@@ -18,8 +18,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/ostendorf-cloud/web-kit/httpserver"
-	"github.com/ostendorf-cloud/web-kit/logging"
+	"github.com/ostendorf-cloud/govue/httpserver"
+	"github.com/ostendorf-cloud/govue/logging"
 )
 
 func main() {

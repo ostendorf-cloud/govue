@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/ostendorf-cloud/web-kit/api"
-	"github.com/ostendorf-cloud/web-kit/logging"
+	"github.com/ostendorf-cloud/govue/api"
+	"github.com/ostendorf-cloud/govue/logging"
 )
 
 // Recover returns a middleware that turns a panic in a later handler into a

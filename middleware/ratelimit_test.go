@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/clientip"
-	"github.com/ostendorf-cloud/web-kit/ratelimit"
+	"github.com/ostendorf-cloud/govue/clientip"
+	"github.com/ostendorf-cloud/govue/ratelimit"
 )
 
 func TestRateLimitAllowsThenDeniesWithDefaultResponder(t *testing.T) {

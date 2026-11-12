@@ -35,7 +35,7 @@ export interface ThemeState {
   cycleMode: () => void
 }
 
-const DEFAULT_STORAGE_KEY = 'web-kit-theme'
+const DEFAULT_STORAGE_KEY = 'govue-theme'
 const DEFAULT_THEME: ThemeName = 'sample'
 
 // One page has one theme, so the state is shared rather than created per

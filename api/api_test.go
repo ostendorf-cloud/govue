@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/logging"
+	"github.com/ostendorf-cloud/govue/logging"
 )
 
 // decodeEnvelope reads the error envelope out of a response.

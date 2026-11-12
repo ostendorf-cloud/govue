@@ -1,6 +1,6 @@
-# web-kit
+# govue
 
-The design of the framework and the reasoning behind it.
+The design of the library and the reasoning behind it.
 
 ## Problem
 
@@ -55,7 +55,7 @@ The design of the framework and the reasoning behind it.
 ### Go packages at the module root
 
 - Everything at the root is public API, so an import reads
-  `github.com/ostendorf-cloud/web-kit/ratelimit` with no segment that says nothing.
+  `github.com/ostendorf-cloud/govue/ratelimit` with no segment that says nothing.
 - The library packages of the standard library and `golang.org/x/...` are laid out this way, and
   this repository is nothing but library packages: no binary, so no `cmd/`.
 - The cost is that there is no compiler-enforced boundary. A helper added at the root is public

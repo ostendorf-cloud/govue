@@ -74,8 +74,8 @@ describe('renderTheme', () => {
     }
   })
 
-  it('states plainly that the file does not belong in web-kit', () => {
+  it('states plainly that the file does not belong in govue', () => {
     const header = css.split('*/')[0].replace(/\s*\*\s*/g, ' ')
-    expect(header).toContain('not meant to be committed to web-kit')
+    expect(header).toContain('not meant to be committed to govue')
   })
 })

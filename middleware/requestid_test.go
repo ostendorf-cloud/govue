@@ -10,7 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/ostendorf-cloud/web-kit/logging"
+	"github.com/ostendorf-cloud/govue/logging"
 )
 
 func discardLogger() *slog.Logger {

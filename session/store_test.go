@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/session"
+	"github.com/ostendorf-cloud/govue/session"
 )
 
 // MemoryStore satisfies the interface this package publishes.

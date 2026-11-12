@@ -9,5 +9,5 @@ Closes #<!-- issue number, or "part of #<issue>" -->
 - [ ] The pull request title is a Conventional Commit; this repository's release tooling
   parses it.
 - [ ] Every commit carries a DCO `Signed-off-by` trailer (`git commit -s`). See
-  [CONTRIBUTING.md](https://github.com/ostendorf-cloud/web-kit/blob/main/CONTRIBUTING.md)
+  [CONTRIBUTING.md](https://github.com/ostendorf-cloud/govue/blob/main/CONTRIBUTING.md)
   for details.

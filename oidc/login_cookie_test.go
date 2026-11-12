@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/oidc"
-	"github.com/ostendorf-cloud/web-kit/session"
+	"github.com/ostendorf-cloud/govue/oidc"
+	"github.com/ostendorf-cloud/govue/session"
 )
 
 // TestLoginSurvivesASignedCookie is the one place the two packages meet. oidc

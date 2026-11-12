@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/ostendorf-cloud/web-kit/logging"
+	"github.com/ostendorf-cloud/govue/logging"
 )
 
 // DefaultNextParam is the query parameter [Handlers.Login] reads the post login

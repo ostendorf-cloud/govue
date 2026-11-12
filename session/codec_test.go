@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/session"
+	"github.com/ostendorf-cloud/govue/session"
 )
 
 // key is a signing key of the required length. A real one is generated, not

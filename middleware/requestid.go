@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/ostendorf-cloud/web-kit/logging"
+	"github.com/ostendorf-cloud/govue/logging"
 )
 
 // RequestIDHeader is the response header a request id is sent back on. A

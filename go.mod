@@ -1,4 +1,4 @@
-module github.com/ostendorf-cloud/web-kit
+module github.com/ostendorf-cloud/govue
 
 go 1.27
 

@@ -21,7 +21,7 @@ export default defineConfig({
     lib: {
       entry: fileURLToPath(new URL('./src/index.ts', import.meta.url)),
       formats: ['es'],
-      fileName: 'web-kit',
+      fileName: 'govue',
     },
     // Vue and Tailwind come from the consuming app, never twice.
     rollupOptions: {

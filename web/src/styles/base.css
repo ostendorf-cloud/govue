@@ -33,7 +33,7 @@
 
 /* Consumers install this package from git, and Tailwind does not scan
    dependencies by default, so an app has to point at these sources itself:
-     @source "../node_modules/@ostendorf-cloud/web-kit/src";
+     @source "../node_modules/@ostendorf-cloud/govue/src";
    See the repository README. */
 
 /*

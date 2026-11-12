@@ -16,9 +16,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ostendorf-cloud/web-kit/csrf"
-	"github.com/ostendorf-cloud/web-kit/logging"
-	"github.com/ostendorf-cloud/web-kit/session"
+	"github.com/ostendorf-cloud/govue/csrf"
+	"github.com/ostendorf-cloud/govue/logging"
+	"github.com/ostendorf-cloud/govue/session"
 )
 
 // writeKeyFile writes 32 random bytes, hex encoded, to a file under t's
@@ -384,7 +384,7 @@ func TestRateLimitAnswersWithTheRealRouteLabel(t *testing.T) {
 // catch-all does not cover: a non-canonical path never reaches the route
 // chain at all, http.ServeMux answers it with its own redirect first, so
 // the rate limiter never sees it. The canonical path, with the same burst
-// of one, is rate limited as normal. See docs/concepts/web-kit.md for why
+// of one, is rate limited as normal. See docs/concepts/govue.md for why
 // the redirect bypassing the chain is accepted.
 func TestNonCanonicalPathBypassesTheRateLimiter(t *testing.T) {
 	t.Parallel()

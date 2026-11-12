@@ -15,8 +15,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ostendorf-cloud/web-kit/logging"
-	"github.com/ostendorf-cloud/web-kit/session"
+	"github.com/ostendorf-cloud/govue/logging"
+	"github.com/ostendorf-cloud/govue/session"
 )
 
 // handlerFixture is the pair of handlers against the fake provider, with a

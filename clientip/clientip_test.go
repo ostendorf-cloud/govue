@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ostendorf-cloud/web-kit/clientip"
+	"github.com/ostendorf-cloud/govue/clientip"
 )
 
 func TestResolverResolve(t *testing.T) {

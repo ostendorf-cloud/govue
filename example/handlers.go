@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/api"
-	"github.com/ostendorf-cloud/web-kit/middleware"
-	"github.com/ostendorf-cloud/web-kit/oidc"
-	"github.com/ostendorf-cloud/web-kit/session"
+	"github.com/ostendorf-cloud/govue/api"
+	"github.com/ostendorf-cloud/govue/middleware"
+	"github.com/ostendorf-cloud/govue/oidc"
+	"github.com/ostendorf-cloud/govue/session"
 )
 
 // loginCookieName carries the signed Login state between the redirect to the
@@ -119,8 +119,8 @@ func (a *app) createNote(w http.ResponseWriter, r *http.Request) error {
 func (a *app) home(w http.ResponseWriter, r *http.Request) error {
 	nonce := middleware.Nonce(r.Context())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, err := fmt.Fprintf(w, "<!doctype html><html><head><title>web-kit example</title></head>"+
-		"<body><p>web-kit example application.</p>"+
+	_, err := fmt.Fprintf(w, "<!doctype html><html><head><title>govue example</title></head>"+
+		"<body><p>govue example application.</p>"+
 		"<script nonce=%q>console.log(\"loaded under the nonce\");</script>"+
 		"</body></html>", nonce)
 	if err != nil {

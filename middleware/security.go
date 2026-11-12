@@ -49,7 +49,7 @@ type Policy struct {
 
 // NewPolicy returns an empty policy that denies nothing. Prefer
 // DefaultPolicy, which denies everything and then allows what this
-// framework's own responses need.
+// library's own responses need.
 func NewPolicy() *Policy {
 	return &Policy{values: map[string][]string{}, nonced: map[string]bool{}}
 }
@@ -179,7 +179,7 @@ type Security struct {
 // with a per-response nonce for inline script and style, no MIME sniffing,
 // no framing, a referrer sent only within the same origin, both
 // cross-origin isolation headers set to same-origin, and every browser
-// feature this framework has no use for denied. A zero value on a field,
+// feature this library has no use for denied. A zero value on a field,
 // such as HSTS = 0, Policy = nil or FrameOptions = "", is how a consuming
 // application opts out of that one header; nothing here changes what a
 // fresh call to DefaultSecurity produces.

@@ -76,7 +76,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/logging"
+	"github.com/ostendorf-cloud/govue/logging"
 )
 
 // ErrLogin is every failure that ends this one login: a code the provider
