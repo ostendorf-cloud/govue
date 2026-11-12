@@ -74,12 +74,22 @@ jobs:
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db  # v3.6.3
       - run: task lint:secrets
 
+  # The shared reusable workflow pins addlicense itself and takes the file
+  # set as complete "find" invocations, one per line. task lint:license
+  # keeps the same invocation for local development, and AGENTS.md records
+  # that the two are kept in step by hand.
   license:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
-      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db  # v3.6.3
-      - run: task lint:license
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-license.yaml@v0.1.0
+    with:
+      copyright-holder: Simon Ostendorf
+      year: "2026"
+      # Mirrors mise.toml's own pin, so the same addlicense runs locally
+      # and in CI.
+      addlicense-version: "1.2.0"
+      find-commands: |
+        find . -name "*.go" -not -path "./.claude/worktrees/*" -not -path "*/node_modules/*"
+        find web/src -type f \( -name "*.ts" -o -name "*.vue" \) -not -path "*/node_modules/*" -not -path "*/dist/*"
+        find web/scripts -type f \( -name "*.ts" -o -name "*.vue" \) -not -path "*/node_modules/*" -not -path "*/dist/*"
 
   build:
     runs-on: ubuntu-latest

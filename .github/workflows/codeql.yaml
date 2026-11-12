@@ -1,5 +1,8 @@
 name: codeql
 
+# Scanning delegated to the organisation's shared reusable workflow. The
+# language list stays this repository's own: Go at the module root, and
+# the TypeScript and Vue sources under web/.
 on:
   push:
     branches: [main]
@@ -17,25 +20,6 @@ permissions:
 
 jobs:
   analyze:
-    name: Analyze ${{ matrix.language }} with CodeQL
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - language: go
-            build-mode: autobuild
-          - language: javascript-typescript
-            build-mode: none
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
-      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db  # v3.6.3
-        if: matrix.language == 'go'
-      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
-        with:
-          languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
-      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
-        with:
-          category: "/language:${{ matrix.language }}"
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-codeql.yaml@v0.1.0
+    with:
+      languages: '["go", "javascript-typescript"]'
