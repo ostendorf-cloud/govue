@@ -5,7 +5,7 @@
 // Reka UI ships a Toast primitive, but this host stays hand-rolled on plain
 // elements. A toast is not modal: there is no focus trap and no inert
 // background to get right, which is exactly what made jsdom's blind spot a
-// real problem for WkDialog. What a toast actually has to get right -
+// real problem for GovueDialog. What a toast actually has to get right -
 // live-region politeness, the right text content, a working dismiss button,
 // timeout behaviour - is genuinely verifiable under jsdom with fake timers,
 // as this file's test suite shows. Adopting a second, heavier primitive here
@@ -89,7 +89,7 @@ const regions = computed<Region[]>(() => [
           </div>
 
           <!-- A plain button for the same reason the confirm dialog's buttons
-               are plain: WkButton does not exist on main yet. -->
+               are plain: GovueButton does not exist on main yet. -->
           <button
             type="button"
             class="ml-auto inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-hover active:bg-bg-subtle"

@@ -4,30 +4,30 @@
 import { render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
-import WkCard from './WkCard.vue'
+import GovueCard from './GovueCard.vue'
 
-describe('WkCard', () => {
+describe('GovueCard', () => {
   it('shows what it was given', () => {
-    render(WkCard, { slots: { default: 'Four projects, two of them shared' } })
+    render(GovueCard, { slots: { default: 'Four projects, two of them shared' } })
 
     expect(screen.getByText('Four projects, two of them shared')).toBeVisible()
   })
 
   it('renders a title as a third level heading', () => {
-    render(WkCard, { props: { title: 'Recent activity' }, slots: { default: 'Body' } })
+    render(GovueCard, { props: { title: 'Recent activity' }, slots: { default: 'Body' } })
 
     expect(screen.getByRole('heading', { level: 3, name: 'Recent activity' })).toBeVisible()
   })
 
   it('is a plain surface by default, not a part of the page a reader can jump to', () => {
-    render(WkCard, { props: { title: 'Recent activity' }, slots: { default: 'Body' } })
+    render(GovueCard, { props: { title: 'Recent activity' }, slots: { default: 'Body' } })
 
     expect(screen.queryByRole('article')).toBeNull()
     expect(screen.queryByRole('region')).toBeNull()
   })
 
   it('becomes a named part of the page when it is asked to', () => {
-    render(WkCard, {
+    render(GovueCard, {
       props: { as: 'article', title: 'Recent activity' },
       slots: { default: 'Body' },
     })
@@ -36,7 +36,7 @@ describe('WkCard', () => {
   })
 
   it('shows the header and the footer slots', () => {
-    render(WkCard, {
+    render(GovueCard, {
       slots: { header: 'Two shared', default: 'Body', footer: 'Updated today' },
     })
 
@@ -45,7 +45,7 @@ describe('WkCard', () => {
   })
 
   it('leaves out the footer nobody filled', () => {
-    render(WkCard, { slots: { default: 'Body' } })
+    render(GovueCard, { slots: { default: 'Body' } })
 
     expect(screen.queryByText('Updated today')).toBeNull()
   })

@@ -6,7 +6,7 @@ import { render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 import { nextTick } from 'vue'
 
-import WkConfirmDialog from './WkConfirmDialog.vue'
+import GovueConfirmDialog from './GovueConfirmDialog.vue'
 
 const props = {
   title: 'Discard the draft?',
@@ -15,15 +15,15 @@ const props = {
   open: true,
 }
 
-// See WkDialog.test.ts: the dialog this wraps only reaches the DOM one tick
+// See GovueDialog.test.ts: the dialog this wraps only reaches the DOM one tick
 // after render, because Reka's portal gates on a ref flipped in onMounted.
 async function openDialog(overrides: Record<string, unknown> = {}) {
-  const view = render(WkConfirmDialog, { props: { ...props, ...overrides } })
+  const view = render(GovueConfirmDialog, { props: { ...props, ...overrides } })
   await nextTick()
   return view
 }
 
-describe('WkConfirmDialog', () => {
+describe('GovueConfirmDialog', () => {
   it('is a dialog named by its question and described by what happens', async () => {
     await openDialog()
 

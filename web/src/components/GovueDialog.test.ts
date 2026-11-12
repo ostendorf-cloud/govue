@@ -23,7 +23,7 @@ import { render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 import { h, nextTick } from 'vue'
 
-import WkDialog from './WkDialog.vue'
+import GovueDialog from './GovueDialog.vue'
 
 // Reka's portal only teleports its content once the component has actually
 // mounted (it gates on a `isMounted` ref flipped in onMounted, which Vue
@@ -31,7 +31,7 @@ import WkDialog from './WkDialog.vue'
 // render call), so every test that expects the dialog to be in the DOM
 // awaits one tick after rendering it open.
 async function open(props: Record<string, unknown> = {}) {
-  const view = render(WkDialog, {
+  const view = render(GovueDialog, {
     props: { title: 'Discard the draft?', open: true, ...props },
     slots: {
       default: () => 'Any changes since the last save are lost.',
@@ -53,7 +53,7 @@ function backdrop(): HTMLElement {
   return element
 }
 
-describe('WkDialog', () => {
+describe('GovueDialog', () => {
   it('is a dialog named by its heading', async () => {
     await open({ description: 'This cannot be undone.' })
 
@@ -71,7 +71,7 @@ describe('WkDialog', () => {
   })
 
   it('is not in the page while closed', () => {
-    render(WkDialog, { props: { title: 'Discard the draft?' } })
+    render(GovueDialog, { props: { title: 'Discard the draft?' } })
 
     expect(screen.queryByRole('dialog')).toBeNull()
   })

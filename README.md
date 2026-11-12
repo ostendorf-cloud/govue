@@ -119,9 +119,10 @@ const { theme, mode, resolvedMode, setTheme, setMode, cycleMode } = useTheme({ t
 The choice is persisted, so it survives a reload, and it wins over the system setting in both
 directions.
 
-`WkField`, `WkInput`, `WkSelect`, `WkCheckbox`, `WkSwitch`, `WkTextarea` and `WkButton` are the
-form input components, all styled on the same tokens. `useForm` ties a set of values to
-validation and a submit function, and hands back the state a form needs to render itself:
+`GovueField`, `GovueInput`, `GovueSelect`, `GovueCheckbox`, `GovueSwitch`, `GovueTextarea` and
+`GovueButton` are the form input components, all styled on the same tokens. `useForm` ties a set
+of values to validation and a submit function, and hands back the state a form needs to render
+itself:
 
 ```ts
 const form = useForm({
@@ -132,12 +133,17 @@ const form = useForm({
 ```
 
 ```vue
-<WkField label="Title" :error="form.errorOf('title')">
-  <WkInput v-model="form.values.title" @blur="form.blur('title')" />
-</WkField>
-<WkButton variant="primary" type="submit" :loading="form.submitting.value" @click="form.handleSubmit">
+<GovueField label="Title" :error="form.errorOf('title')">
+  <GovueInput v-model="form.values.title" @blur="form.blur('title')" />
+</GovueField>
+<GovueButton
+  variant="primary"
+  type="submit"
+  :loading="form.submitting.value"
+  @click="form.handleSubmit"
+>
   Save
-</WkButton>
+</GovueButton>
 ```
 
 A failed submit that rejects with the shape `useForm` describes as `ApiError` lands its field

@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The retry button is a plain <button> styled with the same secondary role-
-// token classes WkButton uses for that variant, not WkButton itself: WkButton
-// does not exist on main yet (it ships in the still-unmerged forms pull
-// request), and this component must not depend on an unmerged component from
-// another pull request. The same reasoning #16 already applies to the
-// reka-ui dependency itself.
+// token classes GovueButton uses for that variant, not GovueButton itself:
+// GovueButton does not exist on main yet (it ships in the still-unmerged
+// forms pull request), and this component must not depend on an unmerged
+// component from another pull request. The same reasoning #16 already applies
+// to the reka-ui dependency itself.
 withDefaults(
   defineProps<{
     /** What failed, in the visitor's terms. */

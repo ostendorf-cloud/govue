@@ -5,10 +5,10 @@ import { render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 import { h } from 'vue'
 
-import WkHeader from './WkHeader.vue'
+import GovueHeader from './GovueHeader.vue'
 
 function renderHeader() {
-  return render(WkHeader, {
+  return render(GovueHeader, {
     slots: {
       brand: () => h('a', { href: '/' }, 'Home'),
       default: () => h('nav', { 'aria-label': 'Main' }, h('a', { href: '/projects' }, 'Projects')),
@@ -17,7 +17,7 @@ function renderHeader() {
   })
 }
 
-describe('WkHeader', () => {
+describe('GovueHeader', () => {
   it('is the banner landmark', () => {
     renderHeader()
 

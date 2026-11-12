@@ -4,7 +4,7 @@
 
 withDefaults(
   defineProps<{
-    /** The main landmark of the page. WkPage carries this id. */
+    /** The main landmark of the page. GovuePage carries this id. */
     target?: string
   }>(),
   { target: '#main' },

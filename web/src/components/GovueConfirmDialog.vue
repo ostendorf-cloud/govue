@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The confirm and cancel buttons are plain <button> elements styled with the
-// same secondary/danger role-token classes WkButton uses for those variants,
-// not WkButton itself: WkButton does not exist on main yet (it ships in the
+// same secondary/danger role-token classes GovueButton uses for those variants,
+// not GovueButton itself: GovueButton does not exist on main yet (it ships in the
 // still-unmerged forms pull request), and this component must not depend on
 // an unmerged component from another pull request. The same reasoning #16
 // already applies to the reka-ui dependency itself.
-import WkDialog from './WkDialog.vue'
+import GovueDialog from './GovueDialog.vue'
 
 withDefaults(
   defineProps<{
@@ -39,7 +39,7 @@ function confirm(): void {
 
 <template>
   <!-- Not dismissible: a destructive question is answered, not escaped. -->
-  <WkDialog
+  <GovueDialog
     v-model:open="open"
     :title="title"
     :description="message"
@@ -70,5 +70,5 @@ function confirm(): void {
         {{ confirmLabel }}
       </button>
     </template>
-  </WkDialog>
+  </GovueDialog>
 </template>

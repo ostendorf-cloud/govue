@@ -4,7 +4,7 @@
 // Reka marks every sibling outside the dialog aria-hidden, through the
 // aria-hidden package's hideOthers, not the inert attribute. jsdom does not
 // enforce what aria-hidden means: a synthetic click or .focus() call still
-// reaches a node marked aria-hidden="true" in a test, so WkDialog.test.ts
+// reaches a node marked aria-hidden="true" in a test, so GovueDialog.test.ts
 // can only confirm the marker was applied, never that interaction is
 // actually blocked. This suite drives a real pointer click and a real Tab
 // sequence and checks that neither one ever reaches the page content behind
@@ -24,7 +24,7 @@ async function clickAt(page: Page, selector: string): Promise<void> {
 }
 
 test.describe('inert background', () => {
-  test('a pointer click behind an open WkDialog never reaches the page buttons', async ({
+  test('a pointer click behind an open GovueDialog never reaches the page buttons', async ({
     page,
   }) => {
     // Non-dismissible, so the first click at the backdrop's position cannot
@@ -42,7 +42,7 @@ test.describe('inert background', () => {
     await expect(page.locator('#page-after-count')).toHaveText('0')
   })
 
-  test('Tab never reaches the page buttons while WkDialog is open', async ({ page }) => {
+  test('Tab never reaches the page buttons while GovueDialog is open', async ({ page }) => {
     await page.goto('/')
     await page.getByRole('button', { name: 'Open dialog' }).click()
     await expect(page.getByRole('dialog')).toBeVisible()
@@ -55,7 +55,7 @@ test.describe('inert background', () => {
     }
   })
 
-  test('a pointer click behind an open WkConfirmDialog never reaches the page buttons', async ({
+  test('a pointer click behind an open GovueConfirmDialog never reaches the page buttons', async ({
     page,
   }) => {
     await page.goto('/')

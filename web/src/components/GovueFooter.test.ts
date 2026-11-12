@@ -4,48 +4,50 @@
 import { render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
-import WkFooter from './WkFooter.vue'
+import GovueFooter from './GovueFooter.vue'
 
 const links = [
   { href: '#imprint', label: 'Imprint' },
   { href: '#privacy', label: 'Privacy' },
 ]
 
-describe('WkFooter', () => {
+describe('GovueFooter', () => {
   it('is the contentinfo landmark', () => {
-    render(WkFooter)
+    render(GovueFooter)
 
     expect(screen.getByRole('contentinfo')).toBeVisible()
   })
 
   it('names its navigation, so it is not confused with the main one', () => {
-    render(WkFooter, { props: { links } })
+    render(GovueFooter, { props: { links } })
 
     expect(screen.getByRole('navigation', { name: 'Footer' })).toBeVisible()
   })
 
   it('renders the legal links to their destinations', () => {
-    render(WkFooter, { props: { links } })
+    render(GovueFooter, { props: { links } })
 
     expect(screen.getByRole('link', { name: 'Imprint' })).toHaveAttribute('href', '#imprint')
     expect(screen.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '#privacy')
   })
 
   it('has no navigation when there are no links', () => {
-    render(WkFooter, { props: { note: '© 2026. All rights reserved.' } })
+    render(GovueFooter, { props: { note: '© 2026. All rights reserved.' } })
 
     expect(screen.queryByRole('navigation')).toBeNull()
     expect(screen.getByText('© 2026. All rights reserved.')).toBeVisible()
   })
 
   it('shows what is put inside it', () => {
-    render(WkFooter, { slots: { default: 'Need help? Our support team can take it from here.' } })
+    render(GovueFooter, {
+      slots: { default: 'Need help? Our support team can take it from here.' },
+    })
 
     expect(screen.getByText('Need help? Our support team can take it from here.')).toBeVisible()
   })
 
   it('places every link as a real, focusable control in document order', () => {
-    render(WkFooter, { props: { links } })
+    render(GovueFooter, { props: { links } })
 
     const imprint = screen.getByRole('link', { name: 'Imprint' })
     const privacy = screen.getByRole('link', { name: 'Privacy' })

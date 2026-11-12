@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // jsdom has no layout engine, so it cannot tell an off-screen or hidden
-// focusable element apart from a visible one: WkDialog.test.ts documents why
+// focusable element apart from a visible one: GovueDialog.test.ts documents why
 // the focus trap itself needs a real browser. This suite presses Tab for
 // real, through Playwright's keyboard, all the way to the last focusable
 // element inside an open dialog and checks that the next Tab press wraps
@@ -10,7 +10,9 @@
 import { expect, test } from '@playwright/test'
 
 test.describe('focus trap', () => {
-  test('wraps from the last to the first focusable element inside WkDialog', async ({ page }) => {
+  test('wraps from the last to the first focusable element inside GovueDialog', async ({
+    page,
+  }) => {
     await page.goto('/')
     await page.getByRole('button', { name: 'Open dialog' }).click()
 
@@ -28,7 +30,7 @@ test.describe('focus trap', () => {
     await expect(link).toBeFocused()
   })
 
-  test('wraps from Delete back to Cancel inside WkConfirmDialog', async ({ page }) => {
+  test('wraps from Delete back to Cancel inside GovueConfirmDialog', async ({ page }) => {
     await page.goto('/')
     await page.getByRole('button', { name: 'Open confirm dialog' }).click()
 

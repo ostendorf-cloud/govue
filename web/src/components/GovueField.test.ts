@@ -5,21 +5,21 @@ import { render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 import { defineComponent, h } from 'vue'
 
-import WkField from './WkField.vue'
-import WkInput from './WkInput.vue'
+import GovueField from './GovueField.vue'
+import GovueInput from './GovueInput.vue'
 
-type FieldProps = InstanceType<typeof WkField>['$props']
+type FieldProps = InstanceType<typeof GovueField>['$props']
 
 /** fieldWithInput is the normal pairing: the field labels the input. */
 function fieldWithInput(props: FieldProps) {
   return defineComponent({
     setup() {
-      return () => h(WkField, props, { default: () => h(WkInput, { placeholder: 'Lamp' }) })
+      return () => h(GovueField, props, { default: () => h(GovueInput, { placeholder: 'Lamp' }) })
     },
   })
 }
 
-describe('WkField', () => {
+describe('GovueField', () => {
   it('labels the control inside it', () => {
     render(fieldWithInput({ label: 'Title' }))
 
@@ -69,7 +69,7 @@ describe('WkField', () => {
       setup() {
         return () =>
           h(
-            WkField,
+            GovueField,
             { label: 'Colour', error: 'Pick one.' },
             {
               default: ({
@@ -102,8 +102,8 @@ describe('WkField', () => {
       setup() {
         return () =>
           h('div', [
-            h(WkField, { label: 'First' }, { default: () => h(WkInput) }),
-            h(WkField, { label: 'Second' }, { default: () => h(WkInput) }),
+            h(GovueField, { label: 'First' }, { default: () => h(GovueInput) }),
+            h(GovueField, { label: 'Second' }, { default: () => h(GovueInput) }),
           ])
       },
     })

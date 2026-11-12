@@ -4,11 +4,11 @@
 import { render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
-import WkPage from './WkPage.vue'
+import GovuePage from './GovuePage.vue'
 
-describe('WkPage', () => {
+describe('GovuePage', () => {
   it('is the main landmark the skip link points at', () => {
-    render(WkPage, { slots: { default: 'Content' } })
+    render(GovuePage, { slots: { default: 'Content' } })
 
     const main = screen.getByRole('main')
     expect(main).toBeVisible()
@@ -16,26 +16,26 @@ describe('WkPage', () => {
   })
 
   it('renders the title as the page heading', () => {
-    render(WkPage, { props: { title: 'Your projects', lead: 'Everything you keep here.' } })
+    render(GovuePage, { props: { title: 'Your projects', lead: 'Everything you keep here.' } })
 
     expect(screen.getByRole('heading', { level: 1, name: 'Your projects' })).toBeVisible()
     expect(screen.getByText('Everything you keep here.')).toBeVisible()
   })
 
   it('has no heading when the page brings its own', () => {
-    render(WkPage, { slots: { default: 'Content' } })
+    render(GovuePage, { slots: { default: 'Content' } })
 
     expect(screen.queryByRole('heading')).toBeNull()
   })
 
   it('shows what is put inside it', () => {
-    render(WkPage, { slots: { default: 'A list of recent entries' } })
+    render(GovuePage, { slots: { default: 'A list of recent entries' } })
 
     expect(screen.getByText('A list of recent entries')).toBeVisible()
   })
 
   it('holds the reading measure by default and the shell width on request', async () => {
-    const page = render(WkPage)
+    const page = render(GovuePage)
     expect(screen.getByRole('main').className).toContain('max-w-reading')
 
     await page.rerender({ width: 'shell' })

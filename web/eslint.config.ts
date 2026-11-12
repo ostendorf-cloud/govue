@@ -24,8 +24,8 @@ const config: ReturnType<typeof defineConfigWithVueTs> = defineConfigWithVueTs(
   {
     name: 'govue/rules',
     rules: {
-      // The component files carry the prefix, the tags do not: Wk is the
-      // namespace of this library.
+      // Every component name carries the prefix: Govue is the namespace of
+      // this library.
       'vue/multi-word-component-names': 'off',
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-non-null-assertion': 'error',

@@ -4,7 +4,7 @@
 import { fireEvent, render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
-import WkNav from './WkNav.vue'
+import GovueNav from './GovueNav.vue'
 
 const items = [
   { href: '#projects', label: 'Projects' },
@@ -12,10 +12,10 @@ const items = [
 ]
 
 function renderNav(props: Record<string, unknown> = {}) {
-  return render(WkNav, { props: { items, ...props } })
+  return render(GovueNav, { props: { items, ...props } })
 }
 
-describe('WkNav', () => {
+describe('GovueNav', () => {
   it('is a navigation landmark named Main by default', () => {
     renderNav()
 
