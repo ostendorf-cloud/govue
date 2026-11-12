@@ -2,7 +2,7 @@
   "name": "@ostendorf-cloud/web-kit",
   "version": "0.0.0",
   "description": "Vue design token contract, theming and components for the Go plus Vue web framework",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "sideEffects": [
