@@ -23,6 +23,12 @@ const sharedRateLimitKey = "shared"
 // RateLimit answers a denied request itself instead of calling the next
 // handler, through a *ratelimit.Limiter an application builds and owns. Built
 // with NewRateLimit.
+//
+// RateLimit belongs on the handler registered on the mux, not in the outer
+// chain with AccessLog: a 429 it answers from the outer chain runs before
+// the mux has set r.Pattern, so the access log line and metric for that
+// 429 would both carry "unmatched" instead of the route that was actually
+// rate limited. See example/ for the canonical order.
 type RateLimit struct {
 	cfg RateLimitConfig
 }

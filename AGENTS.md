@@ -10,6 +10,9 @@ repeated here.
 - Every package at the module root is public API. A rename or a changed signature is a breaking
   change for every consumer and needs a reason in the pull request.
 - There is no `cmd/`. This repository ships no binary.
+- `example/` is a `package main` example wiring every Go package together, compiled by
+  `task example:build`, and the source of truth for the middleware chain order. It is not a
+  shipped binary.
 - `internal/` is for anything a consumer must not import.
 - `web/` is the Vue package, consumed as a pnpm git dependency pinned to a release tag.
 - `docs/concepts/web-kit.md` holds the design and the reasoning behind it. Read it before adding
@@ -33,6 +36,7 @@ task setup           # mise install
 task check           # every check, one after another
 task --list          # one target per check
 task web:test        # one half on its own, here the Vue package
+task example:build   # compile the example application
 ```
 
 - One task target per check and one CI job per target. `check` aggregates them and holds no

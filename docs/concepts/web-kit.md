@@ -158,6 +158,33 @@ The design of the framework and the reasoning behind it.
   unlucky key's limit early, granting it a fresh burst sooner than it would otherwise get one,
   never deny a request that should have been allowed.
 
+### One example application, and the canonical chain order
+
+- `example/` is a `package main` wiring every Go package in this module into one running server.
+  It is never released as a binary and nothing imports it; this repository still ships none. It
+  is the source of truth for the order a middleware chain runs in, checked by `go build` and by
+  its own tests rather than kept consistent with the packages by hand in a document.
+- The outer chain wraps the mux, outermost first: `Recover`, so a panic from everything below is
+  still caught; `RequestID`, which calls `WithContext` and so has to run before anything that
+  needs the real `*http.Request` value the mux matched against; the security headers, which call
+  `WithContext` for the same reason when the response carries a CSP nonce; the metrics
+  middleware and the access log, both of which read `r.Pattern` and so have to sit directly
+  outside the mux with nothing in between that replaced the request.
+- The route chain is applied to every handler registered on the mux, outermost first: CORS, the
+  rate limiter, then the CSRF protector, then the application handler. Each of the first three
+  can answer a request itself, a preflight, a 429, a 403, without calling the handler at all, and
+  that answer only carries the real route label once it runs after the mux has already set
+  `r.Pattern`. In the outer chain, ahead of the mux, the same answer would be logged and counted
+  against the bounded `"unmatched"` label instead.
+- A catch-all `mux.Handle("/", ...)` wraps `api.NotFoundHandler()` in the same route chain, so an
+  unregistered path still matches a pattern, `"/"`, and still goes through CORS and the rate
+  limiter: without it, a request nothing recognises would skip the limiter entirely, which
+  defeats the point of having one.
+- The audit finding that no single position gets both the access log and a self-answering
+  middleware right is true only for one flat chain. Two chains resolve it with no change to any
+  package's behaviour: the packages already read `r.Pattern` correctly, and `example/` only had
+  to put each one on the side of the mux where that is true.
+
 ### Sessions keep their state in a store
 
 - The cookie carries an opaque random id. The state lives behind a `Store` interface, with an
