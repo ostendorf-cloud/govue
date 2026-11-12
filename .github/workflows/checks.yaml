@@ -58,6 +58,13 @@ jobs:
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db  # v3.6.3
       - run: task lint:actions
 
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db  # v3.6.3
+      - run: task lint:shell
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:
@@ -80,6 +87,13 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db  # v3.6.3
       - run: task test:go
+
+  shell-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db  # v3.6.3
+      - run: task test:shell
 
   web-lint:
     runs-on: ubuntu-latest
