@@ -10,13 +10,47 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ostendorf-cloud/web-kit/logging"
+	"github.com/ostendorf-cloud/web-kit/middleware"
 )
+
+// jsonKeyCount reports how many times key appears as a top-level key in
+// the JSON object line, by walking the raw token stream instead of
+// unmarshalling into a map: encoding/json's map decoding silently keeps
+// only the last value of a duplicate key, which would hide exactly the
+// bug this test exists to catch.
+func jsonKeyCount(t *testing.T, line []byte, key string) int {
+	t.Helper()
+	dec := json.NewDecoder(bytes.NewReader(line))
+	tok, err := dec.Token()
+	if err != nil {
+		t.Fatalf("reading the opening token: %v", err)
+	}
+	if tok != json.Delim('{') {
+		t.Fatalf("log line is not a JSON object: %s", line)
+	}
+	count := 0
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			t.Fatalf("reading a key: %v", err)
+		}
+		if k, ok := keyTok.(string); ok && k == key {
+			count++
+		}
+		var discard json.RawMessage
+		if err := dec.Decode(&discard); err != nil {
+			t.Fatalf("reading the value for %v: %v", keyTok, err)
+		}
+	}
+	return count
+}
 
 func TestNewRefusesABrokenConfig(t *testing.T) {
 	base := Config{
@@ -382,10 +416,11 @@ func TestExchangeLogsTheCauseAndTellsTheCallerNothing(t *testing.T) {
 	p := provider(t, fake, fixed(testNow), nil)
 
 	var buf bytes.Buffer
-	ctx := logging.WithRequestID(
-		logging.NewContext(t.Context(), slog.New(slog.NewJSONHandler(&buf, nil))),
-		"req-42",
-	)
+	// The logger already carries the request id, the way middleware.RequestID
+	// scopes it before a handler ever runs: this package logs through
+	// whatever logger the context carries and never re-adds the key itself.
+	logger := slog.New(slog.NewJSONHandler(&buf, nil)).With("request_id", "req-42")
+	ctx := logging.NewContext(t.Context(), logger)
 
 	login, err := NewLogin("")
 	if err != nil {
@@ -410,6 +445,69 @@ func TestExchangeLogsTheCauseAndTellsTheCallerNothing(t *testing.T) {
 	logged, _ := line["error"].(string)
 	if !strings.Contains(logged, "invalid_client") || !strings.Contains(logged, "Invalid client credentials") {
 		t.Errorf("the log line does not hold the cause: %q", logged)
+	}
+}
+
+// TestReportLogsRequestIDExactlyOnce drives a request through the real
+// middleware.RequestID, which already scopes the context logger with
+// "request_id", and then uses the context it put on the request to trigger
+// report (via Exchange against a provider that refuses the grant). report
+// must log through that logger as is, never re-adding the same key itself.
+func TestReportLogsRequestIDExactlyOnce(t *testing.T) {
+	fake := newIDP(t)
+	fake.tokenStatus = http.StatusBadRequest
+	fake.tokenBody = `{"error":"invalid_client","error_description":"Invalid client credentials"}`
+	p := provider(t, fake, fixed(testNow), nil)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	var capturedCtx context.Context
+	handler := middleware.RequestID(logger)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		capturedCtx = r.Context()
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+
+	login, err := NewLogin("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exchange(capturedCtx, "the-code", login); !errors.Is(err, ErrLogin) {
+		t.Fatalf("error = %v, want ErrLogin", err)
+	}
+
+	line := bytes.TrimSpace(buf.Bytes())
+	if got := jsonKeyCount(t, line, "request_id"); got != 1 {
+		t.Errorf("request_id appears %d times in the log line, want exactly 1: %s", got, line)
+	}
+}
+
+// TestReportOmitsRequestIDWithoutRequestIDMiddleware simulates an
+// application that put its own base logger into the context by some means
+// other than middleware.RequestID. report must not invent a request_id
+// key: it logs through the logger it is handed, and that logger carries
+// none.
+func TestReportOmitsRequestIDWithoutRequestIDMiddleware(t *testing.T) {
+	fake := newIDP(t)
+	fake.tokenStatus = http.StatusBadRequest
+	fake.tokenBody = `{"error":"invalid_client","error_description":"Invalid client credentials"}`
+	p := provider(t, fake, fixed(testNow), nil)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := logging.NewContext(t.Context(), logger)
+
+	login, err := NewLogin("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exchange(ctx, "the-code", login); !errors.Is(err, ErrLogin) {
+		t.Fatalf("error = %v, want ErrLogin", err)
+	}
+
+	line := bytes.TrimSpace(buf.Bytes())
+	if got := jsonKeyCount(t, line, "request_id"); got != 0 {
+		t.Errorf("request_id appears %d times in the log line, want 0 (no request-id middleware in the chain): %s", got, line)
 	}
 }
 

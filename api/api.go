@@ -200,7 +200,9 @@ func Handle(h HandlerFunc) http.HandlerFunc {
 			return
 		}
 		apiErr := AsError(err)
-		logger := logging.FromContext(r.Context()).With("request_id", logging.RequestID(r.Context()))
+		// No request_id key is added here: that is middleware.RequestID's job,
+		// and its absence is not papered over with an empty or invented one.
+		logger := logging.FromContext(r.Context())
 		attrs := []any{"code", apiErr.Code, "status", apiErr.Status, "error", err.Error()}
 		if apiErr.Status >= http.StatusInternalServerError {
 			// A 5xx is this server's problem and the only level an operator
