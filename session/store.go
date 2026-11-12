@@ -14,7 +14,7 @@ import (
 
 // ErrNotFound is what a store returns for an id it does not hold, which is also
 // what an expired, rotated or logged out session looks like from the outside.
-var ErrNotFound = errors.New("session not found")
+var ErrNotFound = errors.New("session: not found")
 
 // Store keeps the session state. An implementation is safe for concurrent use
 // and returns [ErrNotFound], wrapped or not, for an id it does not hold.

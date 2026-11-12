@@ -48,6 +48,14 @@ describe('createClient', () => {
     expect(calls[0].init.credentials).toBe('same-origin')
   })
 
+  it('sends include credentials when configured for a cross-origin deployment', async () => {
+    const client = createClient({ fetch: fetchStub, credentials: 'include' })
+
+    await client.get('/things')
+
+    expect(calls[0].init.credentials).toBe('include')
+  })
+
   it('appends the query and drops empty entries', async () => {
     const client = createClient({ fetch: fetchStub })
 

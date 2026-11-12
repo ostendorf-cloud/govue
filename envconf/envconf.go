@@ -41,7 +41,7 @@ func (l *Loader) Err() error {
 }
 
 func (l *Loader) fail(key, format string, args ...any) {
-	l.problems = append(l.problems, fmt.Errorf("%s: "+format, append([]any{key}, args...)...))
+	l.problems = append(l.problems, fmt.Errorf("envconf: %s: "+format, append([]any{key}, args...)...))
 }
 
 // raw is the trimmed value, empty when unset.
@@ -187,13 +187,13 @@ func ParseDuration(raw string) (time.Duration, error) {
 	if days, ok := strings.CutSuffix(raw, "d"); ok {
 		n, err := strconv.Atoi(days)
 		if err != nil {
-			return 0, fmt.Errorf("parse days %q: %w", raw, err)
+			return 0, fmt.Errorf("envconf: parse days %q: %w", raw, err)
 		}
 		return time.Duration(n) * 24 * time.Hour, nil
 	}
 	value, err := time.ParseDuration(raw)
 	if err != nil {
-		return 0, fmt.Errorf("parse duration %q: %w", raw, err)
+		return 0, fmt.Errorf("envconf: parse duration %q: %w", raw, err)
 	}
 	return value, nil
 }

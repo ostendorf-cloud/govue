@@ -31,7 +31,7 @@ const MaxEncodedBytes = 4096
 // passed. They are deliberately one error. A caller can do nothing but start
 // over, and distinguishing them would mean telling whoever supplied the value
 // which part of it was wrong.
-var ErrInvalid = errors.New("invalid signed value")
+var ErrInvalid = errors.New("session: invalid signed value")
 
 // Codec signs a short lived value into a cookie, with no store behind it.
 //

@@ -133,9 +133,10 @@ func (h *HTTP) Middleware(next http.Handler) http.Handler {
 
 // statusWriter wraps a http.ResponseWriter to capture the status code for
 // the metrics above. It defaults to 200 when the handler calls Write without
-// an explicit WriteHeader first, exactly as the real response would. It does
-// not preserve http.Flusher, http.Hijacker or any other optional interface
-// the wrapped writer might implement; this package only needs the status.
+// an explicit WriteHeader first, exactly as the real response would. It
+// exposes the wrapped writer through Unwrap, so http.ResponseController can
+// reach a capability such as Flush or SetWriteDeadline straight through it,
+// matching middleware.statusWriter.
 type statusWriter struct {
 	http.ResponseWriter
 	status int
@@ -145,4 +146,11 @@ type statusWriter struct {
 func (w *statusWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
+}
+
+// Unwrap exposes the real http.ResponseWriter so http.ResponseController can
+// reach a capability such as Flush or SetWriteDeadline straight through this
+// wrapper.
+func (w *statusWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }

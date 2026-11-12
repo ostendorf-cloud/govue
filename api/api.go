@@ -32,7 +32,6 @@ const (
 	CodeTooManyRequests      = "too_many_requests"
 	CodeRequestTooLarge      = "request_too_large"
 	CodeUnsupportedMediaType = "unsupported_media_type"
-	CodeMethodNotAllowed     = "method_not_allowed"
 	CodeUnavailable          = "unavailable"
 	CodeInternal             = "internal"
 )
