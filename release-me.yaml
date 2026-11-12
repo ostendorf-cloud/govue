@@ -1,5 +1,7 @@
 initial-version: 0.1.0
 # Below 1.0.0 a breaking change bumps the minor, so the major stays a deliberate decision.
 bump-minor-pre-major: true
-# No files: entry yet. The version lives in the tag alone until web/package.json exists,
-# which the pull request adding the Vue package registers here with the json updater.
+files:
+  - path: web/package.json
+    updater: json
+    key: version
