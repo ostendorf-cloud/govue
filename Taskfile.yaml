@@ -57,7 +57,7 @@ tasks:
     cmds:
       - |
         addlicense -check -c "Simon Ostendorf" -y 2026 -l apache -s=only \
-          $(find . -name "*.go" -not -path "./.worktrees/*") \
+          $(find . -name "*.go" -not -path "./.worktrees/*" -not -path "*/node_modules/*") \
           $(find web/src web/scripts -type f \( -name "*.ts" -o -name "*.vue" \) \
             -not -path "*/node_modules/*" -not -path "*/dist/*")
 
