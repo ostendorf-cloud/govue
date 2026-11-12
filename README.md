@@ -196,6 +196,11 @@ cuts the release. Never tag by hand and never edit the changelog.
 One tag covers both halves: the Go module path resolves it, and a frontend pins it in its git
 dependency.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to propose a change. See
+[SECURITY.md](SECURITY.md) for how to report a vulnerability.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
