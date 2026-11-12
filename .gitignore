@@ -21,6 +21,8 @@ coverage/
 *.log
 *.tsbuildinfo
 .eslintcache
+web/test-results/
+web/playwright-report/
 
 # pnpm puts its store inside the project when the global one is not writable,
 # which is what a sandboxed run does.

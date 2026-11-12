@@ -1,0 +1,17 @@
+{
+  // The harness page needs the DOM lib tsconfig.app.json already carries;
+  // the Playwright config and specs run under Node, like
+  // tsconfig.vitest.json adds on top of the same base for the same reason.
+  "extends": "./tsconfig.app.json",
+  // The harness imports the real components from src/, so this project
+  // needs the same src/**/* scope tsconfig.app.json has: a composite
+  // project cannot use a file another project owns without listing it too.
+  "include": ["env.d.ts", "src/**/*", "src/**/*.vue", "playwright.config.ts", "e2e/**/*"],
+  "exclude": ["src/**/*.test.ts"],
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.e2e.tsbuildinfo",
+    "types": ["node"]
+  }
+}
