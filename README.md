@@ -18,11 +18,9 @@ It is a dependency, not a framework that owns `main`: an application assembles i
 middleware chain and keeps its own routing. The design and the reasoning behind it are in
 [docs/concepts/web-kit.md](docs/concepts/web-kit.md).
 
-Twelve Go packages and the Vue package below are implemented. No version is released yet.
-
 ## Install
 
-The Go packages, once the first version is released:
+The Go packages:
 
 ```sh
 go get github.com/ostendorf-cloud/web-kit
@@ -299,10 +297,8 @@ task check
 ```
 
 `task setup` installs the pinned toolchain through `mise`. `task check` runs every check one
-after another; `task --list` shows one target per check, and CI runs one job per target.
-
-`task check` also runs `go vet`, `golangci-lint run` and `go test -race` now that the first
-package exists.
+after another, including `go vet`, `golangci-lint run` and `go test -race`; `task --list` shows
+one target per check, and CI runs one job per target.
 
 The `web:` targets cover the Vue half: `web:lint`, `web:format`, `web:types`, `web:test` and
 `web:build`. Each installs `web/`'s dependencies from the lockfile first, so one of them works on
