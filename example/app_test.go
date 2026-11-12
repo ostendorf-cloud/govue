@@ -103,9 +103,48 @@ func startSession(t *testing.T, a *app) *http.Cookie {
 	return nil
 }
 
+// jsonKeyCount reports how many times key appears as a top-level key in
+// the JSON object line, by walking the raw token stream instead of
+// unmarshalling into a map: encoding/json's map decoding silently keeps
+// only the last value of a duplicate key, which would hide exactly the
+// bug this test exists to catch.
+func jsonKeyCount(t *testing.T, line []byte, key string) int {
+	t.Helper()
+	dec := json.NewDecoder(bytes.NewReader(line))
+	tok, err := dec.Token()
+	if err != nil {
+		t.Fatalf("reading the opening token: %v", err)
+	}
+	if tok != json.Delim('{') {
+		t.Fatalf("log line is not a JSON object: %s", line)
+	}
+	count := 0
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			t.Fatalf("reading a key: %v", err)
+		}
+		if k, ok := keyTok.(string); ok && k == key {
+			count++
+		}
+		var discard json.RawMessage
+		if err := dec.Decode(&discard); err != nil {
+			t.Fatalf("reading the value for %v: %v", keyTok, err)
+		}
+	}
+	return count
+}
+
 // accessLogLines decodes every JSON line in logs tagged "request handled",
 // the access log's own message, into a generic map so a test can assert on
 // whichever fields it cares about.
+//
+// Each line is also walked with jsonKeyCount before the decode, checking
+// "request_id" appears exactly once: encoding/json's map decoding silently
+// keeps only the last value of a duplicate key, so a plain Unmarshal alone
+// would never notice a line carrying "request_id" twice, the exact shape
+// of the bug issue #48 fixed. The token walk catches that regression even
+// though the map decode behind it cannot.
 func accessLogLines(t *testing.T, logs *bytes.Buffer) []map[string]any {
 	t.Helper()
 	var lines []map[string]any
@@ -118,6 +157,9 @@ func accessLogLines(t *testing.T, logs *bytes.Buffer) []map[string]any {
 			t.Fatalf("log line is not JSON: %v (%s)", err, raw)
 		}
 		if parsed["msg"] == "request handled" {
+			if got := jsonKeyCount(t, []byte(raw), "request_id"); got != 1 {
+				t.Fatalf("request_id appears %d times in the access log line, want exactly 1: %s", got, raw)
+			}
 			lines = append(lines, parsed)
 		}
 	}
@@ -335,6 +377,55 @@ func TestRateLimitAnswersWithTheRealRouteLabel(t *testing.T) {
 	series := metricSeries("http_requests_total", http.MethodGet, "GET /app", "429")
 	if !strings.Contains(body, series) {
 		t.Errorf("metrics scrape is missing %s:\n%s", series, body)
+	}
+}
+
+// TestNonCanonicalPathBypassesTheRateLimiter pins the one case the
+// catch-all does not cover: a non-canonical path never reaches the route
+// chain at all, http.ServeMux answers it with its own redirect first, so
+// the rate limiter never sees it. The canonical path, with the same burst
+// of one, is rate limited as normal. See docs/concepts/web-kit.md for why
+// the redirect bypassing the chain is accepted.
+func TestNonCanonicalPathBypassesTheRateLimiter(t *testing.T) {
+	t.Parallel()
+
+	a, logs := newTestApp(t, 1)
+	h := a.handler()
+
+	for i := range 4 {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "//app", nil))
+		if rec.Code != http.StatusTemporaryRedirect {
+			t.Fatalf("non-canonical request %d status = %d, want 307: never rate limited", i, rec.Code)
+		}
+	}
+
+	lines := accessLogLines(t, logs)
+	if len(lines) != 4 {
+		t.Fatalf("got %d access log lines, want exactly 4: %s", len(lines), logs.String())
+	}
+	for _, line := range lines {
+		if got := line["route"]; got != "GET /app" {
+			t.Errorf("access log route = %v, want %q: the mux still records the real route on its own redirect", got, "GET /app")
+		}
+		if gotStatus, _ := line["status"].(float64); int(gotStatus) != http.StatusTemporaryRedirect {
+			t.Errorf("access log status = %v, want 307", line["status"])
+		}
+	}
+
+	logs.Reset()
+
+	canonicalFirst := httptest.NewRecorder()
+	h.ServeHTTP(canonicalFirst, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/app", nil))
+	if canonicalFirst.Code != http.StatusOK {
+		t.Fatalf("first canonical request status = %d, want 200: %s", canonicalFirst.Code, canonicalFirst.Body.String())
+	}
+
+	canonicalSecond := httptest.NewRecorder()
+	h.ServeHTTP(canonicalSecond, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/app", nil))
+	if canonicalSecond.Code != http.StatusTooManyRequests {
+		t.Fatalf("second canonical request status = %d, want 429: the limiter's one burst was never spent on the redirects above",
+			canonicalSecond.Code)
 	}
 }
 
