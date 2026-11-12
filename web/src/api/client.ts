@@ -3,9 +3,7 @@
 
 import { ApiError, ErrorCode, type ApiErrorPayload } from './errors'
 
-// The CSRF header the Go csrf package will read once issue #10 lands;
-// matches the old reference implementation's header name, needs a quick
-// re-check against the merged package.
+// The header csrf.HeaderName reads server side.
 const CSRF_HEADER = 'X-CSRF-Token'
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
