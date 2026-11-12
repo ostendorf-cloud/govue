@@ -12,6 +12,12 @@ export interface ClientOptions {
   /** Where the versioned API lives. Default /api/v1. */
   baseUrl?: string
   /**
+   * The credentials mode for every request. Default 'same-origin'. Set to
+   * 'include' when the frontend is deployed on a different origin than the
+   * API and the server opts into it with middleware.CORSConfig.Credentials.
+   */
+  credentials?: RequestCredentials
+  /**
    * The CSRF token of the current session, read when a request needs it. The
    * app takes it from the page the server rendered, never from a cookie it
    * invented itself.
@@ -51,6 +57,7 @@ export interface ApiClient {
  */
 export function createClient(options: ClientOptions = {}): ApiClient {
   const baseUrl = (options.baseUrl ?? '/api/v1').replace(/\/+$/, '')
+  const credentials = options.credentials ?? 'same-origin'
   const timeoutMs = options.timeoutMs ?? 15_000
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
 
@@ -86,9 +93,9 @@ export function createClient(options: ClientOptions = {}): ApiClient {
       response = await doFetch(url(baseUrl, path, requestOptions.query), {
         method,
         headers,
-        // The session is a cookie, so it has to travel; cross origin is the
-        // server's CORS decision, not this client's.
-        credentials: 'same-origin',
+        // The session is a cookie, so it has to travel; cross origin needs
+        // both this and the server's CORS decision to agree.
+        credentials,
         body: body === undefined ? undefined : JSON.stringify(body),
         signal,
       })
