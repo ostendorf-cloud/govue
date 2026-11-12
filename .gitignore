@@ -4,7 +4,7 @@
 # Agents
 .claude/settings.local.json
 .claude/.cc-writes/
-.worktrees/
+.claude/worktrees/
 
 # Go
 *.exe
