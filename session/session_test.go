@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ostendorf-cloud/web-kit/csrf"
 	"github.com/ostendorf-cloud/web-kit/session"
 )
 
@@ -785,20 +786,26 @@ func TestEndAllReportsAStoreFailure(t *testing.T) {
 	}
 }
 
+// TestSessionIDIsAPlainStringForCSRF is the one place this package meets
+// csrf. csrf imports nothing from session, so what holds them together is
+// that a real session id plugs into csrf.Token's sessionID argument with no
+// conversion, and that two sessions of one account, which this package
+// always gives different ids, consequently get different tokens out of the
+// real function.
 func TestSessionIDIsAPlainStringForCSRF(t *testing.T) {
 	f := newFixture(t, nil)
 	first, _ := f.login(t, "u1")
 	second, _ := f.login(t, "u1")
 
-	// csrf.Token(key, sessionID) binds a token to this id without either
-	// package importing the other, which only holds while the id is a plain
-	// string and two sessions of one account have different ones.
-	token := func(_ []byte, sessionID string) string { return sessionID }
-	if token(nil, first.ID) == "" {
-		t.Error("the session id is empty")
+	key := []byte("a signing key long enough for hmac")
+	firstToken := csrf.Token(key, first.ID)
+	secondToken := csrf.Token(key, second.ID)
+
+	if firstToken == "" {
+		t.Error("the token for a real session id is empty")
 	}
-	if first.ID == second.ID {
-		t.Error("two sessions of one account share an id, so they would share a CSRF token")
+	if firstToken == secondToken {
+		t.Error("two sessions of one account got the same CSRF token")
 	}
 }
 
