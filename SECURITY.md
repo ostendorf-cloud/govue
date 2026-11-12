@@ -2,8 +2,7 @@
 
 ## Supported versions
 
-No version of web-kit has been released yet. Once releases begin, only the latest release gets
-security fixes.
+This project has no LTS branches. Only the latest release gets security fixes.
 
 ## Reporting a vulnerability
 
