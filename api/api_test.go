@@ -263,7 +263,10 @@ func TestHandleLogsTheRequestID(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	logger := logging.New(&buf, slog.LevelDebug)
+	// The logger already carries the request id, the way middleware.RequestID
+	// scopes it before a handler ever runs: Handle logs through whatever
+	// logger the context carries and never re-adds the key itself.
+	logger := logging.New(&buf, slog.LevelDebug).With("request_id", "req-42")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/things", nil)
