@@ -180,8 +180,9 @@ func runCheck(ctx context.Context, c namedCheck) (string, error) {
 // the log, so an operator seeing a named check fail on /readyz can find out
 // why.
 func logFailure(ctx context.Context, name, reason string, cause error) {
-	logger := logging.FromContext(ctx).With("request_id", logging.RequestID(ctx))
-	logger.WarnContext(ctx, "readiness check did not pass", "check", name, "reason", reason, "error", cause.Error())
+	// No request_id key is added here: that is middleware.RequestID's job,
+	// and its absence is not papered over with an empty or invented one.
+	logging.FromContext(ctx).WarnContext(ctx, "readiness check did not pass", "check", name, "reason", reason, "error", cause.Error())
 }
 
 // Handle registers the liveness and readiness endpoints on mux, at GET
