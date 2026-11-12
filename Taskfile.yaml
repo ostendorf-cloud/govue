@@ -42,6 +42,11 @@ tasks:
     cmds:
       - actionlint
 
+  lint:shell:
+    desc: Shell script lint for this repository's own CI scripts
+    cmds:
+      - shellcheck scripts/*.sh
+
   lint:secrets:
     desc: Secret scan over the git history
     cmds:
@@ -56,6 +61,11 @@ tasks:
     desc: Go test
     cmds:
       - go test -race -count=1 ./...
+
+  test:shell:
+    desc: Shell script tests for this repository's own CI scripts
+    cmds:
+      - scripts/check-dco_test.sh
 
   # The web/ half. Every target below runs inside web/ and depends on web:deps,
   # so one of them on its own is enough in a fresh checkout and in CI.
@@ -113,9 +123,11 @@ tasks:
       - task: lint:markdown
       - task: lint:yaml
       - task: lint:actions
+      - task: lint:shell
       - task: lint:secrets
       - task: build
       - task: test:go
+      - task: test:shell
       - task: web:lint
       - task: web:format
       - task: web:types
