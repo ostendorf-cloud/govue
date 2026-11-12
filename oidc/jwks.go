@@ -89,7 +89,6 @@ type keySet struct {
 
 	mu          sync.Mutex
 	keys        map[string]crypto.PublicKey
-	fetchedAt   time.Time
 	expiresAt   time.Time
 	lastAttempt time.Time
 	inflight    *fetch
@@ -148,7 +147,11 @@ func (s *keySet) cached(kid string, stale bool) (crypto.PublicKey, bool) {
 	if now.Before(s.expiresAt) {
 		return key, true
 	}
-	if stale && now.Sub(s.fetchedAt) < jwksStaleGrace {
+	// The grace runs from the moment the set went stale, not from the fetch
+	// that filled it. Measured from the fetch, a provider TTL of an hour or
+	// more spends the whole window before the set ever expires, and the
+	// fallback this grace exists for would never be reached.
+	if stale && now.Sub(s.expiresAt) < jwksStaleGrace {
 		return key, true
 	}
 	return nil, false
@@ -204,7 +207,7 @@ func (s *keySet) run(ctx context.Context, f *fetch) {
 	s.inflight = nil
 	if f.err == nil {
 		now := s.provider.now()
-		s.keys, s.fetchedAt, s.expiresAt = f.keys, now, now.Add(f.ttl)
+		s.keys, s.expiresAt = f.keys, now.Add(f.ttl)
 	}
 	// done is closed last, under the lock, so nobody it releases can read the
 	// set from before this fetch.

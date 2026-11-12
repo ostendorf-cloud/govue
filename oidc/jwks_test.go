@@ -212,6 +212,37 @@ func TestAnUnreachableProviderFallsBackToTheCachedKeys(t *testing.T) {
 	}
 }
 
+func TestTheStaleGraceRunsFromTheExpiryNotFromTheFetch(t *testing.T) {
+	// A provider TTL longer than the grace itself. Measured from the fetch,
+	// the whole window is spent before the set goes stale and the fallback
+	// never applies.
+	const ttl = 2 * time.Hour
+
+	fake := newIDP(t)
+	fake.jwksCacheControl = "max-age=7200"
+	clock := newClock(testNow)
+	p := provider(t, fake, clock.Now, nil)
+
+	login := loginAgainst(t, fake, testNow)
+	if _, err := p.Exchange(t.Context(), "the-code", login); err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+
+	fake.jwksStatus = http.StatusBadGateway
+	clock.Add(ttl + time.Minute)
+	login = loginAgainst(t, fake, clock.Now())
+	if _, err := p.Exchange(t.Context(), "the-code", login); err != nil {
+		t.Errorf("a login was refused one minute past a %s TTL: %v", ttl, err)
+	}
+
+	// Past the TTL and past the grace that follows it.
+	clock.Add(jwksStaleGrace)
+	login = loginAgainst(t, fake, clock.Now())
+	if _, err := p.Exchange(t.Context(), "the-code", login); !errors.Is(err, ErrProvider) {
+		t.Errorf("error = %v, want the stale set to have run out", err)
+	}
+}
+
 func TestARedirectOntoPlainHTTPIsRefused(t *testing.T) {
 	// The endpoints are checked once, when the discovery document is read. A
 	// redirect at request time is the way around that check, so the client
