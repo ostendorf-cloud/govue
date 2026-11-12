@@ -14,16 +14,17 @@ repeated here.
 - `web/` is the Vue package, consumed as a pnpm git dependency pinned to a release tag.
 - `docs/concepts/web-kit.md` holds the design and the reasoning behind it. Read it before adding
   a package.
-- `web/` holds the token contract, the example themes, the `useTheme` composable, the overlay
-  and feedback components (`WkDialog`, `WkConfirmDialog`, `WkToastHost`, `WkEmptyState`,
-  `WkErrorState`) with `useToasts`, the form input components (`WkField`, `WkInput`,
-  `WkSelect`, `WkCheckbox`, `WkSwitch`, `WkTextarea`, `WkButton`) with `useForm`, and the layout
-  components (`WkPage`, `WkHeader`, `WkFooter`, `WkNav`, `WkSkipLink`, `WkCard`, `WkBadge`,
-  `WkSkeleton`).
+- `web/` holds the token contract, the example themes, the `useTheme` composable, the API
+  client (`createClient`, exported from `web/src/index.ts`), the overlay and feedback components
+  (`WkDialog`, `WkConfirmDialog`, `WkToastHost`, `WkEmptyState`, `WkErrorState`) with
+  `useToasts`, the form input components (`WkField`, `WkInput`, `WkSelect`, `WkCheckbox`,
+  `WkSwitch`, `WkTextarea`, `WkButton`) with `useForm`, and the layout components (`WkPage`,
+  `WkHeader`, `WkFooter`, `WkNav`, `WkSkipLink`, `WkCard`, `WkBadge`, `WkSkeleton`).
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
-- No Go package exists yet: each one is its own issue.
+- Twelve Go packages live at the module root: `api`, `clientip`, `csrf`, `envconf`, `health`,
+  `httpserver`, `logging`, `metrics`, `middleware`, `oidc`, `ratelimit`, `session`.
 
 ## Commands
 
@@ -36,9 +37,8 @@ task web:test        # one half on its own, here the Vue package
 
 - One task target per check and one CI job per target. `check` aggregates them and holds no
   command of its own. CI calls the small targets, never `check`.
-- `go vet`, `golangci-lint run` and `go test` all fail on a module without a single `.go` file,
-  so they are not wired yet. The pull request adding the first package adds `lint:vet`,
-  `lint:golangci` and `test:go` to `Taskfile.yaml` and one CI job each.
+- `lint:vet`, `lint:golangci` and `test:go` run `go vet`, `golangci-lint run` and
+  `go test -race` across every package at the module root, each its own CI job.
 - `lint:license` checks the Apache-2.0 header on every Go file at the module root and every
   `.ts`/`.vue` file under `web/src/` and `web/scripts/`, with `addlicense`.
 

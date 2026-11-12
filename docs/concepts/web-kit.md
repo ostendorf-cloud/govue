@@ -1,7 +1,6 @@
 # web-kit
 
-The design of the framework and the reasoning behind it. Written before the packages exist, so
-it states intent, not a description of what is there.
+The design of the framework and the reasoning behind it.
 
 ## Problem
 
@@ -74,6 +73,90 @@ it states intent, not a description of what is there.
 - The middleware chain is assembled by the application, not hidden behind a constructor. The
   places a constructor would hide, which checks are readiness and which limits apply to which
   route, are exactly the places applications differ.
+
+### CORS is an explicit allow-list, never a wildcard
+
+- `middleware.CORS` only answers for an API whose frontend is served from another origin. A
+  same-origin deployment needs none of it.
+- Every allowed origin is listed explicitly in `CORSConfig.Origins`. A wildcard is refused at
+  construction, unconditionally, matching the Fetch spec and OWASP's CORS guidance: a reflected
+  allow-everyone policy is exactly the mistake this package exists to make structurally
+  impossible, with credentials or without.
+- A matched origin is echoed back byte for byte, never the raw `Origin` header taken unchecked
+  and never a wildcard, so a response built for one origin can never silently become valid for
+  another. `Vary: Origin` is always set, even on a non-match, so a cache cannot hand one origin's
+  answer to a different one.
+- An origin that does not parse as a bare `scheme://host`, carrying a path, a query, userinfo, or
+  the literal `null` a sandboxed context sends, is refused at construction rather than silently
+  never matching: a config entry that could never fire is a mistake worth catching at startup.
+
+### Security headers default to the strict choice, every time
+
+- `middleware.DefaultSecurity` is this package's product: a strict, default-deny
+  Content-Security-Policy with a fresh nonce per response for inline script and style, a year of
+  HSTS with subdomains and preload, the minimum a browser preload list submission requires, MIME
+  sniffing off, framing denied, a same-origin-only referrer, both cross-origin isolation headers
+  set to same-origin, and every browser feature this framework has no general use for denied
+  through `Permissions-Policy`.
+- The nonce, not a hash or an allow-listed `'unsafe-inline'`, is what lets this framework's own
+  inline script and style run under the default policy: a tag an attacker injects carries no
+  nonce, so it does not run even once it is in the page.
+- Weakening one header is the consuming application's decision, made through a field on
+  `Security`, never a change to the default here. A zero-value `Security`, unlike
+  `session.Config` or `oidc.Config`, applies no defaults of its own: an application has to call
+  `DefaultSecurity` and override deliberately, not build a bare struct and get a watered-down
+  policy by omission.
+
+### CSRF tokens are HMAC-derived, not random nonces
+
+- Two independent checks run, because neither covers the whole range alone. The origin check,
+  `net/http`'s `CrossOriginProtection`, reads `Sec-Fetch-Site` and falls back to comparing
+  `Origin` with `Host`; it allows a request that carries neither header, which is every non
+  browser client and a handful of old browsers. The token check covers that gap, and also catches
+  a same site attacker on a sibling subdomain the origin check cannot tell apart from the
+  application itself.
+- The token is derived from the session id with HMAC-SHA-256 over a domain separator and the
+  length-prefixed session id, rather than generated at random and stored. A session needs
+  nothing kept alongside it, and a token minted for one session is worthless in another.
+- OWASP's HMAC-based double-submit pattern mixes a random value into the derivation as well,
+  which makes the token single use. This package deliberately does not: `Expected` hands back one
+  expected value for a request, with nothing to carry a per-request random value in. The token
+  stays stable for the session's lifetime instead, rotating only when the session id itself
+  rotates, and the origin check is what stands in front of a token that leaked.
+- `csrf` never imports a session package. It only ever sees a session id as a plain string,
+  handed to `Token`, which is what lets the two packages compose without either depending on the
+  other.
+
+### clientip walks X-Forwarded-For a bounded number of hops
+
+- `clientip.Resolver` sits between two mistakes: trusting `X-Forwarded-For` blindly lets any
+  client impersonate another address for an access log or a rate limit, and trusting the TCP peer
+  alone attributes every request to the proxy in front of it, not the client.
+- The header counts only once the TCP peer itself is a trusted proxy, from the prefixes
+  `NewResolver` was built with. With no trusted prefixes, `Resolve` always returns the TCP peer:
+  the secure default is to trust nothing, not to trust everything.
+- The walk reads `X-Forwarded-For` from the right, where each trusted proxy on the path appended
+  the address it received the request from, and stops at the first entry that is not itself a
+  trusted proxy. That entry is the client. Entries to its left came from whoever made the
+  original request and may be forged, so they never decide the result.
+- The walk never looks past 32 entries. A forged header carrying thousands of entries would
+  otherwise make resolution itself expensive, a cost an attacker should not be able to impose
+  just by padding a header.
+
+### ratelimit bounds its own memory, not only the request rate
+
+- `ratelimit.Limiter` is a token bucket per key, and a caller that keys by something attacker
+  controlled, a client address most commonly, must not let that key grow a map forever: a flood
+  of distinct, one-shot keys would exhaust memory even though no single key ever came close to
+  its own limit.
+- Two mechanisms bound that. A bucket refilled all the way back to its burst size carries no
+  information worth keeping, so it is swept away periodically, on an idle timer or as soon as the
+  key count forces the question; dropping it only means that key starts over from a full bucket
+  next time, exactly as if it had never been seen.
+- The number of tracked keys is also capped at construction. If the map is still full of active
+  buckets after a sweep, one arbitrary bucket is evicted to make room. That can only reset an
+  unlucky key's limit early, granting it a fresh burst sooner than it would otherwise get one,
+  never deny a request that should have been allowed.
 
 ### Sessions keep their state in a store
 

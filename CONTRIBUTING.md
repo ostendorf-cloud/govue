@@ -58,11 +58,10 @@ By making a contribution to this project, I certify that:
 ```
 
 Signing off means you certify that you wrote the change, or otherwise have the right to submit it
-under this project's license, MIT.
+under this project's license, Apache-2.0.
 
-DCO enforcement in CI is not wired up yet. Nothing currently blocks an unsigned commit, but
-contributors are still expected to sign off by convention. A dedicated CI check is planned
-separately.
+DCO enforcement runs in CI: the `dco` workflow checks every commit in a pull request and fails
+the check when one lacks a valid sign-off.
 
 ## Local development
 
