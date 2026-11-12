@@ -87,6 +87,11 @@ func NewHTTP(registry prometheus.Registerer) *HTTP {
 // matching, before it calls the final handler. It is only populated once
 // next.ServeHTTP has returned, so this middleware must wrap the mux rather
 // than sit inside it.
+//
+// A middleware that answers a request itself, such as a rate limiter,
+// still has to run inside the mux for this one to see its real route: see
+// example/ for why that needs a second, per-handler chain rather than one
+// flat chain.
 func (h *HTTP) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.inFlight.Inc()

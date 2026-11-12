@@ -66,6 +66,11 @@ tasks:
     cmds:
       - go build ./...
 
+  example:build:
+    desc: Compile the example application that wires every Go package together
+    cmds:
+      - go build -o /dev/null ./example
+
   test:go:
     desc: Go test
     cmds:
@@ -144,6 +149,7 @@ tasks:
       - task: lint:secrets
       - task: lint:license
       - task: build
+      - task: example:build
       - task: test:go
       - task: test:shell
       - task: web:lint

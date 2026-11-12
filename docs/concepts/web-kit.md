@@ -158,6 +158,42 @@ The design of the framework and the reasoning behind it.
   unlucky key's limit early, granting it a fresh burst sooner than it would otherwise get one,
   never deny a request that should have been allowed.
 
+### One example application, and the canonical chain order
+
+- `example/` is a `package main` wiring every Go package in this module into one running server.
+  It is never released as a binary and nothing imports it; this repository still ships none. It
+  is the source of truth for the order a middleware chain runs in, checked by `go build` and by
+  its own tests rather than kept consistent with the packages by hand in a document.
+- The outer chain wraps the mux, outermost first: `Recover`, so a panic from everything below is
+  still caught; `RequestID`, which calls `WithContext` and so has to run before anything that
+  needs the real `*http.Request` value the mux matched against; the security headers, which call
+  `WithContext` for the same reason when the response carries a CSP nonce; the metrics
+  middleware and the access log, both of which read `r.Pattern` and so have to sit directly
+  outside the mux with nothing in between that replaced the request.
+- The route chain is applied to every handler registered on the mux, outermost first: CORS, the
+  rate limiter, then the CSRF protector, then the application handler. The rate limiter's 429 and
+  the CSRF protector's 403 answer on the exact route they refuse: each wraps one specific
+  registered handler, so its answer carries that handler's real route label once the mux has
+  already set `r.Pattern`. A CORS preflight is different: no `OPTIONS` pattern is registered for
+  any route, so ServeMux matches the catch-all `"/"` instead, and the preflight's 204 is logged
+  under that label, not the route it preflights for. In the outer chain, ahead of the mux, any of
+  these answers would be logged and counted against the bounded `"unmatched"` label instead.
+- A catch-all `mux.Handle("/", ...)` wraps `api.NotFoundHandler()` in the same route chain, so an
+  unregistered canonical path still matches the pattern `"/"` and still goes through CORS and the
+  rate limiter: without it, a request nothing recognises would skip the limiter entirely, which
+  defeats the point of having one.
+- A non-canonical path, one with a double slash or a `.` or `..` segment, never reaches that
+  catch-all or any other registered handler. `net/http.ServeMux` answers it itself, with its own
+  307 redirect to the cleaned path, before the route chain runs: CORS, the rate limiter and the
+  CSRF protector are all skipped for that one response. This is accepted: the skipped response
+  carries no body and reaches no application handler, and the client's follow-up request to the
+  canonical path does go through the full chain. The logged route label stays correct regardless:
+  ServeMux sets `r.Pattern` before it hands the request to its own redirect handler.
+- The audit finding that no single position gets both the access log and a self-answering
+  middleware right is true only for one flat chain. Two chains resolve it with no change to any
+  package's behaviour: the packages already read `r.Pattern` correctly, and `example/` only had
+  to put each one on the side of the mux where that is true.
+
 ### Sessions keep their state in a store
 
 - The cookie carries an opaque random id. The state lives behind a `Store` interface, with an

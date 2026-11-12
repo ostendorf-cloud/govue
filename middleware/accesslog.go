@@ -50,6 +50,12 @@ func SkipHealthChecks(r *http.Request) bool {
 // both call WithContext, so they belong outside AccessLog in the chain, for
 // example Chain(mux, Recover(logger), RequestID(logger),
 // accessLog.Middleware).
+//
+// A middleware that answers a request itself, such as RateLimit or a
+// csrf.Protector, belongs on the handler registered on the mux rather than
+// in this outer chain: ahead of the mux its own refusal is logged against
+// "unmatched" instead of the real route. See example/ for the canonical
+// order, two chains rather than one.
 type AccessLog struct {
 	// ClientIP resolves the client address to log. Nil omits the client
 	// attribute entirely, rather than logging the proxy's own address.
