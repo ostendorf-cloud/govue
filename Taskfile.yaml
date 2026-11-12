@@ -122,6 +122,14 @@ tasks:
     cmds:
       - pnpm run build
 
+  web:e2e:
+    desc: Playwright E2E suite of the web/ package, against a real browser
+    dir: web
+    deps: [web:deps]
+    cmds:
+      - pnpm exec playwright install --with-deps chromium
+      - pnpm exec playwright test
+
   check:
     desc: Every check, one after another
     cmds:
