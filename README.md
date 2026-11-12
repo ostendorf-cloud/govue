@@ -75,7 +75,32 @@ const { theme, mode, resolvedMode, setTheme, setMode, cycleMode } = useTheme({ t
 ```
 
 The choice is persisted, so it survives a reload, and it wins over the system setting in both
-directions. No component exists yet; they are built on this foundation one at a time.
+directions.
+
+`WkField`, `WkInput`, `WkSelect`, `WkCheckbox`, `WkSwitch`, `WkTextarea` and `WkButton` are the
+form input components, all styled on the same tokens. `useForm` ties a set of values to
+validation and a submit function, and hands back the state a form needs to render itself:
+
+```ts
+const form = useForm({
+  initial: { title: '' },
+  validate: (values) => (values.title.trim() === '' ? { title: 'Please enter a title.' } : {}),
+  submit: (values) => client.post('/things', values),
+})
+```
+
+```vue
+<WkField label="Title" :error="form.errorOf('title')">
+  <WkInput v-model="form.values.title" @blur="form.blur('title')" />
+</WkField>
+<WkButton variant="primary" type="submit" :loading="form.submitting.value" @click="form.handleSubmit">
+  Save
+</WkButton>
+```
+
+A failed submit that rejects with the shape `useForm` describes as `ApiError` lands its field
+errors on the matching inputs; anything without a matching field shows once as `form.problem`.
+The overlay components (dialogs, dropdowns) are their own issues.
 
 An app also gets a typed client for the Go `api` package's JSON error shape. It sends the session
 cookie, attaches the CSRF token to every unsafe method and turns a refusal, a timeout or a lost
