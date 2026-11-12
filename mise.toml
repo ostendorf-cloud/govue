@@ -18,6 +18,6 @@ shellcheck = "0"
 # jq parses the pull request commit JSON scripts/check-dco.sh reads, and
 # builds the check run payload .github/workflows/dco.yaml posts.
 jq = "1"
-# addlicense has no short name in the mise registry, so it is pinned here
-# through the aqua backend directly, like every other tool in this file.
+# addlicense has no short name in the mise registry. It is the one entry here
+# that needs the explicit aqua backend prefix to resolve.
 "aqua:google/addlicense" = "1.2.0"
