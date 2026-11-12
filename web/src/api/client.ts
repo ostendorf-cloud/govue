@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 import { ApiError, ErrorCode, type ApiErrorPayload } from './errors'
 
 // The CSRF header the Go csrf package will read once issue #10 lands;

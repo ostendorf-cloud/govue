@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // The retry button is a plain <button> styled with the same secondary role-
 // token classes WkButton uses for that variant, not WkButton itself: WkButton
 // does not exist on main yet (it ships in the still-unmerged forms pull

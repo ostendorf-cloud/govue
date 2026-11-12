@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // Package api is the wire contract of a JSON API: one error shape, strict
 // decoding and the handler adapter that keeps both in one place.
 //

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // The confirm and cancel buttons are plain <button> elements styled with the
 // same secondary/danger role-token classes WkButton uses for those variants,
 // not WkButton itself: WkButton does not exist on main yet (it ships in the

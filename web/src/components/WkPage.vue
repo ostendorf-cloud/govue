@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 import { computed } from 'vue'
 
 /** reading holds a text column at 60 to 75 characters, shell is for a page

@@ -96,7 +96,4 @@ task web:test        # one half on its own, here the Vue package
 
 ## Deviations
 
-- MIT instead of the baseline's Apache-2.0: a framework meant for broad reuse, and the prior
-  attempt this one replaces was MIT.
-- No license header in source files. That convention travels with Apache-2.0; MIT is carried by
-  `LICENSE` alone.
+- None.

@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // The orchestrator: validate a seed config, solve a palette, render it to
 // CSS. The CLI at ../../scripts/generate-theme.ts is a thin wrapper around
 // this; nothing else needs its own logic tested, this module already has.

@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // Package oidc runs the OpenID Connect authorization code flow with PKCE
 // against a standards compliant provider and verifies the ID token itself,
 // with the standard library only.

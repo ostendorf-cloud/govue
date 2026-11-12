@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // A thin wrapper around ../src/theme/generate.ts. No business logic of its
 // own: parse two flags, read a file, call generateTheme, write the result.
 // Everything that decides whether a theme is correct lives in the module

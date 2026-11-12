@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 import { readonly, ref, type Ref } from 'vue'
 
 export type ToastKind = 'success' | 'info' | 'error'

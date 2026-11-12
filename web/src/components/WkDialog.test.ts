@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // What this suite cannot verify, even with Reka UI doing the real work under
 // the hood:
 //

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 /** The five states a row, a job or a record can be in. */
 export type BadgeKind = 'neutral' | 'success' | 'warning' | 'danger' | 'info'
 

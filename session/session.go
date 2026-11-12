@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // Package session keeps a login server side: the cookie carries nothing but an
 // opaque random id, and the state lives behind a [Store].
 //

@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 Simon Ostendorf
+SPDX-License-Identifier: Apache-2.0
+-->
+
 <template>
   <!-- The one banner landmark. It stays put, so the navigation is reachable
        from anywhere on a long page. -->

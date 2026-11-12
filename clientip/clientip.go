@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // Package clientip resolves the address a request actually came from, behind
 // whatever reverse proxies sit in front of the application.
 //

@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // Renders a solved palette into a CSS file structurally identical to
 // sample.css: a :root[data-theme='<name>'] block, one --color-* line per
 // role in the same order base.css declares them, plus the two --shadow-*

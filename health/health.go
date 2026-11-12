@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // Package health answers the two probes a load balancer or an orchestrator
 // asks of a running process: is it alive, and may it currently receive
 // traffic.

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 import { useId } from 'vue'
 
 // A native checkbox already gives correct keyboard handling, ARIA and

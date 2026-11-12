@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // The core generator: turns a validated ThemeSeedConfig into a full light and
 // dark palette, one hex value per --color-* role base.css declares.
 //

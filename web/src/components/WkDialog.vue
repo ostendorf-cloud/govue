@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // A hand-rolled <dialog> cannot be verified for the properties that matter
 // most here: a real focus trap, an inert background and reliable Escape
 // handling. jsdom has no layout engine and does not enforce `inert`, so a

@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // OKLCH is the working space for the theme generator, not HSL. OKLCH's
 // lightness axis is close to perceptually uniform and correlates predictably
 // with relative luminance: moving a role's L by a fixed amount gives a
