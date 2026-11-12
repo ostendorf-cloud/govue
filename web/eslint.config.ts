@@ -11,21 +11,21 @@ import pluginVue from 'eslint-plugin-vue'
 // for the file itself.
 const config: ReturnType<typeof defineConfigWithVueTs> = defineConfigWithVueTs(
   {
-    name: 'web-kit/files',
+    name: 'govue/files',
     files: ['**/*.ts', '**/*.vue'],
   },
   {
-    name: 'web-kit/ignores',
+    name: 'govue/ignores',
     ignores: ['dist/**', 'node_modules/**'],
   },
   pluginVue.configs['flat/recommended'],
   vueTsConfigs.recommendedTypeChecked,
   prettier,
   {
-    name: 'web-kit/rules',
+    name: 'govue/rules',
     rules: {
-      // The component files carry the prefix, the tags do not: Wk is the
-      // namespace of this library.
+      // Every component name carries the prefix: Govue is the namespace of
+      // this library.
       'vue/multi-word-component-names': 'off',
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-non-null-assertion': 'error',
@@ -33,7 +33,7 @@ const config: ReturnType<typeof defineConfigWithVueTs> = defineConfigWithVueTs(
     },
   },
   {
-    name: 'web-kit/tests',
+    name: 'govue/tests',
     files: ['**/*.test.ts'],
     rules: {
       // Testing Library's render returns an object of closures, so taking one

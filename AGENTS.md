@@ -1,6 +1,6 @@
-# web-kit
+# govue
 
-A framework for Go plus Vue web applications: a Go module with the HTTP server layer and a Vue
+A library for Go plus Vue web applications: a Go module with the HTTP server layer and a Vue
 package with the components and the design tokens. Public, and consumed by applications outside
 this organisation, so every exported name is a contract. The baseline rules apply and are not
 repeated here.
@@ -15,14 +15,15 @@ repeated here.
   shipped binary.
 - `internal/` is for anything a consumer must not import.
 - `web/` is the Vue package, consumed as a pnpm git dependency pinned to a release tag.
-- `docs/concepts/web-kit.md` holds the design and the reasoning behind it. Read it before adding
+- `docs/concepts/govue.md` holds the design and the reasoning behind it. Read it before adding
   a package.
 - `web/` holds the token contract, the example themes, the `useTheme` composable, the API
   client (`createClient`, exported from `web/src/index.ts`), the overlay and feedback components
-  (`WkDialog`, `WkConfirmDialog`, `WkToastHost`, `WkEmptyState`, `WkErrorState`) with
-  `useToasts`, the form input components (`WkField`, `WkInput`, `WkSelect`, `WkCheckbox`,
-  `WkSwitch`, `WkTextarea`, `WkButton`) with `useForm`, and the layout components (`WkPage`,
-  `WkHeader`, `WkFooter`, `WkNav`, `WkSkipLink`, `WkCard`, `WkBadge`, `WkSkeleton`).
+  (`GovueDialog`, `GovueConfirmDialog`, `GovueToastHost`, `GovueEmptyState`, `GovueErrorState`)
+  with `useToasts`, the form input components (`GovueField`, `GovueInput`, `GovueSelect`,
+  `GovueCheckbox`, `GovueSwitch`, `GovueTextarea`, `GovueButton`) with `useForm`, and the layout
+  components (`GovuePage`, `GovueHeader`, `GovueFooter`, `GovueNav`, `GovueSkipLink`,
+  `GovueCard`, `GovueBadge`, `GovueSkeleton`).
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
@@ -82,15 +83,15 @@ task example:build   # compile the example application
 - Touch targets are at least 44px.
 - For component behaviour nothing custom covers yet, modals, dropdowns and comboboxes, evaluate
   adopting a maintained headless primitives library before writing one. Reka UI, the Vue port of
-  Radix, is wired up as a dependency for `WkDialog`, whose focus trap, inert background and
+  Radix, is wired up as a dependency for `GovueDialog`, whose focus trap, inert background and
   Escape handling are not something `jsdom` can verify on a hand-rolled implementation, and for
-  `WkSelect`. Both style their primitives entirely with these tokens. A checkbox and a switch
+  `GovueSelect`. Both style their primitives entirely with these tokens. A checkbox and a switch
   stay hand rolled on native elements, which already give the right keyboard handling and ARIA
   for free.
 
 ## Documentation
 
-- ADRs sparingly. The design reasoning lives in `docs/concepts/web-kit.md`, including the
+- ADRs sparingly. The design reasoning lives in `docs/concepts/govue.md`, including the
   decisions a separate record would otherwise hold. `docs/adr/` does not exist and stays absent
   until a decision is genuinely contested and expensive to reverse.
 

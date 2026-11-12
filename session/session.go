@@ -60,7 +60,7 @@ const (
 	// accepts over https, for this exact host, with Path=/ and no Domain. That
 	// is what stops a sibling host, or a host that merely resolved to this one
 	// for a moment, from setting a session cookie for this application. The
-	// name says nothing about the framework behind it on purpose.
+	// name says nothing about the library behind it on purpose.
 	DefaultCookieName = "__Host-session"
 	// DefaultIdle ends a session unused for this long.
 	DefaultIdle = 2 * time.Hour

@@ -413,9 +413,9 @@ func TestParseDuration(t *testing.T) {
 }
 
 func TestNewWithoutALookupReadsTheProcessEnvironment(t *testing.T) {
-	t.Setenv("WEB_KIT_TEST_VALUE", "from the process")
+	t.Setenv("GOVUE_TEST_VALUE", "from the process")
 
-	if got := New(nil).String("WEB_KIT_TEST_VALUE", ""); got != "from the process" {
-		t.Errorf("String(WEB_KIT_TEST_VALUE) = %q, want the value t.Setenv set", got)
+	if got := New(nil).String("GOVUE_TEST_VALUE", ""); got != "from the process" {
+		t.Errorf("String(GOVUE_TEST_VALUE) = %q, want the value t.Setenv set", got)
 	}
 }

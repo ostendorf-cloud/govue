@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/logging"
+	"github.com/ostendorf-cloud/govue/logging"
 )
 
 // Codes are stable and machine readable: a client may branch on them, so a

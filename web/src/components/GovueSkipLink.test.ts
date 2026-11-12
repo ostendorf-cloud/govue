@@ -5,17 +5,17 @@ import { render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 import { defineComponent, h } from 'vue'
 
-import WkSkipLink from './WkSkipLink.vue'
+import GovueSkipLink from './GovueSkipLink.vue'
 
-describe('WkSkipLink', () => {
+describe('GovueSkipLink', () => {
   it('is a link to the main landmark', () => {
-    render(WkSkipLink)
+    render(GovueSkipLink)
 
     expect(screen.getByRole('link', { name: 'Skip to content' })).toHaveAttribute('href', '#main')
   })
 
   it('takes another target', () => {
-    render(WkSkipLink, { props: { target: '#article' } })
+    render(GovueSkipLink, { props: { target: '#article' } })
 
     expect(screen.getByRole('link', { name: 'Skip to content' })).toHaveAttribute(
       'href',
@@ -26,7 +26,7 @@ describe('WkSkipLink', () => {
   it('is the first focusable thing on the page', () => {
     const page = defineComponent({
       setup() {
-        return () => h('div', [h(WkSkipLink), h('button', { type: 'button' }, 'Sign out')])
+        return () => h('div', [h(GovueSkipLink), h('button', { type: 'button' }, 'Sign out')])
       },
     })
     render(page)
@@ -41,7 +41,7 @@ describe('WkSkipLink', () => {
   })
 
   it('is hidden by default: not focused, and carrying the hidden-until-focus markup contract', () => {
-    render(WkSkipLink)
+    render(GovueSkipLink)
 
     const link = screen.getByRole('link', { name: 'Skip to content' })
 
@@ -54,7 +54,7 @@ describe('WkSkipLink', () => {
   })
 
   it('becomes visible on focus: focused, and still carrying the focus-reveal markup contract', () => {
-    render(WkSkipLink)
+    render(GovueSkipLink)
 
     const link = screen.getByRole('link', { name: 'Skip to content' })
     link.focus()
@@ -75,7 +75,7 @@ describe('WkSkipLink', () => {
   })
 
   it('takes its own wording', () => {
-    render(WkSkipLink, { slots: { default: 'Jump to the main content' } })
+    render(GovueSkipLink, { slots: { default: 'Jump to the main content' } })
 
     expect(screen.getByRole('link', { name: 'Jump to the main content' })).toBeVisible()
   })

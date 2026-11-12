@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/csrf"
-	"github.com/ostendorf-cloud/web-kit/session"
+	"github.com/ostendorf-cloud/govue/csrf"
+	"github.com/ostendorf-cloud/govue/session"
 )
 
 // start is the clock every fixture begins at.

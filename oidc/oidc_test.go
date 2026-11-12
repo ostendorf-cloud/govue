@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/logging"
-	"github.com/ostendorf-cloud/web-kit/middleware"
+	"github.com/ostendorf-cloud/govue/logging"
+	"github.com/ostendorf-cloud/govue/middleware"
 )
 
 // jsonKeyCount reports how many times key appears as a top-level key in

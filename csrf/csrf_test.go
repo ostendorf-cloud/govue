@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ostendorf-cloud/web-kit/csrf"
+	"github.com/ostendorf-cloud/govue/csrf"
 )
 
 var key = []byte("a signing key long enough for hmac")

@@ -4,9 +4,9 @@
 import { fireEvent, render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
-import WkInput from './WkInput.vue'
+import GovueInput from './GovueInput.vue'
 
-type InputProps = InstanceType<typeof WkInput>['$props']
+type InputProps = InstanceType<typeof GovueInput>['$props']
 
 /**
  * standalone renders the control on its own. The name then comes from an
@@ -14,10 +14,10 @@ type InputProps = InstanceType<typeof WkInput>['$props']
  * supplies it.
  */
 function standalone(props: Partial<InputProps> = {}, label = 'Title') {
-  return render(WkInput, { props, attrs: { 'aria-label': label } })
+  return render(GovueInput, { props, attrs: { 'aria-label': label } })
 }
 
-describe('WkInput', () => {
+describe('GovueInput', () => {
   it('writes what the user types back into the model', async () => {
     const { emitted } = standalone({ modelValue: '' })
 

@@ -11,9 +11,9 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/clientip"
-	"github.com/ostendorf-cloud/web-kit/envconf"
-	"github.com/ostendorf-cloud/web-kit/logging"
+	"github.com/ostendorf-cloud/govue/clientip"
+	"github.com/ostendorf-cloud/govue/envconf"
+	"github.com/ostendorf-cloud/govue/logging"
 )
 
 // minKeyBytes is the shortest decoded key config accepts for a signing

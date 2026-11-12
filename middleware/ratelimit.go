@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/api"
-	"github.com/ostendorf-cloud/web-kit/clientip"
-	"github.com/ostendorf-cloud/web-kit/ratelimit"
+	"github.com/ostendorf-cloud/govue/api"
+	"github.com/ostendorf-cloud/govue/clientip"
+	"github.com/ostendorf-cloud/govue/ratelimit"
 )
 
 // sharedRateLimitKey is the bucket a RateLimit with no ClientIP resolver puts

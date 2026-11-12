@@ -7,16 +7,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { nextTick } from 'vue'
 
 import { useToasts } from '../composables/useToasts'
-import WkToastHost from './WkToastHost.vue'
+import GovueToastHost from './GovueToastHost.vue'
 
 const { toasts, notify, dismissAll } = useToasts()
 
-describe('WkToastHost', () => {
+describe('GovueToastHost', () => {
   beforeEach(dismissAll)
   afterEach(dismissAll)
 
   it('shows the title and the message of a toast', async () => {
-    render(WkToastHost)
+    render(GovueToastHost)
 
     notify({ kind: 'success', title: 'Changes saved', message: 'Two files changed' })
     await nextTick()
@@ -26,7 +26,7 @@ describe('WkToastHost', () => {
   })
 
   it('waits for a pause with everything that is not a failure', async () => {
-    render(WkToastHost)
+    render(GovueToastHost)
 
     notify({ kind: 'info', title: 'Sync running' })
     await nextTick()
@@ -37,7 +37,7 @@ describe('WkToastHost', () => {
   })
 
   it('interrupts with a failure', async () => {
-    render(WkToastHost)
+    render(GovueToastHost)
 
     notify({ kind: 'error', title: 'Saving failed', message: 'Request req-12' })
     await nextTick()
@@ -48,7 +48,7 @@ describe('WkToastHost', () => {
   })
 
   it('keeps both regions in the page while there is nothing to say', () => {
-    render(WkToastHost)
+    render(GovueToastHost)
 
     expect(screen.getByRole('status')).toBeInTheDocument()
     expect(screen.getByRole('alert')).toBeInTheDocument()
@@ -56,7 +56,7 @@ describe('WkToastHost', () => {
   })
 
   it('drops the toast the user dismisses', async () => {
-    render(WkToastHost)
+    render(GovueToastHost)
 
     notify({ kind: 'error', title: 'Saving failed' })
     await nextTick()
@@ -68,7 +68,7 @@ describe('WkToastHost', () => {
   })
 
   it('dismisses only the toast that was asked for', async () => {
-    render(WkToastHost)
+    render(GovueToastHost)
 
     notify({ kind: 'error', title: 'First failure' })
     notify({ kind: 'error', title: 'Second failure' })
@@ -82,7 +82,7 @@ describe('WkToastHost', () => {
   })
 
   it('lists the toasts of one region as a list', async () => {
-    render(WkToastHost)
+    render(GovueToastHost)
 
     notify({ kind: 'error', title: 'First failure' })
     notify({ kind: 'error', title: 'Second failure' })

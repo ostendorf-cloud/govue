@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/clientip"
-	"github.com/ostendorf-cloud/web-kit/logging"
+	"github.com/ostendorf-cloud/govue/clientip"
+	"github.com/ostendorf-cloud/govue/logging"
 )
 
 // Route returns the route pattern r's handler was registered under, for a

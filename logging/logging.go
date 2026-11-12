@@ -1,7 +1,7 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-// Package logging builds the structured logger this framework's packages and
+// Package logging builds the structured logger this library's packages and
 // its consumers log through, and carries a request scoped logger plus its
 // request id through a context.
 //

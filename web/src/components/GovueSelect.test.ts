@@ -5,10 +5,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 import { defineComponent, h } from 'vue'
 
-import WkField from './WkField.vue'
-import WkSelect from './WkSelect.vue'
+import GovueField from './GovueField.vue'
+import GovueSelect from './GovueSelect.vue'
 
-type SelectProps = InstanceType<typeof WkSelect>['$props']
+type SelectProps = InstanceType<typeof GovueSelect>['$props']
 
 const options = [
   { value: 'red', label: 'Red' },
@@ -22,10 +22,10 @@ const options = [
  * supplies it.
  */
 function standalone(props: Partial<SelectProps> = {}) {
-  return render(WkSelect, { props: { options, ...props }, attrs: { 'aria-label': 'Colour' } })
+  return render(GovueSelect, { props: { options, ...props }, attrs: { 'aria-label': 'Colour' } })
 }
 
-describe('WkSelect', () => {
+describe('GovueSelect', () => {
   it('is a combobox with its options collapsed until it is opened', async () => {
     standalone()
 
@@ -95,9 +95,9 @@ describe('WkSelect', () => {
       setup() {
         return () =>
           h(
-            WkField,
+            GovueField,
             { label: 'Colour', error: 'Pick one.' },
-            { default: () => h(WkSelect, { options }) },
+            { default: () => h(GovueSelect, { options }) },
           )
       },
     })

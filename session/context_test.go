@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/session"
+	"github.com/ostendorf-cloud/govue/session"
 )
 
 // countingStore counts the reads, which is how the one read per request is

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ostendorf-cloud/web-kit/logging"
+	"github.com/ostendorf-cloud/govue/logging"
 )
 
 // withLogger attaches a JSON logger writing to buf to r's context, the way

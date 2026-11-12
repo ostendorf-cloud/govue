@@ -5,11 +5,11 @@ import { fireEvent, render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 import { defineComponent, h } from 'vue'
 
-import WkField from './WkField.vue'
-import WkTextarea from './WkTextarea.vue'
+import GovueField from './GovueField.vue'
+import GovueTextarea from './GovueTextarea.vue'
 
-type TextareaProps = InstanceType<typeof WkTextarea>['$props']
-type FieldProps = InstanceType<typeof WkField>['$props']
+type TextareaProps = InstanceType<typeof GovueTextarea>['$props']
+type FieldProps = InstanceType<typeof GovueField>['$props']
 
 /**
  * standalone renders the control on its own. The name then comes from an
@@ -17,19 +17,19 @@ type FieldProps = InstanceType<typeof WkField>['$props']
  * supplies it.
  */
 function standalone(props: Partial<TextareaProps> = {}) {
-  return render(WkTextarea, { props, attrs: { 'aria-label': 'Notes' } })
+  return render(GovueTextarea, { props, attrs: { 'aria-label': 'Notes' } })
 }
 
 /** fieldWithTextarea is the normal pairing: the field labels the textarea. */
 function fieldWithTextarea(fieldProps: FieldProps, textareaProps: Partial<TextareaProps> = {}) {
   return defineComponent({
     setup() {
-      return () => h(WkField, fieldProps, { default: () => h(WkTextarea, textareaProps) })
+      return () => h(GovueField, fieldProps, { default: () => h(GovueTextarea, textareaProps) })
     },
   })
 }
 
-describe('WkTextarea', () => {
+describe('GovueTextarea', () => {
   it('writes what the user types back into the model', async () => {
     const view = standalone({ modelValue: '' })
 

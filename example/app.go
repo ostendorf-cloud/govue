@@ -10,15 +10,15 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/ostendorf-cloud/web-kit/api"
-	"github.com/ostendorf-cloud/web-kit/clientip"
-	"github.com/ostendorf-cloud/web-kit/csrf"
-	"github.com/ostendorf-cloud/web-kit/health"
-	"github.com/ostendorf-cloud/web-kit/metrics"
-	"github.com/ostendorf-cloud/web-kit/middleware"
-	"github.com/ostendorf-cloud/web-kit/oidc"
-	"github.com/ostendorf-cloud/web-kit/ratelimit"
-	"github.com/ostendorf-cloud/web-kit/session"
+	"github.com/ostendorf-cloud/govue/api"
+	"github.com/ostendorf-cloud/govue/clientip"
+	"github.com/ostendorf-cloud/govue/csrf"
+	"github.com/ostendorf-cloud/govue/health"
+	"github.com/ostendorf-cloud/govue/metrics"
+	"github.com/ostendorf-cloud/govue/middleware"
+	"github.com/ostendorf-cloud/govue/oidc"
+	"github.com/ostendorf-cloud/govue/ratelimit"
+	"github.com/ostendorf-cloud/govue/session"
 )
 
 // maxRateLimitKeys bounds the number of distinct client addresses the rate
@@ -160,7 +160,7 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 
 // handler builds the two chains this repository's audit of the ordering
 // problem settled on: one outer chain wrapping the mux, and one route chain
-// applied to every handler the mux dispatches to. See docs/concepts/web-kit.md
+// applied to every handler the mux dispatches to. See docs/concepts/govue.md
 // for why a single flat chain cannot get both the access log and a
 // self-answering middleware right at once.
 func (a *app) handler() http.Handler {

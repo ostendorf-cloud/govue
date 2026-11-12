@@ -1,7 +1,7 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-// Package middleware is the http.Handler wrapping this framework's
+// Package middleware is the http.Handler wrapping this library's
 // applications compose themselves from: a chain helper, request id and panic
 // recovery, an access log, a rate limiter, and the security and CORS header
 // middlewares.

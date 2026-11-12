@@ -123,7 +123,7 @@ describe('useTheme', () => {
   })
 
   it('ignores stored nonsense', async () => {
-    localStorage.setItem('web-kit-theme', '{"theme":42,"mode":"sepia"}')
+    localStorage.setItem('govue-theme', '{"theme":42,"mode":"sepia"}')
 
     const { theme, mode } = useTheme({ theme: 'sample-contrast' })
     await nextTick()

@@ -1,6 +1,6 @@
-# web-kit
+# govue
 
-A framework for web applications with a Go backend and a Vue frontend.
+A library for web applications with a Go backend and a Vue frontend.
 
 ## What it does
 
@@ -14,22 +14,30 @@ Two halves, one repository, one version:
 - A Vue package with components and a design token contract, so an application themes itself by
   filling that contract instead of inventing a palette.
 
-It is a dependency, not a framework that owns `main`: an application assembles its own
-middleware chain and keeps its own routing. The design and the reasoning behind it are in
-[docs/concepts/web-kit.md](docs/concepts/web-kit.md).
+It is a library, not a framework, and the difference is the direction of the calls. A framework
+owns `main` and calls the application at the lifecycle points it defines. The application
+registers its handlers into the framework's router and its middleware into the framework's
+pipeline. Every call here runs the other way. The application's `main` calls `httpserver.Run`.
+The application builds the `http.ServeMux`, registers its own routes, and fixes the order the
+middleware wraps in. Sessions, OIDC, CSRF, rate limiting, security headers and metrics are
+framework-shaped features, but each one ships as a piece the application calls, not as a slot
+the application registers into. Nothing in this module runs that the application did not call
+itself.
+
+The design and the reasoning behind it are in [docs/concepts/govue.md](docs/concepts/govue.md).
 
 ## Install
 
 The Go packages:
 
 ```sh
-go get github.com/ostendorf-cloud/web-kit
+go get github.com/ostendorf-cloud/govue
 ```
 
 The Vue package is consumed as a pnpm git dependency pinned to a release tag, not from npm:
 
 ```sh
-pnpm add "ostendorf-cloud/web-kit#v0.1.0&path:/web"
+pnpm add "ostendorf-cloud/govue#v0.1.0&path:/web"
 ```
 
 The ref before the `&` is the tag, `path:` is the subdirectory the package lives in. Quote the
@@ -52,7 +60,7 @@ import (
     "net/http"
     "os"
 
-    "github.com/ostendorf-cloud/web-kit/httpserver"
+    "github.com/ostendorf-cloud/govue/httpserver"
 )
 
 func main() {
@@ -86,10 +94,10 @@ stylesheet and at most one theme, and points Tailwind at this package's sources,
 does not scan dependencies on its own:
 
 ```css
-@import '@ostendorf-cloud/web-kit/styles.css';
-@import '@ostendorf-cloud/web-kit/themes/sample.css';
+@import '@ostendorf-cloud/govue/styles.css';
+@import '@ostendorf-cloud/govue/themes/sample.css';
 
-@source "../node_modules/@ostendorf-cloud/web-kit/src";
+@source "../node_modules/@ostendorf-cloud/govue/src";
 ```
 
 `base.css` registers every role token with a neutral default, so an app that imports no theme
@@ -103,7 +111,7 @@ same contract and is never committed here.
 attribute, which hands the decision back to the operating system:
 
 ```ts
-import { useTheme } from '@ostendorf-cloud/web-kit'
+import { useTheme } from '@ostendorf-cloud/govue'
 
 const { theme, mode, resolvedMode, setTheme, setMode, cycleMode } = useTheme({ theme: 'sample' })
 ```
@@ -111,9 +119,10 @@ const { theme, mode, resolvedMode, setTheme, setMode, cycleMode } = useTheme({ t
 The choice is persisted, so it survives a reload, and it wins over the system setting in both
 directions.
 
-`WkField`, `WkInput`, `WkSelect`, `WkCheckbox`, `WkSwitch`, `WkTextarea` and `WkButton` are the
-form input components, all styled on the same tokens. `useForm` ties a set of values to
-validation and a submit function, and hands back the state a form needs to render itself:
+`GovueField`, `GovueInput`, `GovueSelect`, `GovueCheckbox`, `GovueSwitch`, `GovueTextarea` and
+`GovueButton` are the form input components, all styled on the same tokens. `useForm` ties a set
+of values to validation and a submit function, and hands back the state a form needs to render
+itself:
 
 ```ts
 const form = useForm({
@@ -124,12 +133,17 @@ const form = useForm({
 ```
 
 ```vue
-<WkField label="Title" :error="form.errorOf('title')">
-  <WkInput v-model="form.values.title" @blur="form.blur('title')" />
-</WkField>
-<WkButton variant="primary" type="submit" :loading="form.submitting.value" @click="form.handleSubmit">
+<GovueField label="Title" :error="form.errorOf('title')">
+  <GovueInput v-model="form.values.title" @blur="form.blur('title')" />
+</GovueField>
+<GovueButton
+  variant="primary"
+  type="submit"
+  :loading="form.submitting.value"
+  @click="form.handleSubmit"
+>
   Save
-</WkButton>
+</GovueButton>
 ```
 
 A failed submit that rejects with the shape `useForm` describes as `ApiError` lands its field
@@ -140,7 +154,7 @@ cookie, attaches the CSRF token to every unsafe method and turns a refusal, a ti
 connection into one `ApiError`:
 
 ```ts
-import { createClient } from '@ostendorf-cloud/web-kit'
+import { createClient } from '@ostendorf-cloud/govue'
 
 const client = createClient({ csrfToken: () => csrf.value })
 const things = await client.get<Thing[]>('/things')
@@ -154,7 +168,7 @@ file, validated against the same WCAG 2.2 AA check `contrast.test.ts` runs on ev
 repository.
 
 The generator's code is public and lives here. A consumer's own seed colours and the CSS file the
-generator produces for them are not: they are never committed to web-kit. They belong in the
+generator produces for them are not: they are never committed to govue. They belong in the
 consumer's own repository, imported next to `base.css` exactly like a hand-authored theme.
 
 A seed configuration is a small JSON file. `neutral` and `accent` are required; the four semantic
@@ -170,12 +184,12 @@ colours are optional and default to generic hues already documented in `base.css
 }
 ```
 
-Running it means checking out web-kit at the version the consumer depends on, installing `web/`'s
+Running it means checking out govue at the version the consumer depends on, installing `web/`'s
 dependencies, and running the generator against that file:
 
 ```sh
-git clone https://github.com/ostendorf-cloud/web-kit
-cd web-kit
+git clone https://github.com/ostendorf-cloud/govue
+cd govue
 git checkout v0.1.0
 cd web
 pnpm install
@@ -191,7 +205,7 @@ file is written.
 is above:
 
 ```css
-@import '@ostendorf-cloud/web-kit/styles.css';
+@import '@ostendorf-cloud/govue/styles.css';
 @import './theme.css';
 ```
 

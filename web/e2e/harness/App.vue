@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // A harness page for the Playwright suite: real page content around
-// WkDialog and WkConfirmDialog, the real components from ../../src, so the
+// GovueDialog and GovueConfirmDialog, the real components from ../../src, so the
 // three properties jsdom cannot verify - the focus trap, the inert
 // background, and a real Escape key press - run against an actual browser
 // layout and input pipeline instead of a synthetic DOM. No Tailwind here:
@@ -11,8 +11,8 @@
 // fine without their token classes resolving to anything.
 import { ref } from 'vue'
 
-import WkConfirmDialog from '../../src/components/WkConfirmDialog.vue'
-import WkDialog from '../../src/components/WkDialog.vue'
+import GovueConfirmDialog from '../../src/components/GovueConfirmDialog.vue'
+import GovueDialog from '../../src/components/GovueDialog.vue'
 
 // Read once on mount, not reactively: a test navigates with the query
 // string already set and never changes it afterwards.
@@ -35,14 +35,14 @@ const confirmOpen = ref(false)
     <button id="page-after" type="button" @click="afterCount++">After trigger</button>
     <span id="page-after-count">{{ afterCount }}</span>
 
-    <WkDialog v-model:open="dialogOpen" title="Harness dialog" :dismissible="dismissible">
+    <GovueDialog v-model:open="dialogOpen" title="Harness dialog" :dismissible="dismissible">
       <a id="dialog-link" href="#dialog-link">A link inside the dialog</a>
       <template #actions>
         <button id="dialog-action" type="button">Dialog action</button>
       </template>
-    </WkDialog>
+    </GovueDialog>
 
-    <WkConfirmDialog
+    <GovueConfirmDialog
       v-model:open="confirmOpen"
       title="Delete the harness item?"
       message="This cannot be undone."

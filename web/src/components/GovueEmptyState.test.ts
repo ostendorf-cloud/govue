@@ -6,16 +6,16 @@ import { render, screen } from '@testing-library/vue'
 import { describe, expect, it, vi } from 'vitest'
 import { h } from 'vue'
 
-import WkEmptyState from './WkEmptyState.vue'
+import GovueEmptyState from './GovueEmptyState.vue'
 
 const props = {
   title: 'No deployments yet',
   description: 'A deployment is created whenever a build is promoted. Trigger the first one.',
 }
 
-describe('WkEmptyState', () => {
+describe('GovueEmptyState', () => {
   it('says what this is and why it is empty', () => {
-    render(WkEmptyState, { props })
+    render(GovueEmptyState, { props })
 
     expect(screen.getByRole('heading', { name: 'No deployments yet' })).toBeVisible()
     expect(screen.getByText(props.description)).toBeVisible()
@@ -23,7 +23,7 @@ describe('WkEmptyState', () => {
 
   it('offers the action that fills it', async () => {
     const onClick = vi.fn()
-    render(WkEmptyState, {
+    render(GovueEmptyState, {
       props,
       slots: {
         action: () => h('button', { type: 'button', onClick }, 'Trigger deployment'),
@@ -36,7 +36,7 @@ describe('WkEmptyState', () => {
   })
 
   it('keeps a decorative icon out of the accessibility tree', () => {
-    render(WkEmptyState, {
+    render(GovueEmptyState, {
       props,
       slots: { icon: () => h('svg', { 'aria-hidden': 'true', 'data-testid': 'icon' }) },
     })
@@ -48,7 +48,7 @@ describe('WkEmptyState', () => {
   })
 
   it('works without an icon and without an action', () => {
-    render(WkEmptyState, { props })
+    render(GovueEmptyState, { props })
 
     expect(screen.queryByRole('button')).toBeNull()
     expect(screen.getByRole('heading', { name: 'No deployments yet' })).toBeVisible()

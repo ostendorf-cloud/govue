@@ -4,11 +4,11 @@
 import { fireEvent, render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
-import WkSwitch from './WkSwitch.vue'
+import GovueSwitch from './GovueSwitch.vue'
 
-describe('WkSwitch', () => {
+describe('GovueSwitch', () => {
   it('is a switch with its label as the accessible name', () => {
-    render(WkSwitch, { props: { label: 'Dark mode' } })
+    render(GovueSwitch, { props: { label: 'Dark mode' } })
 
     const control = screen.getByRole('switch', { name: 'Dark mode' })
     expect(control).toBeVisible()
@@ -16,7 +16,7 @@ describe('WkSwitch', () => {
   })
 
   it('writes the new state back into the model on activation', async () => {
-    const view = render(WkSwitch, { props: { label: 'Dark mode' } })
+    const view = render(GovueSwitch, { props: { label: 'Dark mode' } })
 
     await fireEvent.click(screen.getByRole('switch', { name: 'Dark mode' }))
 
@@ -25,7 +25,7 @@ describe('WkSwitch', () => {
   })
 
   it('shows the state it was given', () => {
-    render(WkSwitch, { props: { label: 'Dark mode', modelValue: true } })
+    render(GovueSwitch, { props: { label: 'Dark mode', modelValue: true } })
 
     expect(screen.getByRole('switch', { name: 'Dark mode' })).toHaveAttribute(
       'aria-checked',
@@ -34,7 +34,7 @@ describe('WkSwitch', () => {
   })
 
   it('toggles back on a second activation', async () => {
-    render(WkSwitch, { props: { label: 'Dark mode' } })
+    render(GovueSwitch, { props: { label: 'Dark mode' } })
 
     const control = screen.getByRole('switch', { name: 'Dark mode' })
     await fireEvent.click(control)
@@ -45,7 +45,7 @@ describe('WkSwitch', () => {
   })
 
   it('is a disabled native button, which the browser alone keeps from acting', () => {
-    render(WkSwitch, { props: { label: 'Dark mode', disabled: true } })
+    render(GovueSwitch, { props: { label: 'Dark mode', disabled: true } })
 
     // A real click never reaches a disabled button's listeners; that is the
     // platform's own guarantee, not something to re-implement or re-test
@@ -54,7 +54,7 @@ describe('WkSwitch', () => {
   })
 
   it('is a touch sized control', () => {
-    render(WkSwitch, { props: { label: 'Dark mode' } })
+    render(GovueSwitch, { props: { label: 'Dark mode' } })
 
     expect(screen.getByRole('switch', { name: 'Dark mode' }).className).toContain('min-h-11')
   })

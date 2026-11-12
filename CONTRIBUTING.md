@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for considering a contribution to web-kit.
+Thank you for considering a contribution to govue.
 
 ## Proposing a change
 
@@ -81,6 +81,6 @@ CI and the final gate run.
 ## Design decisions
 
 The design and the reasoning behind it live in
-[docs/concepts/web-kit.md](docs/concepts/web-kit.md). This repository keeps architecture decision
+[docs/concepts/govue.md](docs/concepts/govue.md). This repository keeps architecture decision
 records sparse: `docs/adr/` does not exist and stays absent until a decision is genuinely
 contested and expensive to reverse. Read the concept doc before proposing a change to the design.

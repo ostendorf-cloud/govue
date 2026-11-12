@@ -39,7 +39,7 @@ const (
 
 // domain separates this derivation from any other use of the same signing key,
 // so a token can never collide with a value another package derives.
-const domain = "web-kit/csrf\x00v1\x00"
+const domain = "govue/csrf\x00v1\x00"
 
 // ErrNoToken and ErrBadToken say which half refused, for the log line. They
 // are for the application, not for the client: what a refused request is

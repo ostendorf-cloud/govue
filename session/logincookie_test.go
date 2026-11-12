@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ostendorf-cloud/web-kit/session"
+	"github.com/ostendorf-cloud/govue/session"
 )
 
 // loginFixture is a codec whose clock the test moves by hand.
