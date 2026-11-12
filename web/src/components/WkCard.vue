@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 import { computed, useId } from 'vue'
 
 export type CardAs = 'div' | 'section' | 'article'

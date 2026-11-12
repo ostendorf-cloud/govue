@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // A native <select> cannot be restyled into this package's token driven
 // dropdown panel: the surface, the border and the hover states on the list
 // itself are exactly what the platform widget refuses to hand over. A

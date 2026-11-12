@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // Reka UI ships a Toast primitive, but this host stays hand-rolled on plain
 // elements. A toast is not modal: there is no focus trap and no inert
 // background to get right, which is exactly what made jsdom's blind spot a

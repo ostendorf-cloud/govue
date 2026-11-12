@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // Package envconf reads configuration from the environment and collects every
 // problem into one error, so a misconfigured deployment reports all of its
 // mistakes on the first start instead of one per restart.

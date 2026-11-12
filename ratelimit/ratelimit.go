@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // Package ratelimit implements a per-key token bucket rate limiter with a
 // bounded memory footprint.
 //

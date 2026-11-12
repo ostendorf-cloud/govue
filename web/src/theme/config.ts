@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // The seed configuration a consumer writes, and the only input the generator
 // needs. It stays in the consumer's own repository: this module only
 // describes its shape and checks it, it never stores a real one.

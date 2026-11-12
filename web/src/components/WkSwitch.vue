@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // A plain button already gets Enter and Space activation and focus
 // management for free, because that is what a native button is: this hand
 // rolls the switch instead of reaching for Reka UI, since toggling the model

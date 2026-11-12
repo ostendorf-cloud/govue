@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 

@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // Package csrf refuses a state changing request that did not come from this
 // site: the browser's own origin signals plus a token the page carries.
 //

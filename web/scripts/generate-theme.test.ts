@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // parseArgs is the one piece of logic this thin CLI wrapper owns itself
 // (see generate-theme.ts's header comment), so it is the one piece that
 // gets its own test here rather than leaning on generate.test.ts.

@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 /** The error shape the Go api package writes, api.WriteError in this module. */
 export interface ApiErrorPayload {
   code: string

@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // jest-dom's matchers, so an assertion reads as what a user would see:
 // toBeVisible, toHaveAccessibleName, toBeDisabled.
 import '@testing-library/jest-dom/vitest'

@@ -1,3 +1,6 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
 // WCAG 2.2 AA contrast math, shared by contrast.test.ts and the theme
 // generator under ../theme/. One implementation of "what counts as
 // accessible" rather than two that could drift: the generator validates its
