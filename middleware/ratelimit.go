@@ -4,6 +4,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -20,8 +21,14 @@ import (
 const sharedRateLimitKey = "shared"
 
 // RateLimit answers a denied request itself instead of calling the next
-// handler, through a *ratelimit.Limiter an application builds and owns.
+// handler, through a *ratelimit.Limiter an application builds and owns. Built
+// with NewRateLimit.
 type RateLimit struct {
+	cfg RateLimitConfig
+}
+
+// RateLimitConfig is what NewRateLimit validates into a RateLimit.
+type RateLimitConfig struct {
 	// Limiter holds the actual token buckets. Required.
 	Limiter *ratelimit.Limiter
 	// ClientIP resolves the key to rate limit by. Nil keys every request
@@ -32,15 +39,23 @@ type RateLimit struct {
 	Respond func(w http.ResponseWriter, r *http.Request, retryAfter time.Duration)
 }
 
+// NewRateLimit validates cfg and returns the middleware.
+func NewRateLimit(cfg RateLimitConfig) (*RateLimit, error) {
+	if cfg.Limiter == nil {
+		return nil, errors.New("middleware: ratelimit: limiter is required")
+	}
+	return &RateLimit{cfg: cfg}, nil
+}
+
 // Middleware returns the rate limit handler.
-func (l RateLimit) Middleware(next http.Handler) http.Handler {
-	respond := l.Respond
+func (l *RateLimit) Middleware(next http.Handler) http.Handler {
+	respond := l.cfg.Respond
 	if respond == nil {
 		respond = defaultRateLimitRespond
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		allowed, wait := l.Limiter.Take(l.key(r))
+		allowed, wait := l.cfg.Limiter.Take(l.key(r))
 		if !allowed {
 			respond(w, r, wait)
 			return
@@ -51,11 +66,11 @@ func (l RateLimit) Middleware(next http.Handler) http.Handler {
 
 // key returns the bucket key for r: the resolved client when ClientIP is
 // set, and the one shared key for every request otherwise.
-func (l RateLimit) key(r *http.Request) string {
-	if l.ClientIP == nil {
+func (l *RateLimit) key(r *http.Request) string {
+	if l.cfg.ClientIP == nil {
 		return sharedRateLimitKey
 	}
-	return clientip.Key(l.ClientIP.Resolve(r))
+	return clientip.Key(l.cfg.ClientIP.Resolve(r))
 }
 
 // defaultRateLimitRespond answers a denied request in the api package's

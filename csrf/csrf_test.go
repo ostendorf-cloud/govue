@@ -234,8 +234,11 @@ func TestProtectorCheck(t *testing.T) {
 				req.Header.Set(csrf.HeaderName, tc.header)
 			}
 
-			err := csrf.New(tc.expected).Check(req)
-			if !errors.Is(err, tc.wantErr) {
+			protector, err := csrf.New(tc.expected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := protector.Check(req); !errors.Is(err, tc.wantErr) {
 				t.Errorf("Check = %v, want %v", err, tc.wantErr)
 			}
 		})
@@ -265,7 +268,11 @@ func TestProtectorCheckRefusesACrossSiteRequest(t *testing.T) {
 				req.Header.Set(name, value)
 			}
 
-			if err := csrf.New(sessionOf(token, true)).Check(req); err == nil {
+			protector, err := csrf.New(sessionOf(token, true))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := protector.Check(req); err == nil {
 				t.Error("Check = nil, want the request refused")
 			}
 		})
@@ -280,7 +287,10 @@ func TestProtectorTrustOrigin(t *testing.T) {
 	t.Run("a trusted origin passes", func(t *testing.T) {
 		t.Parallel()
 
-		protector := csrf.New(sessionOf(token, true))
+		protector, err := csrf.New(sessionOf(token, true))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if err := protector.TrustOrigin("https://app.example.test"); err != nil {
 			t.Fatalf("TrustOrigin: %v", err)
 		}
@@ -298,7 +308,10 @@ func TestProtectorTrustOrigin(t *testing.T) {
 	t.Run("a trusted origin still needs the token", func(t *testing.T) {
 		t.Parallel()
 
-		protector := csrf.New(sessionOf(token, true))
+		protector, err := csrf.New(sessionOf(token, true))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if err := protector.TrustOrigin("https://app.example.test"); err != nil {
 			t.Fatalf("TrustOrigin: %v", err)
 		}
@@ -316,7 +329,11 @@ func TestProtectorTrustOrigin(t *testing.T) {
 		t.Run("TrustOrigin refuses "+origin, func(t *testing.T) {
 			t.Parallel()
 
-			if err := csrf.New(sessionOf(token, true)).TrustOrigin(origin); err == nil {
+			protector, err := csrf.New(sessionOf(token, true))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := protector.TrustOrigin(origin); err == nil {
 				t.Errorf("TrustOrigin(%q) = nil, want an error", origin)
 			}
 		})
@@ -331,9 +348,12 @@ func TestProtectorMiddleware(t *testing.T) {
 	t.Run("a refused request never reaches the handler", func(t *testing.T) {
 		t.Parallel()
 
+		protector, err := csrf.New(sessionOf(token, true))
+		if err != nil {
+			t.Fatal(err)
+		}
 		served := false
-		handler := csrf.New(sessionOf(token, true)).
-			Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }))
+		handler := protector.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }))
 
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/things", nil))
@@ -352,9 +372,12 @@ func TestProtectorMiddleware(t *testing.T) {
 	t.Run("an accepted request reaches the handler", func(t *testing.T) {
 		t.Parallel()
 
+		protector, err := csrf.New(sessionOf(token, true))
+		if err != nil {
+			t.Fatal(err)
+		}
 		served := false
-		handler := csrf.New(sessionOf(token, true)).
-			Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }))
+		handler := protector.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }))
 
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/things", nil)
 		req.Header.Set(csrf.HeaderName, token)
@@ -374,7 +397,10 @@ func TestProtectorMiddleware(t *testing.T) {
 func TestProtectorOnRefusal(t *testing.T) {
 	t.Parallel()
 
-	protector := csrf.New(sessionOf(csrf.Token(key, "session-1"), true))
+	protector, err := csrf.New(sessionOf(csrf.Token(key, "session-1"), true))
+	if err != nil {
+		t.Fatal(err)
+	}
 	protector.OnRefusal(func(w http.ResponseWriter, _ *http.Request, err error) {
 		if !errors.Is(err, csrf.ErrNoToken) {
 			t.Errorf("err = %v, want %v", err, csrf.ErrNoToken)
@@ -391,6 +417,18 @@ func TestProtectorOnRefusal(t *testing.T) {
 	}
 	if body := rec.Body.String(); !strings.Contains(body, "reload the page") {
 		t.Errorf("body = %q, want the replacement response", body)
+	}
+}
+
+func TestNewRequiresExpected(t *testing.T) {
+	t.Parallel()
+
+	_, err := csrf.New(nil)
+	if err == nil {
+		t.Fatal("a nil Expected was accepted")
+	}
+	if !strings.Contains(err.Error(), "expected") {
+		t.Errorf("error %q does not name the missing Expected", err)
 	}
 }
 
