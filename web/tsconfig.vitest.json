@@ -2,7 +2,9 @@
   "extends": "./tsconfig.app.json",
   // The tests plus the sources they import: a project has to list every file it
   // pulls in, so this one checks the whole package with Node types added.
-  "include": ["env.d.ts", "src/**/*", "src/**/*.vue", "vitest.setup.ts"],
+  // scripts/ is the theme generator's CLI, Node-only like the tests and with
+  // the same need for the Node types tsconfig.app.json deliberately excludes.
+  "include": ["env.d.ts", "src/**/*", "src/**/*.vue", "vitest.setup.ts", "scripts/**/*"],
   "exclude": [],
   "compilerOptions": {
     "composite": true,
