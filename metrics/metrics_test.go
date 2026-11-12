@@ -224,6 +224,29 @@ func TestHandler_KeepsScrapingAfterABrokenCollector(t *testing.T) {
 	}
 }
 
+func TestMiddleware_PreservesFlushThroughResponseController(t *testing.T) {
+	t.Parallel()
+
+	registry := prometheus.NewRegistry()
+	h := NewHTTP(registry)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), "GET", "/lists/1", nil)
+
+	var flushErr error
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		flushErr = http.NewResponseController(w).Flush()
+	})
+	h.Middleware(handler).ServeHTTP(rec, req)
+
+	if flushErr != nil {
+		t.Fatalf("Flush through the status writer returned %v, want nil", flushErr)
+	}
+	if !rec.Flushed {
+		t.Error("the underlying recorder was never flushed")
+	}
+}
+
 // brokenCollector fails on every scrape, as a collector reading a dependency
 // would when that dependency is down.
 type brokenCollector struct{}
