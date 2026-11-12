@@ -34,6 +34,29 @@
 //
 // Nothing here imports the session package. A [Login] is a plain value, and an
 // application that signs it some other way is free to.
+//
+// # The two handlers
+//
+// [NewHandlers] is the whole flow already assembled: [Handlers.Login] starts a
+// login and [Handlers.Callback] finishes one, in the order the steps have to
+// happen in and with the login good for one callback only. An application
+// supplies the provider, something to keep the login in flight and the one
+// thing this package cannot know, what belongs in its session:
+//
+//	handlers, err := oidc.NewHandlers(oidc.HandlerConfig{
+//		Provider: provider,
+//		Logins:   codec,
+//		StartSession: func(ctx context.Context, w http.ResponseWriter, _ *http.Request, id oidc.Identity) error {
+//			_, err := sessions.Start(ctx, w, session.Session{Subject: id.Subject, Email: id.Email, Groups: id.Groups})
+//			return err
+//		},
+//	})
+//	mux.Handle("GET /auth/login", handlers.Login())
+//	mux.Handle("GET /auth/callback", handlers.Callback())
+//
+// [LoginStore] is still an interface and still keeps this package free of a
+// session import. A *session.Codec satisfies it with no adapter, which is why
+// the wiring is that short.
 package oidc
 
 import (
