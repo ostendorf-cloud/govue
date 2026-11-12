@@ -14,8 +14,6 @@ repeated here.
   `task example:build`, and the source of truth for the middleware chain order. It is not a
   shipped binary.
 - `internal/` is for anything a consumer must not import.
-- `scripts/` holds `check-dco.sh` and its test. The organisation's shared DCO workflow checks
-  out this repository and runs the script from it, so both files stay here.
 - `web/` is the Vue package, consumed as a pnpm git dependency pinned to a release tag.
 - `docs/concepts/web-kit.md` holds the design and the reasoning behind it. Read it before adding
   a package.

@@ -9,9 +9,11 @@ name: dco
 # still enforces through this job's own pass or fail status, the same
 # degraded shape a pull request from a fork gets.
 #
-# scripts/check-dco.sh stays in this repository. The reusable workflow
-# checks out the calling repository and runs ./scripts/check-dco.sh from
-# it, so the script and its test are part of the contract.
+# The reusable workflow carries its own copy of the DCO script and its
+# test. It resolves its own repository and commit from the job context,
+# which reflects the ref the "uses:" line below pins, and checks that out
+# instead of this repository's. So this repository keeps no local copy
+# of the script.
 on:
   pull_request:
 
@@ -25,5 +27,5 @@ concurrency:
 
 jobs:
   signoff:
-    uses: ostendorf-cloud/workflows/.github/workflows/reusable-dco.yaml@v0.1.0
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-dco.yaml@v0.1.1
     secrets: inherit
