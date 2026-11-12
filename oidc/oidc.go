@@ -719,7 +719,8 @@ func report(ctx context.Context, operation string, err error) error {
 		}
 	}
 
-	logging.FromContext(ctx).With("request_id", logging.RequestID(ctx)).
-		Log(ctx, level, "oidc login failed", "operation", operation, "error", err.Error())
+	// No request_id key is added here: that is middleware.RequestID's job,
+	// and its absence is not papered over with an empty or invented one.
+	logging.FromContext(ctx).Log(ctx, level, "oidc login failed", "operation", operation, "error", err.Error())
 	return public
 }
