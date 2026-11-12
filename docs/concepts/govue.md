@@ -96,9 +96,9 @@ The design of the library and the reasoning behind it.
   Content-Security-Policy with a fresh nonce per response for inline script and style, a year of
   HSTS with subdomains and preload, the minimum a browser preload list submission requires, MIME
   sniffing off, framing denied, a same-origin-only referrer, both cross-origin isolation headers
-  set to same-origin, and every browser feature this framework has no general use for denied
+  set to same-origin, and every browser feature this library has no general use for denied
   through `Permissions-Policy`.
-- The nonce, not a hash or an allow-listed `'unsafe-inline'`, is what lets this framework's own
+- The nonce, not a hash or an allow-listed `'unsafe-inline'`, is what lets this library's own
   inline script and style run under the default policy: a tag an attacker injects carries no
   nonce, so it does not run even once it is in the page.
 - Weakening one header is the consuming application's decision, made through a field on

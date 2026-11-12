@@ -28,7 +28,7 @@ const loginCookieLifetime = 10 * time.Minute
 
 // note is one item in the example's in-memory store. It exists to give the
 // notes handlers something to read and write; it is example data, not a
-// feature of this framework.
+// feature of this library.
 type note struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
