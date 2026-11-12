@@ -39,6 +39,8 @@ task web:test        # one half on its own, here the Vue package
 - `go vet`, `golangci-lint run` and `go test` all fail on a module without a single `.go` file,
   so they are not wired yet. The pull request adding the first package adds `lint:vet`,
   `lint:golangci` and `test:go` to `Taskfile.yaml` and one CI job each.
+- `lint:license` checks the Apache-2.0 header on every Go file at the module root and every
+  `.ts`/`.vue` file under `web/src/` and `web/scripts/`, with `addlicense`.
 
 ## Constraints
 

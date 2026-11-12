@@ -52,6 +52,15 @@ tasks:
     cmds:
       - gitleaks git --no-banner --redact
 
+  lint:license:
+    desc: License header check for every Go and web source file
+    cmds:
+      - |
+        addlicense -check -c "Simon Ostendorf" -y 2026 -l apache -s=only \
+          $(find . -name "*.go" -not -path "./.worktrees/*" -not -path "*/node_modules/*") \
+          $(find web/src web/scripts -type f \( -name "*.ts" -o -name "*.vue" \) \
+            -not -path "*/node_modules/*" -not -path "*/dist/*")
+
   build:
     desc: Compile every package
     cmds:
@@ -125,6 +134,7 @@ tasks:
       - task: lint:actions
       - task: lint:shell
       - task: lint:secrets
+      - task: lint:license
       - task: build
       - task: test:go
       - task: test:shell
