@@ -169,6 +169,58 @@ The design of the framework and the reasoning behind it.
   served by the in-memory store; more than one needs a shared store, which is open below.
 - A short-lived signed cookie stays for the one thing a store is wrong for: the OIDC state,
   nonce and PKCE verifier, which have to survive the redirect before any session exists.
+- That login cookie is the session cookie's attributes with two deliberate changes, built by the
+  same unexported function so the two cannot drift apart. `SameSite` is forced to `Lax` and is not
+  configurable: the provider redirects the browser back to the callback, which is a cross-site
+  top-level navigation, so a `Strict` login cookie would break every login rather than harden one.
+  It never gets a `Max-Age`, because the lifetime that counts is the short one signed into the
+  value and a login in flight surviving a closed browser buys nothing.
+- Reading the login cookie always clears it, on success and on every failure alike. A login is
+  good for exactly one callback, so single use is the default rather than something an application
+  has to remember, and a replayed callback URL then finds no login state to reuse.
+- Every failure of that read is one error. A missing cookie and a value that does not verify are
+  indistinguishable to the caller, which leaves one code path to get the refusal right.
+
+### Session in context lives in `session`, not in `middleware`
+
+- `Manager.Middleware` reads the session once per request and puts the outcome in the request
+  context, where `FromContext` and `ErrorFromContext` find it. Reading per handler means a store
+  round trip per read, and a read can write the last use back.
+- It is in `session` because `middleware` is the package every application imports for the request
+  id and the access log. Putting it there would make all of them pull a session store in with it,
+  which is the coupling the `clientip` rule exists to prevent. `session` already imports
+  `net/http`, and nothing in the module imports `session`, so there is no cycle either way.
+- `csrf` is unaffected and still imports nothing from `session`: it is the application's
+  `csrf.Expected` closure that reads the session.
+- The middleware refuses nothing and writes no response. It is not an authorisation gate: a public
+  route behind the same chain must not start answering 503 because a cookie could not be read, and
+  nothing is lost by that, because `FromContext` reports false for a store that could not answer.
+- `FromContext` is false for a request the middleware never ran on, so a handler mounted without it
+  looks logged out rather than logged in as somebody.
+- `ErrorFromContext` keeps the distinction `Read` draws between a logged-out request and a store
+  that could not answer. A middleware that dropped it would send every user to the identity
+  provider at the moment the infrastructure is already failing.
+
+### The OIDC handlers take an interface and a callback
+
+- `oidc.NewHandlers` ships the flow assembled: one handler starts a login, one finishes it, in the
+  order the steps have to happen in. It is the third of these packages whose correct use was
+  previously a page of application code to copy.
+- `oidc` still imports nothing from `session`. The handlers take what they need through a
+  three-method `LoginStore` interface and a `StartSession` callback, and a `*session.Codec`
+  satisfies that interface as it is, with no adapter in between, which is what makes the wiring
+  short enough to read.
+- `StartSession` is required rather than defaulted. This package has no session of its own and must
+  not guess what belongs in one. An error it returns is answered as `ErrProvider`, which is the
+  honest answer for the store write that usually fails there, so an account that authenticated but
+  may not use the application is refused by the application's own authorisation gate instead: that
+  refusal is not something a browser should be told to retry.
+- The callback reads and clears the login before it exchanges the code, so a replay cannot reuse
+  the state and a failure anywhere leaves the browser with no login cookie.
+- A post-login redirect target is checked as a local path twice: once out of the query string and
+  once out of the cookie, because the cookie was signed by this application but the value inside it
+  came from a query string. A target that fails the check is dropped silently rather than failing
+  the login, since a stray parameter must not be the reason somebody cannot log in.
 
 ### The OIDC key cache expires, and a failure is opaque
 

@@ -46,13 +46,22 @@ var ErrInvalid = errors.New("invalid signed value")
 // the value stays valid until its expiry, which is why the expiry is short and
 // why nothing long lived belongs in one.
 //
+// [Codec.Encode] and [Codec.Decode] are the signing on its own, for a value an
+// application carries somewhere of its own choosing. [Codec.SetLoginCookie],
+// [Codec.ReadLoginCookie] and [Codec.ClearLoginCookie] are the cookie an OIDC
+// login actually needs, with the attributes and the single use already decided.
+//
 // A Codec is safe for concurrent use.
 type Codec struct {
-	key []byte
-	now func() time.Time
+	key             []byte
+	now             func() time.Time
+	loginCookieName string
+	loginLifetime   time.Duration
+	allowPlainHTTP  bool
 }
 
-// CodecConfig configures a [Codec].
+// CodecConfig configures a [Codec]. Key is the only required field; every other
+// one is secure when left zero.
 type CodecConfig struct {
 	// Key signs the values. At least [MinKeyBytes] long. Required.
 	//
@@ -60,14 +69,52 @@ type CodecConfig struct {
 	// being unguessable and by the store, not by a signature.
 	Key []byte
 
+	// LoginCookieName defaults to [DefaultLoginCookieName]. It is a different
+	// cookie from the session's: a login in flight and a login that happened
+	// have nothing in common but the browser they belong to.
+	LoginCookieName string
+
+	// LoginLifetime is how long a login has to come back from the identity
+	// provider. Zero is [DefaultLoginLifetime], and a negative value is a
+	// [NewCodec] error.
+	LoginLifetime time.Duration
+
+	// AllowPlainHTTP drops the Secure attribute, and with it the __Host-
+	// prefix the attribute is a precondition of, so a login works on a plain
+	// HTTP development run. It sends the signed login in the clear. Never set
+	// it on anything reachable from outside the machine it runs on.
+	AllowPlainHTTP bool
+
 	// Now is the clock. Zero is [time.Now]. Tests replace it.
 	Now func() time.Time
 }
 
-// NewCodec validates the configuration.
+// NewCodec validates the configuration and fills in the defaults. The error
+// names every problem at once.
 func NewCodec(cfg CodecConfig) (*Codec, error) {
+	if cfg.LoginCookieName == "" {
+		cfg.LoginCookieName = DefaultLoginCookieName
+	}
+	if cfg.LoginLifetime == 0 {
+		cfg.LoginLifetime = DefaultLoginLifetime
+	}
+
+	var problems []error
 	if len(cfg.Key) < MinKeyBytes {
-		return nil, fmt.Errorf("session: codec key is %d bytes, at least %d are required", len(cfg.Key), MinKeyBytes)
+		problems = append(problems, fmt.Errorf("codec key is %d bytes, at least %d are required", len(cfg.Key), MinKeyBytes))
+	}
+	if cfg.LoginLifetime <= 0 {
+		problems = append(problems, fmt.Errorf("login lifetime %s is not positive", cfg.LoginLifetime))
+	}
+	if err := errors.Join(problems...); err != nil {
+		return nil, fmt.Errorf("session: %w", err)
+	}
+
+	if cfg.AllowPlainHTTP {
+		// A browser refuses a __Host- cookie that does not come with Secure,
+		// so keeping the prefix on a plain HTTP run would mean no login at all
+		// rather than a less protected one.
+		cfg.LoginCookieName = strings.TrimPrefix(cfg.LoginCookieName, hostPrefix)
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -76,7 +123,13 @@ func NewCodec(cfg CodecConfig) (*Codec, error) {
 	// must not be able to change what this signs with.
 	key := make([]byte, len(cfg.Key))
 	copy(key, cfg.Key)
-	return &Codec{key: key, now: cfg.Now}, nil
+	return &Codec{
+		key:             key,
+		now:             cfg.Now,
+		loginCookieName: cfg.LoginCookieName,
+		loginLifetime:   cfg.LoginLifetime,
+		allowPlainHTTP:  cfg.AllowPlainHTTP,
+	}, nil
 }
 
 // signed is the wire format. The expiry is inside the signed body, so it cannot

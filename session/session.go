@@ -20,7 +20,15 @@
 // [Codec] is separate and store free, for the one thing a store is wrong for:
 // the state, nonce and PKCE verifier of a login that has not happened yet, which
 // have to survive the redirect to the identity provider before any session
-// exists to hold them.
+// exists to hold them. [Codec.SetLoginCookie], [Codec.ReadLoginCookie] and
+// [Codec.ClearLoginCookie] are that cookie, with the attributes already decided
+// and single use on read, so an application wiring a login writes none of it.
+//
+// [Manager.Middleware] reads the session once per request and puts the outcome
+// in the request context, where [FromContext] and [ErrorFromContext] find it.
+// It lives here rather than in a middleware package so that an application
+// pulling in a request id and an access log does not pull a session store in
+// with them.
 //
 // A session id is a plain string, so a CSRF package can bind a token to it
 // without either package importing the other:
@@ -392,23 +400,35 @@ func (m *Manager) clearCookie(w http.ResponseWriter) {
 	http.SetCookie(w, cookie)
 }
 
-// cookie is the one place the attributes are decided, so setting and clearing
-// cannot drift apart. A browser matches a deletion against the attributes of
-// what it stored.
+// cookie decides the attributes of every cookie this package sets, the session
+// cookie and the login cookie of a [Codec] alike. It is one function so that
+// setting and clearing cannot drift apart, which matters because a browser
+// matches a deletion against the attributes of what it stored and keeps a
+// cookie whose clear differs in one of them, and so that the two cookies cannot
+// drift apart from each other either.
+//
+// Only the name, the Secure attribute and SameSite differ between callers.
+// Everything else is the same for both, because it is not a choice: Path=/ is
+// what the __Host- prefix requires and what makes the cookie reach every route,
+// no Domain keeps the cookie on this host alone and out of a subdomain's reach,
+// and HttpOnly keeps it away from any script on the page.
+func cookie(name string, allowPlainHTTP bool, sameSite http.SameSite) *http.Cookie {
+	return &http.Cookie{
+		Name:     name,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   !allowPlainHTTP,
+		SameSite: sameSite,
+	}
+}
+
+// cookie is the session cookie with no value and no Max-Age yet.
 func (m *Manager) cookie() *http.Cookie {
 	sameSite := http.SameSiteLaxMode
 	if m.cfg.SameSiteStrict {
 		sameSite = http.SameSiteStrictMode
 	}
-	return &http.Cookie{
-		Name: m.cfg.CookieName,
-		Path: "/",
-		// No Domain: the cookie belongs to this host alone, which is both what
-		// the __Host- prefix requires and what keeps a subdomain out of it.
-		HttpOnly: true,
-		Secure:   !m.cfg.AllowPlainHTTP,
-		SameSite: sameSite,
-	}
+	return cookie(m.cfg.CookieName, m.cfg.AllowPlainHTTP, sameSite)
 }
 
 // NewID is an opaque session id: 32 random bytes, base64url encoded. It cannot
