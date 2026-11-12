@@ -2,12 +2,8 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-// The retry button is a plain <button> styled with the same secondary role-
-// token classes GovueButton uses for that variant, not GovueButton itself:
-// GovueButton does not exist on main yet (it ships in the still-unmerged
-// forms pull request), and this component must not depend on an unmerged
-// component from another pull request. The same reasoning #16 already applies
-// to the reka-ui dependency itself.
+import GovueButton from './GovueButton.vue'
+
 withDefaults(
   defineProps<{
     /** What failed, in the visitor's terms. */
@@ -41,13 +37,8 @@ const emit = defineEmits<{ retry: [] }>()
       Request id: <code class="font-mono">{{ requestId }}</code>
     </p>
 
-    <button
-      type="button"
-      class="inline-flex min-h-11 items-center justify-center rounded-md border border-border-strong bg-surface px-4 text-base font-medium text-text transition-colors hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-60"
-      :disabled="loading"
-      @click="emit('retry')"
-    >
+    <GovueButton variant="secondary" :loading="loading" @click="emit('retry')">
       {{ retryLabel }}
-    </button>
+    </GovueButton>
   </div>
 </template>

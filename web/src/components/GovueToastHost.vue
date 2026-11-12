@@ -14,6 +14,7 @@
 import { computed } from 'vue'
 
 import { useToasts, type Toast, type ToastKind } from '../composables/useToasts'
+import GovueButton from './GovueButton.vue'
 
 /** One live region and what belongs in it. */
 interface Region {
@@ -88,11 +89,9 @@ const regions = computed<Region[]>(() => [
             <p v-if="toast.message" class="text-sm text-text-muted">{{ toast.message }}</p>
           </div>
 
-          <!-- A plain button for the same reason the confirm dialog's buttons
-               are plain: GovueButton does not exist on main yet. -->
-          <button
-            type="button"
-            class="ml-auto inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-hover active:bg-bg-subtle"
+          <GovueButton
+            variant="quiet"
+            class="ml-auto shrink-0"
             aria-label="Dismiss"
             @click="dismiss(toast.id)"
           >
@@ -105,7 +104,7 @@ const regions = computed<Region[]>(() => [
                 stroke-linecap="round"
               />
             </svg>
-          </button>
+          </GovueButton>
         </li>
       </ul>
     </div>

@@ -2,12 +2,7 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-// The confirm and cancel buttons are plain <button> elements styled with the
-// same secondary/danger role-token classes GovueButton uses for those variants,
-// not GovueButton itself: GovueButton does not exist on main yet (it ships in the
-// still-unmerged forms pull request), and this component must not depend on
-// an unmerged component from another pull request. The same reasoning #16
-// already applies to the reka-ui dependency itself.
+import GovueButton from './GovueButton.vue'
 import GovueDialog from './GovueDialog.vue'
 
 withDefaults(
@@ -53,22 +48,12 @@ function confirm(): void {
     <template #actions>
       <!-- Cancel comes first, so the keyboard reaches the way out before the
            destructive one. -->
-      <button
-        type="button"
-        class="inline-flex min-h-11 items-center justify-center rounded-md border border-border-strong bg-surface px-4 text-base font-medium text-text transition-colors hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-60"
-        :disabled="loading"
-        @click="open = false"
-      >
+      <GovueButton variant="secondary" :disabled="loading" @click="open = false">
         {{ cancelLabel }}
-      </button>
-      <button
-        type="button"
-        class="inline-flex min-h-11 items-center justify-center rounded-md bg-danger-strong px-4 text-base font-medium text-danger-on transition-colors hover:bg-danger-strong-hover disabled:pointer-events-none disabled:opacity-60"
-        :disabled="loading"
-        @click="confirm"
-      >
+      </GovueButton>
+      <GovueButton variant="danger" :loading="loading" @click="confirm">
         {{ confirmLabel }}
-      </button>
+      </GovueButton>
     </template>
   </GovueDialog>
 </template>
