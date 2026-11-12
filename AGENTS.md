@@ -14,6 +14,8 @@ repeated here.
   `task example:build`, and the source of truth for the middleware chain order. It is not a
   shipped binary.
 - `internal/` is for anything a consumer must not import.
+- `scripts/` holds `check-dco.sh` and its test. The organisation's shared DCO workflow checks
+  out this repository and runs the script from it, so both files stay here.
 - `web/` is the Vue package, consumed as a pnpm git dependency pinned to a release tag.
 - `docs/concepts/web-kit.md` holds the design and the reasoning behind it. Read it before adding
   a package.
@@ -40,7 +42,8 @@ task example:build   # compile the example application
 ```
 
 - One task target per check and one CI job per target. `check` aggregates them and holds no
-  command of its own. CI calls the small targets, never `check`.
+  command of its own. CI calls the small targets, never `check`, except `dco`, `codeql` and
+  `license`, which call the organisation's shared reusable workflows instead.
 - `lint:vet`, `lint:golangci` and `test:go` run `go vet`, `golangci-lint run` and
   `go test -race` across every package at the module root, each its own CI job.
 - `lint:license` checks the Apache-2.0 header on every Go file at the module root and every
@@ -102,4 +105,7 @@ task example:build   # compile the example application
 
 ## Deviations
 
-- None.
+- The license-header file set is written twice. CI calls the organisation's shared
+  `reusable-license.yaml`, which pins `addlicense` itself and takes the `find` invocations as an
+  input, so the `license` job runs no task target. `task lint:license` keeps the same invocation
+  for local development, and the two are kept in step by hand.
