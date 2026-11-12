@@ -42,7 +42,7 @@ type RateLimitConfig struct {
 // NewRateLimit validates cfg and returns the middleware.
 func NewRateLimit(cfg RateLimitConfig) (*RateLimit, error) {
 	if cfg.Limiter == nil {
-		return nil, errors.New("middleware: ratelimit: limiter is required")
+		return nil, errors.New("middleware: limiter is required")
 	}
 	return &RateLimit{cfg: cfg}, nil
 }

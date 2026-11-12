@@ -32,7 +32,7 @@ func Level(name string) (slog.Level, error) {
 	case "error":
 		return slog.LevelError, nil
 	default:
-		return 0, fmt.Errorf("unknown log level %q, want debug, info, warn or error", name)
+		return 0, fmt.Errorf("logging: unknown log level %q, want debug, info, warn or error", name)
 	}
 }
 

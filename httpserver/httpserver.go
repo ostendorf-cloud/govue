@@ -112,7 +112,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.Addr)
 	if err != nil {
-		return fmt.Errorf("listen: %w", err)
+		return fmt.Errorf("http server: listen: %w", err)
 	}
 	return Serve(ctx, cfg, listener)
 }
@@ -172,7 +172,7 @@ func Serve(ctx context.Context, cfg Config, listener net.Listener) error {
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.ShutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown: %w", err)
+		return fmt.Errorf("http server: shutdown: %w", err)
 	}
 
 	if err := <-serveErr; !errors.Is(err, http.ErrServerClosed) {

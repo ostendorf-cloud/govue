@@ -83,18 +83,18 @@ var defaultCORSMethods = []string{
 // never firing.
 func NewCORS(cfg CORSConfig) (*CORS, error) {
 	if len(cfg.Origins) == 0 {
-		return nil, errors.New("middleware: cors: at least one origin is required")
+		return nil, errors.New("middleware: at least one origin is required")
 	}
 	origins := make([]string, 0, len(cfg.Origins))
 	for _, raw := range cfg.Origins {
 		origin := strings.TrimRight(strings.TrimSpace(raw), "/")
 		if origin == "*" {
-			return nil, errors.New("middleware: cors: a wildcard origin is never allowed, list the origins")
+			return nil, errors.New("middleware: a wildcard origin is never allowed, list the origins")
 		}
 		parsed, err := url.Parse(origin)
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") ||
 			parsed.Path != "" || parsed.RawQuery != "" || parsed.User != nil {
-			return nil, fmt.Errorf("middleware: cors: origin %q must be scheme://host: %w", raw, errInvalidOrigin)
+			return nil, fmt.Errorf("middleware: origin %q must be scheme://host: %w", raw, errInvalidOrigin)
 		}
 		// Stored and compared case-insensitively: browsers normalize the
 		// scheme and host of an Origin header to lowercase before sending
