@@ -189,9 +189,18 @@ func (a *app) handler() http.Handler {
 	mux.Handle("GET /login", route(api.Handle(a.loginStart)))
 	mux.Handle("GET /login/callback", route(api.Handle(a.loginCallback)))
 	mux.Handle("POST /logout", route(api.Handle(a.logout)))
-	// The catch-all. Without it an unregistered path never reaches a
-	// handler the route chain wraps, so it would skip the rate limiter
-	// entirely and be labelled "unmatched" rather than the bounded "/".
+	// The catch-all. Without it an unregistered canonical path never
+	// reaches a handler the route chain wraps, so it would skip the rate
+	// limiter entirely and be labelled "unmatched" rather than the bounded
+	// "/". A non-canonical path, one with a double slash or a "." or ".."
+	// segment, never reaches this catch-all either: ServeMux answers it
+	// itself with a 307 to the cleaned path, before the route chain runs,
+	// so CORS, the rate limiter and the CSRF protector are all skipped for
+	// that one response. That is accepted: the 307 carries no body and
+	// reaches no application handler, and the client's follow-up request
+	// to the canonical path does go through the chain. The logged route
+	// label still names that canonical route; ServeMux sets r.Pattern
+	// before it hands the request to its own redirect handler.
 	mux.Handle("/", route(api.NotFoundHandler()))
 
 	// The outer chain, outermost first. Recover sits first so it catches a
