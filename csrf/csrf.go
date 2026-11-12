@@ -123,19 +123,23 @@ type Protector struct {
 }
 
 // New returns a Protector that trusts its own origin only and answers a
-// refused request with 403 and no detail.
+// refused request with 403 and no detail. It returns an error when expected
+// is nil, which would otherwise panic on the first unsafe request.
 //
 // TrustOrigin and OnRefusal change that, and both are meant to be called
 // during setup: a Protector is safe for concurrent use once it is serving, not
 // while it is being configured.
-func New(expected Expected) *Protector {
+func New(expected Expected) (*Protector, error) {
+	if expected == nil {
+		return nil, errors.New("csrf: expected is required")
+	}
 	return &Protector{
 		cross:    http.NewCrossOriginProtection(),
 		expected: expected,
 		respond: func(w http.ResponseWriter, _ *http.Request, _ error) {
 			http.Error(w, "cross origin or stale request, please reload", http.StatusForbidden)
 		},
-	}
+	}, nil
 }
 
 // TrustOrigin allows a cross origin caller, for a frontend served from another
