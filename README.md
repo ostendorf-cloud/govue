@@ -80,6 +80,9 @@ func main() {
 left zero, and shuts down gracefully on a cancelled context: it waits `DrainDelay`, stops
 accepting new connections, and lets requests already in flight finish within `ShutdownTimeout`.
 
+The middleware chain this snippet leaves out lives in [example/](example/), the compiled and
+tested reference for the order every package expects.
+
 The Vue half carries the design token contract and the theming. An app imports the base
 stylesheet and at most one theme, and points Tailwind at this package's sources, because Tailwind
 does not scan dependencies on its own:
