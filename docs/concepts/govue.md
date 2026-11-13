@@ -221,16 +221,19 @@ The design of the library and the reasoning behind it.
   empty. Adopting the admin listener is something an application opts into, never something it
   has to opt out of.
 - The admin listener's middleware is deliberately short, and deliberately not the outer chain
-  with two entries removed. `example/`'s `(*app).adminHandler` keeps `Recover` and `RequestID`,
+  with entries removed. `example/`'s `(*app).adminHandler` keeps `Recover` and `RequestID`,
   because a panic on this listener is still worth catching and still worth a correlatable log
   line, and drops everything else: the security headers and CORS have nothing to protect, since
   neither a probe nor a scraper is a browser; the CSRF protector has nothing to check, since
   neither can be forged through one; and the access log and the rate limiter are actively wrong
   here, because a scraper polling every few seconds would either fill the log with nothing worth
-  reading or get throttled into failing the one thing it is there to do. None of this needed a
-  change to any existing middleware: the admin handler simply never passes through
-  `middleware.AccessLog` or `middleware.RateLimit` at all, the same way a package that never
-  imports another cannot be coupled to it.
+  reading or get throttled into failing the one thing it is there to do. The metrics
+  instrumentation middleware is absent too, deliberately rather than by omission: a scrape
+  endpoint counting its own hits would feed Prometheus a metric about scraping Prometheus, and a
+  probe gains nothing from being counted either. None of this needed a change to any existing
+  middleware: the admin handler simply never passes through `middleware.AccessLog`,
+  `middleware.RateLimit` or the metrics instrumentation middleware at all, the same way a package
+  that never imports another cannot be coupled to it.
 - The liveness and readiness probes moved to the admin listener too, in `example/` and in the
   recommendation here, on the same reasoning: a kubelet reaches the pod directly, so `/healthz`
   and `/readyz` need no public route either. This is a wiring decision, not a library one. The

@@ -229,13 +229,16 @@ func (a *app) handler() http.Handler {
 // routes to. See docs/concepts/govue.md for the reasoning.
 //
 // The middleware here is a deliberate, short list, not the outer chain
-// above with two entries removed: a probe and a scrape are not browser
+// above with entries removed: a probe and a scrape are not browser
 // traffic, so the security headers and CORS have nothing to protect; they
 // are not requests a user can forge, so the CSRF protector has nothing to
 // check; and a scraper polling this listener every few seconds must not be
 // throttled by the rate limiter or fill the access log the way a public
-// request would. Recover and RequestID stay, because a panic here is still
-// worth catching and still worth a correlatable log line.
+// request would. a.httpMetrics.Middleware is absent too, deliberately: a
+// scrape endpoint instrumenting its own hits would feed Prometheus a metric
+// about scraping Prometheus, which is not a loop worth closing. Recover and
+// RequestID stay, because a panic here is still worth catching and still
+// worth a correlatable log line.
 func (a *app) adminHandler() http.Handler {
 	mux := http.NewServeMux()
 	a.health.Handle(mux)
