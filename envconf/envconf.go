@@ -188,7 +188,7 @@ func (l *Loader) secretOrFile(key string) (string, error) {
 	direct := l.raw(key)
 	filePath := l.raw(key + "_FILE")
 	if direct != "" && filePath != "" {
-		return "", fmt.Errorf("%s and %s are both set, set only one", key, key+"_FILE")
+		return "", fmt.Errorf("and %s are both set, set only one", key+"_FILE")
 	}
 	if filePath != "" {
 		raw, err := os.ReadFile(filePath)
@@ -213,7 +213,7 @@ func (l *Loader) secretOrFile(key string) (string, error) {
 func (l *Loader) SecretOrFile(key string) string {
 	value, err := l.secretOrFile(key)
 	if err != nil {
-		l.problems = append(l.problems, fmt.Errorf("envconf: %s: %w", key, err))
+		l.fail(key, "%w", err)
 		return ""
 	}
 	return value

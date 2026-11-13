@@ -532,6 +532,47 @@ func TestRequiredSecretOrFile(t *testing.T) {
 			t.Fatalf("Err() = %v, want nil", err)
 		}
 	})
+
+	t.Run("a value set via _FILE is not a problem", func(t *testing.T) {
+		t.Parallel()
+
+		good := filepath.Join(dir, "good.key")
+		if err := os.WriteFile(good, []byte("s3cret\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		l := New(env(map[string]string{"KEY_FILE": good}))
+		if got := l.RequiredSecretOrFile("KEY"); got != "s3cret" {
+			t.Errorf("RequiredSecretOrFile(KEY) = %q", got)
+		}
+		if err := l.Err(); err != nil {
+			t.Fatalf("Err() = %v, want nil", err)
+		}
+	})
+
+	t.Run("both set is a problem, not a duplicate required problem", func(t *testing.T) {
+		t.Parallel()
+
+		good := filepath.Join(dir, "good2.key")
+		if err := os.WriteFile(good, []byte("s3cret\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		l := New(env(map[string]string{"KEY": "s3cret", "KEY_FILE": good}))
+		if got := l.RequiredSecretOrFile("KEY"); got != "" {
+			t.Errorf("RequiredSecretOrFile(KEY) = %q, want empty", got)
+		}
+		err := l.Err()
+		if err == nil {
+			t.Fatal("setting both was accepted")
+		}
+		if strings.Contains(err.Error(), "is required") {
+			t.Errorf("Err() = %v, want no duplicate is-required problem", err)
+		}
+		if got := joinedErrors(err); got != 1 {
+			t.Errorf("Err() joins %d problems, want exactly 1", got)
+		}
+	})
 }
 
 func TestParseDuration(t *testing.T) {
