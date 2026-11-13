@@ -321,8 +321,12 @@ func localPath(target string) string {
 	// browser to another host, and a browser normalises the backslash form into
 	// it. A backslash anywhere else is not something a path on this site needs
 	// and is a known way to disagree with a parser about where the host ends.
+	// The second character is checked by index rather than with a prefix
+	// helper: the length guard keeps that index from reading past a
+	// one-character string, and the resulting shape is the one CodeQL's
+	// go/bad-redirect-check rule is documented to recognise as sufficient.
 	if !strings.HasPrefix(target, "/") ||
-		strings.HasPrefix(target, "//") ||
+		(len(target) > 1 && (target[1] == '/' || target[1] == '\\')) ||
 		strings.Contains(target, `\`) {
 		return ""
 	}

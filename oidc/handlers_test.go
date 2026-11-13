@@ -543,6 +543,7 @@ func TestLocalPath(t *testing.T) {
 	}{
 		"a path":                        {"/lists/7", "/lists/7"},
 		"the root":                      {"/", "/"},
+		"a two character path":          {"/x", "/x"},
 		"a path with a query":           {"/lists?sort=name", "/lists?sort=name"},
 		"a path with a fragment":        {"/lists#top", "/lists#top"},
 		"an empty target":               {"", ""},
