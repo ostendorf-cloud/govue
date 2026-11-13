@@ -55,7 +55,8 @@ type Error struct {
 	// RetryAfter sets the Retry-After header when it is positive.
 	RetryAfter time.Duration
 
-	cause error
+	cause   error
+	exposed bool
 }
 
 func (e *Error) Error() string {
@@ -78,6 +79,20 @@ func (e *Error) WithCause(err error) *Error {
 func (e *Error) WithDetails(details map[string]any) *Error {
 	copied := *e
 	copied.Details = details
+	return &copied
+}
+
+// Exposed marks this error's Code, Message and Details as safe to send to
+// the caller even for a 5xx, bypassing WriteError's usual collapse to the
+// generic internal-error shape. Use it only for a message a handler wrote
+// on purpose for a human — for example, a 503 explaining that a feature is
+// temporarily unavailable and how to reach a human instead. Never use it
+// for anything that might carry an internal cause: WriteError trusts this
+// bit completely and sends everything on the error verbatim. Everything
+// not marked this way keeps collapsing exactly as before.
+func (e *Error) Exposed() *Error {
+	copied := *e
+	copied.exposed = true
 	return &copied
 }
 
@@ -123,6 +138,13 @@ func TooManyRequests(retryAfter time.Duration) *Error {
 }
 
 // Unavailable is a dependency that is down, for a caller that may retry.
+//
+// 503 is the one 5xx a server chooses on purpose and knows the meaning of:
+// the message is the answer, not a leaked cause. That makes it the one
+// status where Exposed is worth reaching for, to let a deliberately written
+// message reach the caller instead of collapsing with the rest. It is not a
+// general escape hatch for every 5xx; a 500 built with Internal is by
+// definition unclassified and should essentially never call Exposed.
 func Unavailable(message string) *Error {
 	return New(http.StatusServiceUnavailable, CodeUnavailable, message)
 }
@@ -159,8 +181,8 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		RequestID: logging.RequestID(r.Context()),
 	}
 	// Nothing internal is described to the client, whatever the handler put
-	// in the message.
-	if apiErr.Status >= http.StatusInternalServerError {
+	// in the message, unless the handler marked this specific error Exposed.
+	if apiErr.Status >= http.StatusInternalServerError && !apiErr.exposed {
 		body.Code, body.Message, body.Details = CodeInternal, internalMessage, nil
 	}
 

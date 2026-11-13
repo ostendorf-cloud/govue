@@ -90,6 +90,54 @@ func TestWriteError(t *testing.T) {
 	}
 }
 
+func TestWriteErrorExposedSurvivesCollapse(t *testing.T) {
+	t.Parallel()
+
+	err := Unavailable("the contact form is down, please write to help@example.com instead").
+		WithDetails(map[string]any{"retry": "later"}).
+		Exposed()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/things", nil)
+	WriteError(rec, req, err)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+
+	body := decodeEnvelope(t, rec.Body.Bytes())
+	if body.Code != CodeUnavailable {
+		t.Errorf("code = %q, want %q", body.Code, CodeUnavailable)
+	}
+	wantMessage := "the contact form is down, please write to help@example.com instead"
+	if body.Message != wantMessage {
+		t.Errorf("message = %q, want %q", body.Message, wantMessage)
+	}
+	if got := body.Details["retry"]; got != "later" {
+		t.Errorf(`details["retry"] = %v, want "later"`, got)
+	}
+}
+
+func TestWriteErrorExposedDoesNotLeakTheCauseOfAnInternalError(t *testing.T) {
+	t.Parallel()
+
+	err := Internal(errors.New("some sensitive db failure detail")).Exposed()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/things", nil)
+	WriteError(rec, req, err)
+
+	body := decodeEnvelope(t, rec.Body.Bytes())
+	if body.Message != internalMessage {
+		t.Errorf("message = %q, want %q", body.Message, internalMessage)
+	}
+	// Internal's message is always the fixed constant, never the cause, so
+	// even a mistaken Exposed call on an Internal error cannot send it.
+	if strings.Contains(rec.Body.String(), "sensitive db failure detail") {
+		t.Errorf("cause leaked into the response: %s", rec.Body.String())
+	}
+}
+
 func TestWriteErrorCarriesTheRequestID(t *testing.T) {
 	t.Parallel()
 
