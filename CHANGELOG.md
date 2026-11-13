@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.4.0](https://github.com/ostendorf-cloud/govue/compare/v0.3.1...v0.4.0) (2026-11-13)
+
+### Breaking Changes
+
+- **envconf:** trim env and file secrets alike ([#91](https://github.com/ostendorf-cloud/govue/pull/91))
+
+### Features
+
+- **httpserver:** run an admin listener alongside the primary one ([#89](https://github.com/ostendorf-cloud/govue/pull/89))
+
+### Bug Fixes
+
+- **renovate:** pinDigests is a config key, not a preset ([#87](https://github.com/ostendorf-cloud/govue/pull/87))
+
 ## [v0.3.1](https://github.com/ostendorf-cloud/govue/compare/v0.3.0...v0.3.1) (2026-11-13)
 
 ### Bug Fixes
