@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.3.0](https://github.com/ostendorf-cloud/govue/compare/v0.2.0...v0.3.0) (2026-11-13)
+
+### Features
+
+- **envconf:** add the value-or-file secret contract ([#78](https://github.com/ostendorf-cloud/govue/pull/78))
+- **api:** let a handler mark a 5xx message as intended for the caller ([#76](https://github.com/ostendorf-cloud/govue/pull/76))
+
+### Bug Fixes
+
+- **session:** bound MemoryStore's tracked session count ([#77](https://github.com/ostendorf-cloud/govue/pull/77))
+
 ## [v0.2.0](https://github.com/ostendorf-cloud/govue/compare/v0.1.0...v0.2.0) (2026-11-12)
 
 - Version bump without user facing changes.
