@@ -57,8 +57,12 @@ export interface ApiClient {
  */
 export function createClient(options: ClientOptions = {}): ApiClient {
   const rawBaseUrl = options.baseUrl ?? '/api/v1'
+  // A backward scan, not /\/+$/: the unanchored regex backtracks
+  // quadratically on a long run of slashes (CodeQL alert #3).
   let baseUrlEnd = rawBaseUrl.length
-  while (baseUrlEnd > 0 && rawBaseUrl[baseUrlEnd - 1] === '/') baseUrlEnd--
+  while (baseUrlEnd > 0 && rawBaseUrl[baseUrlEnd - 1] === '/') {
+    baseUrlEnd--
+  }
   const baseUrl = rawBaseUrl.slice(0, baseUrlEnd)
   const credentials = options.credentials ?? 'same-origin'
   const timeoutMs = options.timeoutMs ?? 15_000
