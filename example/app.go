@@ -168,14 +168,12 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 // applied to every handler the mux dispatches to. See docs/concepts/govue.md
 // for why a single flat chain cannot get both the access log and a
 // self-answering middleware right at once.
+//
+// Health and metrics are not mounted here any more: see (*app).adminHandler
+// and docs/concepts/govue.md for why they moved to the second listener
+// httpserver.RunAdmin serves them on in main.go.
 func (a *app) handler() http.Handler {
 	mux := http.NewServeMux()
-
-	// Health and metrics are mounted bare, outside the route chain: a load
-	// balancer polling /healthz must never be rate limited, and a scrape
-	// must never be refused for a missing CSRF token.
-	a.health.Handle(mux)
-	mux.Handle("GET /metrics", a.metricsHandler)
 
 	// route is the per-handler chain, outermost first. cors, the rate
 	// limiter and the csrf protector all answer a request themselves
@@ -222,5 +220,32 @@ func (a *app) handler() http.Handler {
 		a.security.Middleware,
 		a.httpMetrics.Middleware,
 		a.accessLog.Middleware,
+	)
+}
+
+// adminHandler builds the handler httpserver.RunAdmin serves on the second,
+// administrative listener in main.go: the liveness and readiness probes and
+// the Prometheus scrape, none of which this application's Ingress ever
+// routes to. See docs/concepts/govue.md for the reasoning.
+//
+// The middleware here is a deliberate, short list, not the outer chain
+// above with entries removed: a probe and a scrape are not browser
+// traffic, so the security headers and CORS have nothing to protect; they
+// are not requests a user can forge, so the CSRF protector has nothing to
+// check; and a scraper polling this listener every few seconds must not be
+// throttled by the rate limiter or fill the access log the way a public
+// request would. a.httpMetrics.Middleware is absent too, deliberately: a
+// scrape endpoint instrumenting its own hits would feed Prometheus a metric
+// about scraping Prometheus, which is not a loop worth closing. Recover and
+// RequestID stay, because a panic here is still worth catching and still
+// worth a correlatable log line.
+func (a *app) adminHandler() http.Handler {
+	mux := http.NewServeMux()
+	a.health.Handle(mux)
+	mux.Handle("GET /metrics", a.metricsHandler)
+
+	return middleware.Chain(mux,
+		middleware.Recover(a.logger),
+		middleware.RequestID(a.logger),
 	)
 }

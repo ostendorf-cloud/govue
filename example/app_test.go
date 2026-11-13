@@ -18,6 +18,7 @@ import (
 
 	"github.com/ostendorf-cloud/govue/csrf"
 	"github.com/ostendorf-cloud/govue/logging"
+	"github.com/ostendorf-cloud/govue/middleware"
 	"github.com/ostendorf-cloud/govue/session"
 )
 
@@ -166,15 +167,15 @@ func accessLogLines(t *testing.T, logs *bytes.Buffer) []map[string]any {
 	return lines
 }
 
-// scrapeMetrics runs a scrape through a's own metrics handler, mounted bare
-// on the mux exactly as (*app).handler puts it, and returns the exposition
-// text. Reading it as text, rather than importing prometheus here, keeps
-// this file off the one dependency this repository confines to the metrics
-// package.
+// scrapeMetrics runs a scrape through a's admin handler, exactly as
+// (*app).adminHandler mounts it on the second listener main.go runs, and
+// returns the exposition text. Reading it as text, rather than importing
+// prometheus here, keeps this file off the one dependency this repository
+// confines to the metrics package.
 func scrapeMetrics(t *testing.T, a *app) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	a.handler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", nil))
+	a.adminHandler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("metrics scrape status = %d", rec.Code)
 	}
@@ -500,5 +501,96 @@ func TestAccessLogNeverRecordsTheUnmatchedRoute(t *testing.T) {
 				t.Fatalf("an access log line recorded the unmatched route: %v", line)
 			}
 		}
+	}
+}
+
+// TestPublicHandlerNoLongerServesHealthOrMetrics pins the fix issue 85
+// exists for: a request for any of the three admin paths against the public
+// handler, the one httpserver.RunAdmin puts behind this application's own
+// Ingress, must miss every registered route and fall through to the
+// catch-all, exactly like any other unregistered path.
+func TestPublicHandlerNoLongerServesHealthOrMetrics(t *testing.T) {
+	t.Parallel()
+
+	a, _ := newTestApp(t, 1000)
+	h := a.handler()
+
+	for _, path := range []string{"/healthz", "/readyz", "/metrics"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("public handler GET %s = %d, want 404: it must not be reachable through the public listener", path, rec.Code)
+		}
+	}
+}
+
+// TestAdminHandlerServesHealthAndMetrics is the positive half of the test
+// above: the same three paths answer normally on the admin handler
+// httpserver.RunAdmin puts on the second, unrouted listener.
+func TestAdminHandlerServesHealthAndMetrics(t *testing.T) {
+	t.Parallel()
+
+	a, _ := newTestApp(t, 1000)
+	h := a.adminHandler()
+
+	for _, tc := range []struct {
+		path string
+		want int
+	}{
+		{"/healthz", http.StatusOK},
+		{"/readyz", http.StatusOK},
+		{"/metrics", http.StatusOK},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.path, nil))
+		if rec.Code != tc.want {
+			t.Errorf("admin handler GET %s = %d, want %d: %s", tc.path, rec.Code, tc.want, rec.Body.String())
+		}
+	}
+}
+
+// TestAdminHandlerIsNeverRateLimitedOrAccessLogged is the test for the
+// acceptance criterion that the admin listener's middleware is a deliberate
+// choice: a burst of one is enough to refuse the second request on the
+// public handler, see TestRateLimitAnswersWithTheRealRouteLabel, but a
+// scraper hitting the admin handler the same number of times must never be
+// refused, and must never fill the access log the public handler writes to.
+func TestAdminHandlerIsNeverRateLimitedOrAccessLogged(t *testing.T) {
+	t.Parallel()
+
+	a, logs := newTestApp(t, 1)
+	h := a.adminHandler()
+
+	for i := range 5 {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("scrape %d status = %d, want 200: a burst of one must not rate limit the admin listener", i, rec.Code)
+		}
+	}
+
+	if lines := accessLogLines(t, logs); len(lines) != 0 {
+		t.Errorf("got %d access log lines for the admin handler, want 0: %v", len(lines), lines)
+	}
+}
+
+// TestAdminHandlerStillGivesEveryRequestAnID checks the middleware that did
+// stay is actually wired up: Recover and RequestID are kept on the admin
+// handler on purpose, so a panic there is still caught and still
+// correlatable, even though AccessLog, the rate limiter, CORS, CSRF and the
+// security headers are not.
+func TestAdminHandlerStillGivesEveryRequestAnID(t *testing.T) {
+	t.Parallel()
+
+	a, _ := newTestApp(t, 1000)
+	h := a.adminHandler()
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get(middleware.RequestIDHeader) == "" {
+		t.Error("the admin handler's response carries no request id")
 	}
 }
