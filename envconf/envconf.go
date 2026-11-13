@@ -195,7 +195,7 @@ func (l *Loader) secretOrFile(key string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("cannot read %s: %w", filePath, err)
 		}
-		secret := strings.TrimRight(string(raw), "\r\n")
+		secret := strings.TrimSpace(string(raw))
 		if secret == "" {
 			return "", fmt.Errorf("%s is empty", filePath)
 		}
@@ -206,10 +206,25 @@ func (l *Loader) secretOrFile(key string) (string, error) {
 
 // SecretOrFile reads key directly or from the path named by key_FILE, never
 // both: a secret manager, an injected file, a compose .env and a developer's
-// shell all work without the application knowing which it is. A file that
-// resolves to an empty value is a problem, because running with an empty
-// secret is worse than not starting. Neither set is not a problem here; it
-// returns "".
+// shell all work without the application knowing which it is.
+//
+// Both sources are trimmed of surrounding whitespace with the same rule,
+// strings.TrimSpace, so the same secret resolves to the same value whichever
+// way it arrives. The alternative, trimming only a trailing newline, would
+// preserve a secret whose own content happens to include leading or trailing
+// whitespace, but a hex key, a password or a token is not built that way in
+// practice: that whitespace is injection noise, from echo, a text editor or a
+// compose file, not payload. Keeping it instead trades a loud failure for a
+// quiet one. A secret that genuinely depended on surrounding whitespace would
+// never verify, from the very first attempt, which is caught immediately. A
+// stray trailing space picked up from an environment value is invisible in a
+// terminal, in `kubectl describe` or in a diff, and would otherwise surface
+// only much later as a signature that does not verify or a login that fails
+// for no visible reason.
+//
+// A file that resolves to an empty value is a problem, because running with
+// an empty secret is worse than not starting. Neither set is not a problem
+// here; it returns "".
 func (l *Loader) SecretOrFile(key string) string {
 	value, err := l.secretOrFile(key)
 	if err != nil {
