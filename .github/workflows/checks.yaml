@@ -84,6 +84,9 @@ jobs:
         find web/src -type f \( -name "*.ts" -o -name "*.vue" \) -not -path "*/node_modules/*" -not -path "*/dist/*"
         find web/scripts -type f \( -name "*.ts" -o -name "*.vue" \) -not -path "*/node_modules/*" -not -path "*/dist/*"
 
+  renovate-config:
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-renovate-config.yaml@v0.2.0
+
   build:
     runs-on: ubuntu-latest
     steps:
