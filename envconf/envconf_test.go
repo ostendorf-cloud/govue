@@ -478,6 +478,88 @@ func TestSecretOrFile(t *testing.T) {
 			t.Errorf("Err() = %v, want it to wrap a *fs.PathError", err)
 		}
 	})
+
+	t.Run("a secret with a trailing tab resolves the same from the environment and from a file", func(t *testing.T) {
+		t.Parallel()
+
+		const raw = "s3cret\t"
+		withTab := filepath.Join(dir, "with-tab.key")
+		if err := os.WriteFile(withTab, []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		direct := New(env(map[string]string{"KEY": raw}))
+		fromFile := New(env(map[string]string{"KEY_FILE": withTab}))
+
+		gotDirect := direct.SecretOrFile("KEY")
+		gotFile := fromFile.SecretOrFile("KEY")
+
+		if gotDirect != "s3cret" {
+			t.Errorf("SecretOrFile(KEY) = %q, want %q", gotDirect, "s3cret")
+		}
+		if gotDirect != gotFile {
+			t.Errorf("SecretOrFile(KEY) = %q from the environment, %q from a file, want the same value", gotDirect, gotFile)
+		}
+		if err := direct.Err(); err != nil {
+			t.Fatalf("Err() (environment) = %v, want nil", err)
+		}
+		if err := fromFile.Err(); err != nil {
+			t.Fatalf("Err() (file) = %v, want nil", err)
+		}
+	})
+
+	t.Run("a _FILE containing only whitespace is a problem, not a secret", func(t *testing.T) {
+		t.Parallel()
+
+		onlyWhitespace := filepath.Join(dir, "only-whitespace.key")
+		if err := os.WriteFile(onlyWhitespace, []byte(" \t"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		l := New(env(map[string]string{"KEY_FILE": onlyWhitespace}))
+		if got := l.SecretOrFile("KEY"); got != "" {
+			t.Errorf("SecretOrFile(KEY) = %q, want empty", got)
+		}
+		err := l.Err()
+		if err == nil || !strings.Contains(err.Error(), "is empty") {
+			t.Errorf("Err() = %v, want a problem saying the file is empty", err)
+		}
+	})
+
+	t.Run("a _FILE with leading whitespace around the secret resolves to the trimmed secret", func(t *testing.T) {
+		t.Parallel()
+
+		leadingSpace := filepath.Join(dir, "leading-space.key")
+		if err := os.WriteFile(leadingSpace, []byte("  s3cret\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		l := New(env(map[string]string{"KEY_FILE": leadingSpace}))
+		if got := l.SecretOrFile("KEY"); got != "s3cret" {
+			t.Errorf("SecretOrFile(KEY) = %q, want %q", got, "s3cret")
+		}
+		if err := l.Err(); err != nil {
+			t.Fatalf("Err() = %v, want nil", err)
+		}
+	})
+
+	t.Run("a _FILE with a multi-line secret keeps the interior newline", func(t *testing.T) {
+		t.Parallel()
+
+		const want = "line one\nline two"
+		multiLine := filepath.Join(dir, "multi-line.key")
+		if err := os.WriteFile(multiLine, []byte("\n"+want+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		l := New(env(map[string]string{"KEY_FILE": multiLine}))
+		if got := l.SecretOrFile("KEY"); got != want {
+			t.Errorf("SecretOrFile(KEY) = %q, want %q", got, want)
+		}
+		if err := l.Err(); err != nil {
+			t.Fatalf("Err() = %v, want nil", err)
+		}
+	})
 }
 
 func TestRequiredSecretOrFile(t *testing.T) {
