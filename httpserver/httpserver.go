@@ -222,6 +222,25 @@ func (a AdminConfig) toConfig(primaryLogger *slog.Logger) Config {
 // misconfigured admin listener never leaves the primary one bound with
 // nothing serving it.
 func RunAdmin(ctx context.Context, cfg Config, admin AdminConfig) error {
+	return runAdmin(ctx, cfg, admin, func(ctx context.Context, addr string) (net.Listener, error) {
+		return (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+	})
+}
+
+// listenFunc opens a TCP listener on addr, the shape of
+// (*net.ListenConfig).Listen with the network fixed to "tcp". runAdmin takes
+// one as a parameter instead of calling net.Listen directly, which is the
+// seam a test needs to exercise the admin listener failing to bind after the
+// primary already succeeded: AGENTS.md forbids a test that binds a real
+// port, and a package level variable standing in for this would be the
+// global mutable state go-conventions rules out, so the seam is a parameter,
+// not a var.
+type listenFunc func(ctx context.Context, addr string) (net.Listener, error)
+
+// runAdmin is RunAdmin's body, with listen taking the place of the two
+// net.Listen calls so a fake can make the second one fail without binding a
+// real port.
+func runAdmin(ctx context.Context, cfg Config, admin AdminConfig, listen listenFunc) error {
 	if admin.Addr == "" {
 		return Run(ctx, cfg)
 	}
@@ -231,16 +250,20 @@ func RunAdmin(ctx context.Context, cfg Config, admin AdminConfig) error {
 		return fmt.Errorf("http server: %w", err)
 	}
 	adminCfg := admin.toConfig(cfg.Logger)
+	// adminCfg.ShutdownTimeout and adminCfg.DrainDelay get defaulted here
+	// along with every other field, but ServeAdmin never reads either one:
+	// shutdown for both listeners is driven from cfg, the primary Config,
+	// alone, by design, see AdminConfig's own doc comment.
 	adminCfg.applyDefaults()
 	if err := adminCfg.validate(true); err != nil {
 		return fmt.Errorf("http server: admin: %w", err)
 	}
 
-	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.Addr)
+	listener, err := listen(ctx, cfg.Addr)
 	if err != nil {
 		return fmt.Errorf("http server: listen: %w", err)
 	}
-	adminListener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", adminCfg.Addr)
+	adminListener, err := listen(ctx, adminCfg.Addr)
 	if err != nil {
 		_ = listener.Close()
 		return fmt.Errorf("http server: admin: listen: %w", err)
@@ -272,6 +295,10 @@ func ServeAdmin(ctx context.Context, cfg Config, listener net.Listener, admin Ad
 		return fmt.Errorf("http server: %w", err)
 	}
 	adminCfg := admin.toConfig(cfg.Logger)
+	// adminCfg.ShutdownTimeout and adminCfg.DrainDelay get defaulted here
+	// along with every other field, but are never read below: both
+	// shutdownServer calls past this point use cfg.ShutdownTimeout and
+	// cfg.DrainDelay, the primary Config's own, for both listeners.
 	adminCfg.applyDefaults()
 	if err := adminCfg.validate(false); err != nil {
 		return fmt.Errorf("http server: admin: %w", err)
