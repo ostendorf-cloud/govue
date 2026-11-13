@@ -52,6 +52,16 @@ func (l *memListener) Close() error {
 
 func (l *memListener) Addr() net.Addr { return fakeAddr{} }
 
+// isClosed reports whether Close has already run, without blocking.
+func (l *memListener) isClosed() bool {
+	select {
+	case <-l.closed:
+		return true
+	default:
+		return false
+	}
+}
+
 // dial creates one pipe pair, hands the server end to a pending Accept and
 // returns the client end to the caller.
 func (l *memListener) dial(ctx context.Context) (net.Conn, error) {
@@ -376,6 +386,44 @@ func TestRunAdminRejectsAnInvalidAdminConfigWithoutTouchingTheNetwork(t *testing
 	}
 }
 
+func TestRunAdminClosesThePrimaryListenerWhenTheAdminListenFails(t *testing.T) {
+	t.Parallel()
+
+	primary := newMemListener()
+	wantErr := errors.New("admin: address already in use")
+
+	var calls int
+	listen := func(_ context.Context, _ string) (net.Listener, error) {
+		calls++
+		if calls == 1 {
+			return primary, nil
+		}
+		return nil, wantErr
+	}
+
+	err := runAdmin(context.Background(), Config{
+		Addr:    "primary.invalid:0",
+		Logger:  discardLogger(),
+		Handler: echoHandler("primary"),
+	}, AdminConfig{
+		Addr:    "admin.invalid:0",
+		Handler: echoHandler("admin"),
+	}, listen)
+
+	if err == nil {
+		t.Fatal("runAdmin accepted a listen failure on the admin address")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("runAdmin = %v, want it to wrap %v", err, wantErr)
+	}
+	if !strings.Contains(err.Error(), "admin") {
+		t.Errorf("runAdmin = %v, does not name the admin listener", err)
+	}
+	if !primary.isClosed() {
+		t.Error("runAdmin left the primary listener open after the admin listen failed")
+	}
+}
+
 func TestServeAdminAnswersOnBothListenersAndShutsDownCleanly(t *testing.T) {
 	t.Parallel()
 
@@ -594,5 +642,119 @@ func TestServeAdminLetsARequestInFlightOnTheAdminListenerFinish(t *testing.T) {
 
 	if err := <-serveDone; err != nil {
 		t.Errorf("ServeAdmin = %v, want nil", err)
+	}
+}
+
+// outlivingHandler answers / immediately, and /slow only after sleeping well
+// past the ShutdownTimeout the tests below configure: a request to /slow
+// still in flight when shutdown starts is still running once srv.Shutdown's
+// own deadline expires, which is what makes Shutdown itself return an error
+// instead of the listener merely failing to Serve in the first place.
+func outlivingHandler(name string, started chan<- struct{}) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow" {
+			close(started)
+			time.Sleep(200 * time.Millisecond)
+		}
+		_, _ = w.Write([]byte(name))
+	})
+}
+
+func TestServeAdminJoinsErrorsWhenShutdownItselfFails(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		primarySlow bool
+		adminSlow   bool
+		wantLabels  []string
+	}{
+		{"shutdown fails on the primary listener alone", true, false, []string{"primary"}},
+		{"shutdown fails on the admin listener alone", false, true, []string{"admin"}},
+		{"shutdown fails on both listeners", true, true, []string{"primary", "admin"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			primary := newMemListener()
+			admin := newMemListener()
+			ctx, stop := context.WithCancel(context.Background())
+			defer stop()
+
+			primaryStarted := make(chan struct{})
+			adminStarted := make(chan struct{})
+
+			serveDone := make(chan error, 1)
+			go func() {
+				serveDone <- ServeAdmin(ctx, Config{
+					Logger:          discardLogger(),
+					Handler:         outlivingHandler("primary", primaryStarted),
+					DrainDelay:      5 * time.Millisecond,
+					ShutdownTimeout: 20 * time.Millisecond,
+				}, primary, AdminConfig{
+					Handler: outlivingHandler("admin", adminStarted),
+				}, admin)
+			}()
+
+			// requestDone collects the slow requests this test starts, so it
+			// can wait for both of them to actually finish before it ends,
+			// rather than leaving a handler goroutine running past the test.
+			var requestDone sync.WaitGroup
+			if tt.primarySlow {
+				requestDone.Add(1)
+				go func() {
+					defer requestDone.Done()
+					_ = getBody(t, httpClientFor(primary), "/slow")
+				}()
+				<-primaryStarted
+			}
+			if tt.adminSlow {
+				requestDone.Add(1)
+				go func() {
+					defer requestDone.Done()
+					_ = getBody(t, httpClientFor(admin), "/slow")
+				}()
+				<-adminStarted
+			}
+
+			stop()
+
+			var err error
+			select {
+			case err = <-serveDone:
+			case <-time.After(safetyNet):
+				t.Fatal("ServeAdmin did not return once shutdown itself timed out")
+			}
+
+			if err == nil {
+				t.Fatal("ServeAdmin = nil, want an error naming the listener whose shutdown timed out")
+			}
+			for _, label := range tt.wantLabels {
+				if !strings.Contains(err.Error(), label+":") {
+					t.Errorf("error %q does not name %q", err, label)
+				}
+			}
+
+			joined, ok := err.(interface{ Unwrap() []error }) //nolint:errorlint // asserting the concrete shape errors.Join returns is the point of this check
+			if !ok {
+				t.Fatalf("error %q is not the result of errors.Join", err)
+			}
+			if got, want := len(joined.Unwrap()), len(tt.wantLabels); got != want {
+				t.Errorf("joined error carries %d causes, want %d: %v", got, want, err)
+			}
+
+			done := make(chan struct{})
+			go func() {
+				requestDone.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(safetyNet):
+				t.Fatal("a slow request never finished")
+			}
+		})
 	}
 }
