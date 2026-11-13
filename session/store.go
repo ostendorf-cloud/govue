@@ -69,8 +69,10 @@ const defaultMaxSessions = 10000
 // Expired entries are swept, so a long running process does not grow with every
 // login, and an entry past its absolute expiry is already gone from [MemoryStore.Get]
 // before the sweep reaches it. The number of tracked sessions is also capped at
-// construction time; if the map is still full after a sweep, one arbitrary
-// session, never the one being saved, is evicted to make room.
+// construction time; if the map is still full of tracked sessions after a sweep
+// when a session not already tracked arrives, one arbitrary session is evicted
+// to make room. A write that only touches a session already tracked never
+// evicts, since replacing an existing entry does not grow the map.
 //
 // It is correct for exactly one replica. Two replicas each keep their own
 // sessions, so a request that lands on the other one has no login, and a
@@ -112,21 +114,25 @@ func (s *MemoryStore) Get(_ context.Context, id string) (Session, error) {
 	return found.clone(), nil
 }
 
-// Save writes the session, and sweeps first if the last sweep is long enough
-// ago. The sweep rides along on a write because that is the one path that makes
-// the map grow. If the map is still at maxSessions once the sweep has had its
-// chance to shrink it, one arbitrary session is evicted before the new one is
-// inserted; map iteration order is unspecified, so this never prefers one
-// session over another. Losing a session early can only log out one unlucky
-// caller sooner than its own expiry would, never deny the save being made.
+// Save writes the session, and sweeps first either because the last sweep is
+// long enough ago or because the map is already at maxSessions and needs the
+// chance to shrink before a new session forces an eviction. The sweep rides
+// along on a write because that is the one path that makes the map grow. A
+// session already tracked under session.ID is a replacement, never a growth
+// of the map, so it is written back without ever considering an eviction. For
+// a session not already tracked, if the map is still at maxSessions once the
+// sweep has had its chance to shrink it, one arbitrary session is evicted
+// before the new one is inserted; map iteration order is unspecified, so this
+// never prefers one session over another. Losing a session early can only log
+// out one unlucky caller sooner than its own expiry would, never deny the save
+// being made.
 func (s *MemoryStore) Save(_ context.Context, session Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.now().Sub(s.lastSweep) >= memorySweepInterval {
-		s.sweep()
-	}
-	if len(s.sessions) >= s.maxSessions {
+	s.maybeSweep(s.now())
+
+	if _, tracked := s.sessions[session.ID]; !tracked && len(s.sessions) >= s.maxSessions {
 		for id := range s.sessions {
 			delete(s.sessions, id)
 			break
@@ -165,6 +171,17 @@ func (s *MemoryStore) Len() int {
 	defer s.mu.RUnlock()
 
 	return len(s.sessions)
+}
+
+// maybeSweep drops expired sessions when it is time to look, either because
+// memorySweepInterval has passed or because the map has grown to maxSessions
+// and needs the chance to shrink before Save has to evict a tracked session.
+// The caller holds the write lock.
+func (s *MemoryStore) maybeSweep(now time.Time) {
+	if now.Sub(s.lastSweep) < memorySweepInterval && len(s.sessions) < s.maxSessions {
+		return
+	}
+	s.sweep()
 }
 
 // sweep drops what is past its absolute expiry. The caller holds the write

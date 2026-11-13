@@ -274,6 +274,100 @@ func TestMemoryStoreBoundsMemory(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreTouchingExistingSessionsAtTheBoundNeverEvicts(t *testing.T) {
+	now := start
+	const maxSessions = 5
+	store := session.NewMemoryStore(func() time.Time { return now }, maxSessions)
+
+	ids := make([]string, maxSessions)
+	for i := range maxSessions {
+		ids[i] = fmt.Sprintf("s%d", i)
+		s := session.Session{ID: ids[i], ExpiresAt: now.Add(time.Hour)}
+		if err := store.Save(context.Background(), s); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+	}
+	if store.Len() != maxSessions {
+		t.Fatalf("Len = %d, want %d after filling the store", store.Len(), maxSessions)
+	}
+
+	// The store is at capacity. Repeatedly touching the same already-tracked
+	// sessions, as Manager.Read's periodic LastSeen write does, must never
+	// evict any of them: a pure update does not grow the map.
+	for round := range 50 {
+		for i, id := range ids {
+			s := session.Session{ID: id, LastSeen: now, ExpiresAt: now.Add(time.Hour)}
+			if err := store.Save(context.Background(), s); err != nil {
+				t.Fatalf("round %d: Save %q: %v", round, id, err)
+			}
+			if n := store.Len(); n != maxSessions {
+				t.Fatalf("round %d: Len = %d after touching %q, want it to stay at %d", round, n, id, maxSessions)
+			}
+			for _, other := range ids {
+				if _, err := store.Get(context.Background(), other); err != nil {
+					t.Fatalf("round %d, touch %d: session %q was evicted by a touch of %q: %v", round, i, other, id, err)
+				}
+			}
+		}
+	}
+}
+
+func TestMemoryStoreSweepGetsAChanceFromTheBoundAlone(t *testing.T) {
+	now := start
+	const maxSessions = 3
+	store := session.NewMemoryStore(func() time.Time { return now }, maxSessions)
+
+	// The first ever Save always sweeps, since lastSweep starts at the zero
+	// time; that sets a recent lastSweep so the rest of this test is clear of
+	// the time-based trigger and isolates the bound-based one.
+	if err := store.Save(context.Background(), session.Session{ID: "expired1", ExpiresAt: now.Add(2 * time.Second)}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := store.Save(context.Background(), session.Session{ID: "expired2", ExpiresAt: now.Add(2 * time.Second)}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := store.Save(context.Background(), session.Session{ID: "live", ExpiresAt: now.Add(12 * time.Hour)}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if store.Len() != maxSessions {
+		t.Fatalf("Len = %d, want %d after filling the store", store.Len(), maxSessions)
+	}
+
+	// Both expired entries are now past their absolute expiry, but far short
+	// of memorySweepInterval: only being at the bound can give the sweep a
+	// reason to look at them before the elapsed-time trigger ever would.
+	now = now.Add(5 * time.Second)
+	if _, err := store.Get(context.Background(), "expired1"); !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("Get %q = %v, want ErrNotFound once it is past its expiry", "expired1", err)
+	}
+
+	// The map is at maxSessions. A new, untracked session arriving should let
+	// the sweep reclaim both expired slots before any eviction is even
+	// considered, rather than evicting the live session to make room.
+	if err := store.Save(context.Background(), session.Session{ID: "fresh", ExpiresAt: now.Add(time.Hour)}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// With the sweep given its chance from the bound alone, both expired
+	// sessions are gone and nothing had to be evicted: the store holds
+	// exactly the live and the fresh session, not still pinned at maxSessions
+	// by a collateral eviction.
+	if got, want := store.Len(), 2; got != want {
+		t.Fatalf("Len = %d, want %d: the sweep should have freed both expired slots, not evicted a live session", got, want)
+	}
+	if _, err := store.Get(context.Background(), "live"); err != nil {
+		t.Errorf("the live session did not survive: %v", err)
+	}
+	if _, err := store.Get(context.Background(), "fresh"); err != nil {
+		t.Errorf("the new session was not saved: %v", err)
+	}
+	for _, id := range []string{"expired1", "expired2"} {
+		if _, err := store.Get(context.Background(), id); !errors.Is(err, session.ErrNotFound) {
+			t.Errorf("Get %q = %v, want ErrNotFound", id, err)
+		}
+	}
+}
+
 func TestMemoryStoreMaxSessionsBelowOneIsClamped(t *testing.T) {
 	now := start
 	for _, maxSessions := range []int{0, -1, -100} {
