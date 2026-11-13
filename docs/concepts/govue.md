@@ -194,6 +194,51 @@ The design of the library and the reasoning behind it.
   package's behaviour: the packages already read `r.Pattern` correctly, and `example/` only had
   to put each one on the side of the mux where that is true.
 
+### A second listener for what the Ingress must never route
+
+- `metrics.Handler` returns a plain `http.Handler`, so mounting it on the same mux as the
+  application put it behind the same listener, the same port, and therefore the same Ingress. It
+  is not secret data, but it hands any visitor the request rates, latencies and error counts of
+  the application, and that is reachable only because nothing stopped it from being mounted
+  there, not because anything required it.
+- The ordinary shape in a Kubernetes deployment is two ports on one process: the application
+  serves its public port, metrics serve a second, in-cluster one, the Service exposes both, the
+  Ingress routes only the first, and a ServiceMonitor or PodMonitor scrapes the second directly.
+  Nothing on that second port is published anywhere, so nothing on it needs a credential. A
+  bearer token or mTLS on the metrics path is defence in depth on top of a port that already is
+  not routed, not a substitute for routing it correctly in the first place.
+- `httpserver.RunAdmin` and `httpserver.ServeAdmin` give an application that shape with one call
+  instead of a second, hand-rolled `Run` in its own goroutine: one cancelled context stops both
+  listeners, a failure on either surfaces rather than one silently dying next to a goroutine that
+  leaked, and shutdown is coordinated once rather than twice. `AdminConfig` carries no
+  `ShutdownTimeout`, `DrainDelay` or `BeforeShutdown` of its own on purpose: those three are read
+  from the primary `Config` alone, so the two listeners cannot end up draining on two different
+  schedules just because an application set one of them on only one side.
+- This is additive, not a change to `Run` or `Config`: every exported name at this module's root
+  is a contract, and a changed signature breaks both of this library's current consumers. An
+  application that does not want a second listener keeps calling `Run` exactly as before, and
+  `RunAdmin` itself falls back to calling `Run` unchanged whenever `AdminConfig.Addr` is left
+  empty. Adopting the admin listener is something an application opts into, never something it
+  has to opt out of.
+- The admin listener's middleware is deliberately short, and deliberately not the outer chain
+  with two entries removed. `example/`'s `(*app).adminHandler` keeps `Recover` and `RequestID`,
+  because a panic on this listener is still worth catching and still worth a correlatable log
+  line, and drops everything else: the security headers and CORS have nothing to protect, since
+  neither a probe nor a scraper is a browser; the CSRF protector has nothing to check, since
+  neither can be forged through one; and the access log and the rate limiter are actively wrong
+  here, because a scraper polling every few seconds would either fill the log with nothing worth
+  reading or get throttled into failing the one thing it is there to do. None of this needed a
+  change to any existing middleware: the admin handler simply never passes through
+  `middleware.AccessLog` or `middleware.RateLimit` at all, the same way a package that never
+  imports another cannot be coupled to it.
+- The liveness and readiness probes moved to the admin listener too, in `example/` and in the
+  recommendation here, on the same reasoning: a kubelet reaches the pod directly, so `/healthz`
+  and `/readyz` need no public route either. This is a wiring decision, not a library one. The
+  `health` package already takes any `*http.ServeMux` in `Handle`, so nothing in the package
+  changed, and an application already running the previous, single-listener shape keeps its
+  probes exactly where they are until it chooses to move them, because moving them is an edit to
+  its own `main`, never something `govue` does to it.
+
 ### Sessions keep their state in a store
 
 - The cookie carries an opaque random id. The state lives behind a `Store` interface, with an
