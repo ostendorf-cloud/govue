@@ -4,6 +4,8 @@
 package envconf
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -369,6 +371,206 @@ func TestSecret(t *testing.T) {
 		l.Secret("KEY_FILE")
 		if l.Err() == nil {
 			t.Error("a missing secret variable was accepted")
+		}
+	})
+}
+
+// joinedErrors counts the errors an errors.Join result unwraps to, or 0 for
+// nil.
+func joinedErrors(err error) int {
+	if err == nil {
+		return 0
+	}
+	unwrapper, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return 1
+	}
+	return len(unwrapper.Unwrap())
+}
+
+func TestSecretOrFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	good := filepath.Join(dir, "session.key")
+	if err := os.WriteFile(good, []byte("s3cret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	blank := filepath.Join(dir, "blank.key")
+	if err := os.WriteFile(blank, []byte("\n\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("value set via the plain variable", func(t *testing.T) {
+		t.Parallel()
+
+		l := New(env(map[string]string{"KEY": "s3cret"}))
+		if got := l.SecretOrFile("KEY"); got != "s3cret" {
+			t.Errorf("SecretOrFile(KEY) = %q", got)
+		}
+		if err := l.Err(); err != nil {
+			t.Fatalf("Err() = %v, want nil", err)
+		}
+	})
+
+	t.Run("value set via the _FILE variable", func(t *testing.T) {
+		t.Parallel()
+
+		l := New(env(map[string]string{"KEY_FILE": good}))
+		if got := l.SecretOrFile("KEY"); got != "s3cret" {
+			t.Errorf("SecretOrFile(KEY) = %q", got)
+		}
+		if err := l.Err(); err != nil {
+			t.Fatalf("Err() = %v, want nil", err)
+		}
+	})
+
+	t.Run("both set is a problem naming both variables", func(t *testing.T) {
+		t.Parallel()
+
+		l := New(env(map[string]string{"KEY": "s3cret", "KEY_FILE": good}))
+		if got := l.SecretOrFile("KEY"); got != "" {
+			t.Errorf("SecretOrFile(KEY) = %q, want empty", got)
+		}
+		err := l.Err()
+		if err == nil || !strings.Contains(err.Error(), "KEY") || !strings.Contains(err.Error(), "KEY_FILE") {
+			t.Errorf("Err() = %v, want a problem naming KEY and KEY_FILE", err)
+		}
+	})
+
+	t.Run("neither set is not a problem", func(t *testing.T) {
+		t.Parallel()
+
+		l := New(env(nil))
+		if got := l.SecretOrFile("KEY"); got != "" {
+			t.Errorf("SecretOrFile(KEY) = %q, want empty", got)
+		}
+		if err := l.Err(); err != nil {
+			t.Fatalf("Err() = %v, want nil", err)
+		}
+	})
+
+	t.Run("a _FILE that reads back empty is a problem", func(t *testing.T) {
+		t.Parallel()
+
+		l := New(env(map[string]string{"KEY_FILE": blank}))
+		if got := l.SecretOrFile("KEY"); got != "" {
+			t.Errorf("SecretOrFile(KEY) = %q, want empty", got)
+		}
+		if l.Err() == nil {
+			t.Error("an empty secret file was accepted")
+		}
+	})
+
+	t.Run("a missing _FILE path is a wrapped read error", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(dir, "nope.key")
+		l := New(env(map[string]string{"KEY_FILE": path}))
+		if got := l.SecretOrFile("KEY"); got != "" {
+			t.Errorf("SecretOrFile(KEY) = %q, want empty", got)
+		}
+		err := l.Err()
+		if err == nil || !strings.Contains(err.Error(), "cannot read") || !strings.Contains(err.Error(), path) {
+			t.Errorf("Err() = %v, want a wrapped read error naming %s", err, path)
+		}
+		if !errors.As(err, new(*fs.PathError)) {
+			t.Errorf("Err() = %v, want it to wrap a *fs.PathError", err)
+		}
+	})
+}
+
+func TestRequiredSecretOrFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	blank := filepath.Join(dir, "blank.key")
+	if err := os.WriteFile(blank, []byte("\n\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("neither set is a problem saying it is required", func(t *testing.T) {
+		t.Parallel()
+
+		l := New(env(nil))
+		if got := l.RequiredSecretOrFile("KEY"); got != "" {
+			t.Errorf("RequiredSecretOrFile(KEY) = %q, want empty", got)
+		}
+		err := l.Err()
+		if err == nil || !strings.Contains(err.Error(), "is required") {
+			t.Errorf("Err() = %v, want a problem saying it is required", err)
+		}
+	})
+
+	t.Run("an empty _FILE is a problem, not a duplicate required problem", func(t *testing.T) {
+		t.Parallel()
+
+		l := New(env(map[string]string{"KEY_FILE": blank}))
+		if got := l.RequiredSecretOrFile("KEY"); got != "" {
+			t.Errorf("RequiredSecretOrFile(KEY) = %q, want empty", got)
+		}
+		err := l.Err()
+		if err == nil {
+			t.Fatal("an empty secret file was accepted")
+		}
+		if strings.Contains(err.Error(), "is required") {
+			t.Errorf("Err() = %v, want no duplicate is-required problem", err)
+		}
+		if got := joinedErrors(err); got != 1 {
+			t.Errorf("Err() joins %d problems, want exactly 1", got)
+		}
+	})
+
+	t.Run("a value set via the plain variable is not a problem", func(t *testing.T) {
+		t.Parallel()
+
+		l := New(env(map[string]string{"KEY": "s3cret"}))
+		if got := l.RequiredSecretOrFile("KEY"); got != "s3cret" {
+			t.Errorf("RequiredSecretOrFile(KEY) = %q", got)
+		}
+		if err := l.Err(); err != nil {
+			t.Fatalf("Err() = %v, want nil", err)
+		}
+	})
+
+	t.Run("a value set via _FILE is not a problem", func(t *testing.T) {
+		t.Parallel()
+
+		good := filepath.Join(dir, "good.key")
+		if err := os.WriteFile(good, []byte("s3cret\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		l := New(env(map[string]string{"KEY_FILE": good}))
+		if got := l.RequiredSecretOrFile("KEY"); got != "s3cret" {
+			t.Errorf("RequiredSecretOrFile(KEY) = %q", got)
+		}
+		if err := l.Err(); err != nil {
+			t.Fatalf("Err() = %v, want nil", err)
+		}
+	})
+
+	t.Run("both set is a problem, not a duplicate required problem", func(t *testing.T) {
+		t.Parallel()
+
+		good := filepath.Join(dir, "good2.key")
+		if err := os.WriteFile(good, []byte("s3cret\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		l := New(env(map[string]string{"KEY": "s3cret", "KEY_FILE": good}))
+		if got := l.RequiredSecretOrFile("KEY"); got != "" {
+			t.Errorf("RequiredSecretOrFile(KEY) = %q, want empty", got)
+		}
+		err := l.Err()
+		if err == nil {
+			t.Fatal("setting both was accepted")
+		}
+		if strings.Contains(err.Error(), "is required") {
+			t.Errorf("Err() = %v, want no duplicate is-required problem", err)
+		}
+		if got := joinedErrors(err); got != 1 {
+			t.Errorf("Err() joins %d problems, want exactly 1", got)
 		}
 	})
 }

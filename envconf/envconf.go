@@ -181,6 +181,54 @@ func (l *Loader) Secret(key string) string {
 	return secret
 }
 
+// secretOrFile is the twin contract shared by SecretOrFile and
+// RequiredSecretOrFile: a direct value, or key_FILE naming a path, never
+// both.
+func (l *Loader) secretOrFile(key string) (string, error) {
+	direct := l.raw(key)
+	filePath := l.raw(key + "_FILE")
+	if direct != "" && filePath != "" {
+		return "", fmt.Errorf("and %s are both set, set only one", key+"_FILE")
+	}
+	if filePath != "" {
+		raw, err := os.ReadFile(filePath)
+		if err != nil {
+			return "", fmt.Errorf("cannot read %s: %w", filePath, err)
+		}
+		secret := strings.TrimRight(string(raw), "\r\n")
+		if secret == "" {
+			return "", fmt.Errorf("%s is empty", filePath)
+		}
+		return secret, nil
+	}
+	return direct, nil
+}
+
+// SecretOrFile reads key directly or from the path named by key_FILE, never
+// both: a secret manager, an injected file, a compose .env and a developer's
+// shell all work without the application knowing which it is. A file that
+// resolves to an empty value is a problem, because running with an empty
+// secret is worse than not starting. Neither set is not a problem here; it
+// returns "".
+func (l *Loader) SecretOrFile(key string) string {
+	value, err := l.secretOrFile(key)
+	if err != nil {
+		l.fail(key, "%w", err)
+		return ""
+	}
+	return value
+}
+
+// RequiredSecretOrFile is SecretOrFile, and a problem when neither key nor
+// key_FILE is set.
+func (l *Loader) RequiredSecretOrFile(key string) string {
+	value := l.SecretOrFile(key)
+	if l.raw(key) == "" && l.raw(key+"_FILE") == "" {
+		l.fail(key, "or %s_FILE: is required", key)
+	}
+	return value
+}
+
 // ParseDuration reads a Go duration, plus a whole number of days with a d
 // suffix, which time.ParseDuration does not support.
 func ParseDuration(raw string) (time.Duration, error) {
