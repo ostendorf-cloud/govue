@@ -74,6 +74,30 @@ describe('createClient', () => {
     expect(calls[0].url).toBe('https://api.example.test/v2/things')
   })
 
+  it('trims a long run of trailing slashes from its own base url', async () => {
+    const client = createClient({
+      fetch: fetchStub,
+      baseUrl: 'https://api.example.test/v2' + '/'.repeat(10000),
+    })
+
+    await client.get('things')
+
+    expect(calls[0].url).toBe('https://api.example.test/v2/things')
+  })
+
+  it('stays linear when a long run of slashes is not actually trailing', async () => {
+    // The adversarial shape for a trailing-anchored, unanchored-at-start
+    // regex: a long run of the repeated character followed by one that
+    // breaks the match, forcing a backtracking engine to retry at every
+    // starting position. Nothing here is trailing, so nothing is trimmed.
+    const baseUrl = 'https://api.example.test/v2' + '/'.repeat(100_000) + 'x'
+    const client = createClient({ fetch: fetchStub, baseUrl })
+
+    await client.get('things')
+
+    expect(calls[0].url).toBe(`${baseUrl}/things`)
+  }, 500)
+
   it('attaches the CSRF token to unsafe methods only', async () => {
     const client = createClient({ fetch: fetchStub, csrfToken: () => 'token-42' })
 
