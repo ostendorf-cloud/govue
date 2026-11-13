@@ -478,6 +478,32 @@ func TestSecretOrFile(t *testing.T) {
 			t.Errorf("Err() = %v, want it to wrap a *fs.PathError", err)
 		}
 	})
+
+	t.Run("a secret with a trailing tab resolves the same from the environment and from a file", func(t *testing.T) {
+		t.Parallel()
+
+		const raw = "s3cret\t"
+		withTab := filepath.Join(dir, "with-tab.key")
+		if err := os.WriteFile(withTab, []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		direct := New(env(map[string]string{"KEY": raw}))
+		fromFile := New(env(map[string]string{"KEY_FILE": withTab}))
+
+		gotDirect := direct.SecretOrFile("KEY")
+		gotFile := fromFile.SecretOrFile("KEY")
+
+		if gotDirect != gotFile {
+			t.Errorf("SecretOrFile(KEY) = %q from the environment, %q from a file, want the same value", gotDirect, gotFile)
+		}
+		if err := direct.Err(); err != nil {
+			t.Fatalf("Err() (environment) = %v, want nil", err)
+		}
+		if err := fromFile.Err(); err != nil {
+			t.Fatalf("Err() (file) = %v, want nil", err)
+		}
+	})
 }
 
 func TestRequiredSecretOrFile(t *testing.T) {
