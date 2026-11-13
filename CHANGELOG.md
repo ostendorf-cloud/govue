@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.5.0](https://github.com/ostendorf-cloud/govue/compare/v0.4.0...v0.5.0) (2026-11-13)
+
+### Features
+
+- **ci:** wire Renovate config check and per-repo run into CI ([#98](https://github.com/ostendorf-cloud/govue/pull/98))
+
 ## [v0.4.0](https://github.com/ostendorf-cloud/govue/compare/v0.3.1...v0.4.0) (2026-11-13)
 
 ### Breaking Changes
