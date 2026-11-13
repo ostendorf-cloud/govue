@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.3.1](https://github.com/ostendorf-cloud/govue/compare/v0.3.0...v0.3.1) (2026-11-13)
+
+### Bug Fixes
+
+- **web:** trim baseUrl without an unanchored regex ([#82](https://github.com/ostendorf-cloud/govue/pull/82))
+- **oidc:** express localPath's guard in CodeQL's recognized shape ([#83](https://github.com/ostendorf-cloud/govue/pull/83))
+
 ## [v0.3.0](https://github.com/ostendorf-cloud/govue/compare/v0.2.0...v0.3.0) (2026-11-13)
 
 ### Features
