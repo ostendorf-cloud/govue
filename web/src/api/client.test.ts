@@ -74,6 +74,17 @@ describe('createClient', () => {
     expect(calls[0].url).toBe('https://api.example.test/v2/things')
   })
 
+  it('trims a long run of trailing slashes from its own base url', async () => {
+    const client = createClient({
+      fetch: fetchStub,
+      baseUrl: 'https://api.example.test/v2' + '/'.repeat(10000),
+    })
+
+    await client.get('things')
+
+    expect(calls[0].url).toBe('https://api.example.test/v2/things')
+  })
+
   it('attaches the CSRF token to unsafe methods only', async () => {
     const client = createClient({ fetch: fetchStub, csrfToken: () => 'token-42' })
 

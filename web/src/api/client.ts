@@ -56,7 +56,10 @@ export interface ApiClient {
  * raw Response.
  */
 export function createClient(options: ClientOptions = {}): ApiClient {
-  const baseUrl = (options.baseUrl ?? '/api/v1').replace(/\/+$/, '')
+  const rawBaseUrl = options.baseUrl ?? '/api/v1'
+  let baseUrlEnd = rawBaseUrl.length
+  while (baseUrlEnd > 0 && rawBaseUrl[baseUrlEnd - 1] === '/') baseUrlEnd--
+  const baseUrl = rawBaseUrl.slice(0, baseUrlEnd)
   const credentials = options.credentials ?? 'same-origin'
   const timeoutMs = options.timeoutMs ?? 15_000
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
