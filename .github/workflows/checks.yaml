@@ -72,7 +72,7 @@ jobs:
   # keeps the same invocation for local development, and AGENTS.md records
   # that the two are kept in step by hand.
   license:
-    uses: ostendorf-cloud/workflows/.github/workflows/reusable-license.yaml@v0.1.0
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-license.yaml@0906f36104c9a448d409732f4b24ece1a0398d26 # v0.1.0
     with:
       copyright-holder: Simon Ostendorf
       year: "2026"
