@@ -7,8 +7,9 @@
 // Its purpose is to be the one place the canonical order of a middleware
 // chain is actually assembled and kept correct, rather than living only in
 // a document that can drift from the packages it describes. See
-// (*app).handler for the two chains and why each position is forced, and
-// docs/concepts/govue.md for the reasoning.
+// (*app).handler for the two chains and why each position is forced,
+// (*app).adminHandler for the second listener health and metrics moved to,
+// and docs/concepts/govue.md for the reasoning behind both.
 package main
 
 import (
@@ -45,13 +46,17 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	return httpserver.Run(ctx, httpserver.Config{
+	return httpserver.RunAdmin(ctx, httpserver.Config{
 		Addr:    cfg.addr,
 		Handler: a.handler(),
 		Logger:  logger,
 		// Failing the readiness probe before the drain delay starts is
 		// what lets a load balancer stop sending new requests before the
-		// server stops accepting connections at all.
+		// server stops accepting connections at all. This runs once, for
+		// both listeners, however many are running.
 		BeforeShutdown: a.health.Drain,
+	}, httpserver.AdminConfig{
+		Addr:    cfg.adminAddr,
+		Handler: a.adminHandler(),
 	})
 }

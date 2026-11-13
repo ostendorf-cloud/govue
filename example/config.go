@@ -23,8 +23,9 @@ const minKeyBytes = 32
 
 // config is every setting this example reads from the environment.
 type config struct {
-	addr     string
-	logLevel slog.Level
+	addr      string
+	adminAddr string
+	logLevel  slog.Level
 
 	trustedProxies []netip.Prefix
 
@@ -59,6 +60,14 @@ func loadConfig(getenv func(string) string) (config, error) {
 
 	cfg := config{
 		addr: l.String("ADDR", ":8080"),
+		// Separate from addr on purpose: see (*app).adminHandler and
+		// docs/concepts/govue.md for why liveness, readiness and metrics
+		// live on their own listener, reached only inside the cluster,
+		// never through this application's Ingress. Set to "" to disable
+		// it and fall back to the single listener httpserver.Run serves,
+		// which is what an application that does not want this gets by
+		// simply not setting ADMIN_ADDR.
+		adminAddr: l.String("ADMIN_ADDR", ":8081"),
 	}
 
 	level, err := logging.Level(l.String("LOG_LEVEL", "info"))
