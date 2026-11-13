@@ -59,7 +59,9 @@ task example:build   # compile the example application
 - The secure choice is the default, never an option an application has to remember. Weakening
   one is the application's decision through a field, never a change to the default here.
 - No error reaches a client with a cause in it. A 5xx collapses to one opaque shape, and the
-  detail goes to the log with the request id.
+  detail goes to the log with the request id. `Error.Exposed` is the one deliberate exception: a
+  handler marks one message as intended for the caller, the default stays collapse, and it is for
+  a 503 a server chooses on purpose, not a general escape hatch.
 - The access log and the metric labels carry the route pattern, never the raw path: a path holds
   ids and tokens.
 - Tests use no network and no socket. A test that binds a port does not run in the sandbox or in

@@ -118,6 +118,26 @@ func TestWriteErrorExposedSurvivesCollapse(t *testing.T) {
 	}
 }
 
+func TestWriteErrorExposedDoesNotLeakTheCauseOfAnInternalError(t *testing.T) {
+	t.Parallel()
+
+	err := Internal(errors.New("some sensitive db failure detail")).Exposed()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/things", nil)
+	WriteError(rec, req, err)
+
+	body := decodeEnvelope(t, rec.Body.Bytes())
+	if body.Message != internalMessage {
+		t.Errorf("message = %q, want %q", body.Message, internalMessage)
+	}
+	// Internal's message is always the fixed constant, never the cause, so
+	// even a mistaken Exposed call on an Internal error cannot send it.
+	if strings.Contains(rec.Body.String(), "sensitive db failure detail") {
+		t.Errorf("cause leaked into the response: %s", rec.Body.String())
+	}
+}
+
 func TestWriteErrorCarriesTheRequestID(t *testing.T) {
 	t.Parallel()
 
