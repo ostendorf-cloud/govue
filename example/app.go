@@ -26,6 +26,11 @@ import (
 // map without bound; see the ratelimit package for how that bound works.
 const maxRateLimitKeys = 100_000
 
+// maxSessions bounds the number of sessions the memory store tracks at once,
+// so an anonymous session minted per unauthenticated caller cannot grow its
+// map without bound; see the session package for how that bound works.
+const maxSessions = 10_000
+
 // app holds every dependency this example wires together. It is the source
 // of truth this repository points at for the order a middleware chain has
 // to run in; see (*app).handler.
@@ -75,7 +80,7 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 	}
 
 	sessions, err := session.New(session.Config{
-		Store:          session.NewMemoryStore(nil),
+		Store:          session.NewMemoryStore(nil, maxSessions),
 		AllowPlainHTTP: cfg.allowPlainHTTP,
 	})
 	fail(err)

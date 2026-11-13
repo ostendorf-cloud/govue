@@ -32,7 +32,7 @@ func newFixture(t *testing.T, adjust func(*session.Config)) *fixture {
 
 	f := &fixture{now: start}
 	clock := func() time.Time { return f.now }
-	f.store = session.NewMemoryStore(clock)
+	f.store = session.NewMemoryStore(clock, 100)
 
 	cfg := session.Config{Store: f.store, Now: clock}
 	if adjust != nil {
@@ -101,7 +101,7 @@ func TestNewRejectsAnUnworkableConfig(t *testing.T) {
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {
-			cfg.Store = session.NewMemoryStore(nil)
+			cfg.Store = session.NewMemoryStore(nil, 100)
 			if _, err := session.New(cfg); err == nil {
 				t.Error("the config was accepted")
 			}
@@ -492,7 +492,7 @@ func (f *fixture) lastSeen(t *testing.T, id string) time.Time {
 }
 
 func TestReadSurvivesAStoreThatCannotBeWritten(t *testing.T) {
-	store := &readOnlyStore{inner: session.NewMemoryStore(func() time.Time { return start })}
+	store := &readOnlyStore{inner: session.NewMemoryStore(func() time.Time { return start }, 100)}
 	manager, err := session.New(session.Config{
 		Store: store, Idle: time.Hour, TouchEvery: time.Minute,
 		Now: func() time.Time { return start.Add(10 * time.Minute) },
@@ -604,7 +604,7 @@ func TestRotateRefusesAnExpiredSession(t *testing.T) {
 
 func TestRotateSetsTheCookieOnlyOnceTheOldIDIsGone(t *testing.T) {
 	clock := func() time.Time { return start }
-	store := &undeletableStore{MemoryStore: session.NewMemoryStore(clock)}
+	store := &undeletableStore{MemoryStore: session.NewMemoryStore(clock, 100)}
 	manager, err := session.New(session.Config{Store: store, Now: clock})
 	if err != nil {
 		t.Fatalf("New: %v", err)

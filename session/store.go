@@ -59,29 +59,42 @@ type Store interface {
 // has expired.
 const memorySweepInterval = time.Minute
 
+// defaultMaxSessions is the floor applied when the caller passes a
+// non-positive maxSessions: a store that tracks nothing would reject every
+// session, which is never the intent of asking for a store at all.
+const defaultMaxSessions = 10000
+
 // MemoryStore keeps sessions in the process.
 //
 // Expired entries are swept, so a long running process does not grow with every
 // login, and an entry past its absolute expiry is already gone from [MemoryStore.Get]
-// before the sweep reaches it.
+// before the sweep reaches it. The number of tracked sessions is also capped at
+// construction time; if the map is still full after a sweep, one arbitrary
+// session, never the one being saved, is evicted to make room.
 //
 // It is correct for exactly one replica. Two replicas each keep their own
 // sessions, so a request that lands on the other one has no login, and a
 // restart logs everybody out. A production deployment with more than one
 // replica needs its own shared [Store]; see that interface.
 type MemoryStore struct {
-	mu        sync.RWMutex
-	sessions  map[string]Session
-	now       func() time.Time
-	lastSweep time.Time
+	mu          sync.RWMutex
+	sessions    map[string]Session
+	now         func() time.Time
+	lastSweep   time.Time
+	maxSessions int
 }
 
 // NewMemoryStore returns an empty store. now is the clock; nil is [time.Now].
-func NewMemoryStore(now func() time.Time) *MemoryStore {
+// maxSessions bounds how many sessions the store tracks at once; a
+// non-positive value is clamped to [defaultMaxSessions].
+func NewMemoryStore(now func() time.Time, maxSessions int) *MemoryStore {
 	if now == nil {
 		now = time.Now
 	}
-	return &MemoryStore{sessions: map[string]Session{}, now: now}
+	if maxSessions < 1 {
+		maxSessions = defaultMaxSessions
+	}
+	return &MemoryStore{sessions: map[string]Session{}, now: now, maxSessions: maxSessions}
 }
 
 // Get returns the session, or [ErrNotFound]. An entry past its absolute expiry
@@ -101,13 +114,23 @@ func (s *MemoryStore) Get(_ context.Context, id string) (Session, error) {
 
 // Save writes the session, and sweeps first if the last sweep is long enough
 // ago. The sweep rides along on a write because that is the one path that makes
-// the map grow.
+// the map grow. If the map is still at maxSessions once the sweep has had its
+// chance to shrink it, one arbitrary session is evicted before the new one is
+// inserted; map iteration order is unspecified, so this never prefers one
+// session over another. Losing a session early can only log out one unlucky
+// caller sooner than its own expiry would, never deny the save being made.
 func (s *MemoryStore) Save(_ context.Context, session Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.now().Sub(s.lastSweep) >= memorySweepInterval {
 		s.sweep()
+	}
+	if len(s.sessions) >= s.maxSessions {
+		for id := range s.sessions {
+			delete(s.sessions, id)
+			break
+		}
 	}
 	s.sessions[session.ID] = session.clone()
 	return nil

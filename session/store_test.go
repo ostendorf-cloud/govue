@@ -18,7 +18,7 @@ import (
 var _ session.Store = (*session.MemoryStore)(nil)
 
 func TestMemoryStoreRoundTrip(t *testing.T) {
-	store := session.NewMemoryStore(func() time.Time { return start })
+	store := session.NewMemoryStore(func() time.Time { return start }, 100)
 
 	saved := session.Session{
 		ID: "s1", Subject: "u1", Username: "simon",
@@ -43,7 +43,7 @@ func TestMemoryStoreRoundTrip(t *testing.T) {
 }
 
 func TestMemoryStoreGetReportsNotFound(t *testing.T) {
-	store := session.NewMemoryStore(nil)
+	store := session.NewMemoryStore(nil, 100)
 
 	if _, err := store.Get(context.Background(), "nobody"); !errors.Is(err, session.ErrNotFound) {
 		t.Errorf("Get = %v, want ErrNotFound", err)
@@ -51,7 +51,7 @@ func TestMemoryStoreGetReportsNotFound(t *testing.T) {
 }
 
 func TestMemoryStoreSaveReplaces(t *testing.T) {
-	store := session.NewMemoryStore(func() time.Time { return start })
+	store := session.NewMemoryStore(func() time.Time { return start }, 100)
 	first := session.Session{ID: "s1", Username: "before", ExpiresAt: start.Add(time.Hour)}
 	second := session.Session{ID: "s1", Username: "after", ExpiresAt: start.Add(time.Hour)}
 
@@ -74,7 +74,7 @@ func TestMemoryStoreSaveReplaces(t *testing.T) {
 }
 
 func TestMemoryStoreDelete(t *testing.T) {
-	store := session.NewMemoryStore(func() time.Time { return start })
+	store := session.NewMemoryStore(func() time.Time { return start }, 100)
 	if err := store.Save(context.Background(), session.Session{ID: "s1", ExpiresAt: start.Add(time.Hour)}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestMemoryStoreDelete(t *testing.T) {
 }
 
 func TestMemoryStoreDeleteSubject(t *testing.T) {
-	store := session.NewMemoryStore(func() time.Time { return start })
+	store := session.NewMemoryStore(func() time.Time { return start }, 100)
 	sessions := []session.Session{
 		{ID: "a", Subject: "u1", ExpiresAt: start.Add(time.Hour)},
 		{ID: "b", Subject: "u1", ExpiresAt: start.Add(time.Hour)},
@@ -119,7 +119,7 @@ func TestMemoryStoreDeleteSubject(t *testing.T) {
 
 func TestMemoryStoreGetIgnoresAnExpiredEntry(t *testing.T) {
 	now := start
-	store := session.NewMemoryStore(func() time.Time { return now })
+	store := session.NewMemoryStore(func() time.Time { return now }, 100)
 	if err := store.Save(context.Background(), session.Session{ID: "s1", ExpiresAt: start.Add(time.Hour)}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestMemoryStoreGetIgnoresAnExpiredEntry(t *testing.T) {
 
 func TestMemoryStoreSweepsExpiredSessions(t *testing.T) {
 	now := start
-	store := session.NewMemoryStore(func() time.Time { return now })
+	store := session.NewMemoryStore(func() time.Time { return now }, 100)
 
 	for _, id := range []string{"a", "b", "c"} {
 		if err := store.Save(context.Background(), session.Session{ID: id, ExpiresAt: now.Add(time.Hour)}); err != nil {
@@ -164,7 +164,7 @@ func TestMemoryStoreSweepsExpiredSessions(t *testing.T) {
 
 func TestMemoryStoreDoesNotSweepALiveSession(t *testing.T) {
 	now := start
-	store := session.NewMemoryStore(func() time.Time { return now })
+	store := session.NewMemoryStore(func() time.Time { return now }, 100)
 	if err := store.Save(context.Background(), session.Session{ID: "long", ExpiresAt: start.Add(12 * time.Hour)}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestMemoryStoreDoesNotSweepALiveSession(t *testing.T) {
 }
 
 func TestMemoryStoreReturnsACopy(t *testing.T) {
-	store := session.NewMemoryStore(func() time.Time { return start })
+	store := session.NewMemoryStore(func() time.Time { return start }, 100)
 	original := session.Session{
 		ID: "s1", Subject: "u1",
 		Groups:    []string{"admins"},
@@ -216,7 +216,7 @@ func TestMemoryStoreReturnsACopy(t *testing.T) {
 }
 
 func TestMemoryStoreIsSafeForConcurrentUse(t *testing.T) {
-	store := session.NewMemoryStore(nil)
+	store := session.NewMemoryStore(nil, 100)
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
@@ -254,5 +254,35 @@ func TestMemoryStoreIsSafeForConcurrentUse(t *testing.T) {
 
 	if store.Len() != 0 {
 		t.Errorf("Len = %d, want everything deleted again", store.Len())
+	}
+}
+
+func TestMemoryStoreBoundsMemory(t *testing.T) {
+	now := start
+	const maxSessions = 5
+	store := session.NewMemoryStore(func() time.Time { return now }, maxSessions)
+
+	for i := range 500 {
+		id := fmt.Sprintf("s%d", i)
+		s := session.Session{ID: id, ExpiresAt: now.Add(time.Hour)}
+		if err := store.Save(context.Background(), s); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		if n := store.Len(); n > maxSessions {
+			t.Fatalf("Len = %d after %d one-shot sessions, want at most %d", n, i+1, maxSessions)
+		}
+	}
+}
+
+func TestMemoryStoreMaxSessionsBelowOneIsClamped(t *testing.T) {
+	now := start
+	for _, maxSessions := range []int{0, -1, -100} {
+		store := session.NewMemoryStore(func() time.Time { return now }, maxSessions)
+		if err := store.Save(context.Background(), session.Session{ID: "s1", ExpiresAt: now.Add(time.Hour)}); err != nil {
+			t.Fatalf("maxSessions=%d: Save: %v", maxSessions, err)
+		}
+		if n := store.Len(); n != 1 {
+			t.Fatalf("maxSessions=%d: Len = %d, want 1", maxSessions, n)
+		}
 	}
 }
