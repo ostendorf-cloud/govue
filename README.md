@@ -121,8 +121,9 @@ directions.
 
 `GovueThemeSwitch` is the ready made control for it: a radio group with system, light and dark,
 operable with the arrow keys, Home and End, with the active choice announced. The default is the
-system setting. Its strings are props with English defaults, `label`, `systemLabel`, `lightLabel`
-and `darkLabel`, so a site translates them without a library:
+system setting. Its strings are props, `label`, `systemLabel`, `lightLabel` and `darkLabel`. Left
+out, they come from the language layer (see Language), English without it. A prop overrides the
+catalogue:
 
 ```vue
 <GovueThemeSwitch label="Design" system-label="Auto" light-label="Hell" dark-label="Dunkel" />
@@ -271,6 +272,97 @@ and the styling is the same for every level. An invalid value falls back to leve
 
 `GovueEmptyState` and `GovueErrorState` render an `h2`, `GovueDialog` renders its title through a
 dialog title (also an `h2`, in its own portal, outside the page outline).
+
+## Language
+
+Every component text is available in German and English, through `vue-i18n` in Composition API
+mode. `vue-i18n` is a peer dependency, `^11.1.5`, so the app and govue share one copy. Install
+the plugin once:
+
+```ts
+import { createApp } from 'vue'
+import { createGovueI18n } from '@ostendorf-cloud/govue'
+
+createApp(App).use(createGovueI18n()).mount('#app')
+```
+
+The language is chosen in this order: the stored choice, then the browser (`navigator.languages`,
+first supported entry, a region code such as `de-AT` counts as `de`), then German. A stored
+value that is not a known language is ignored. Without a `window` (a server render or a
+prerender) nothing is read and the language is German, because Node defines `navigator` and
+`localStorage` itself and they would describe the build host, not a visitor. The `locale` option
+forces a language; an unknown code gives German. The plugin sets `lang` on the document element,
+and keeps it in step when the language changes by any route.
+
+`GovueLanguageSwitch` is the control. It is a native select, with each language written in its
+own language (Deutsch, English), a 44px target and its accessible name in the active language.
+Changing it keeps the visitor on the page and keeps focus on the select. It emits `change`.
+
+```vue
+<GovueLanguageSwitch />
+```
+
+Without the plugin, components stay English, as before, and `GovueLanguageSwitch` throws a
+setup error. A text prop (`confirmLabel`, `retryLabel`, `label`, ...) always wins over the
+catalogue.
+
+### Where the choice is kept
+
+`storage` picks the backend. It never throws: blocked storage means no stored choice.
+
+```ts
+createGovueI18n({ storage: { kind: 'local', key: 'my-site-lang' } }) // default: govue-language
+createGovueI18n({ storage: { kind: 'cookie', name: 'lang' } }) // signed in app areas
+createGovueI18n({ storage: { kind: 'custom', get: () => account.language, set: saveToAccount } })
+createGovueI18n({ storage: { kind: 'none' } })
+```
+
+- The cookie is a functional preference cookie. It holds a language code, identifies nobody and
+  is written only when the visitor picks a language.
+- Its attributes are `Path=/`, `Max-Age` of one year (`maxAge` overrides it), `SameSite=Lax`,
+  `Secure` on https, and no `HttpOnly`, because the client has to read it.
+- A cookie `name` with anything but letters, digits, `.`, `_` and `-`, and a `maxAge` that is not
+  a non-negative integer, are ignored silently: the defaults apply.
+- The `custom` backend reads synchronously, because the first render needs the language. A value
+  that loads later is applied with `setLocale(code, { persist: false })` from `useLanguage()`.
+- No path prefix is involved. Routing by `/de/` and `/en/` is a separate concern.
+
+### Your own messages
+
+Pass them to the plugin, or merge them later on the instance. Your messages load after govue's,
+so a key can be overridden. Keep your own keys out of the `govue.` namespace.
+
+```ts
+const govueI18n = createGovueI18n({
+  messages: { de: { site: { title: 'Start' } }, en: { site: { title: 'Home' } } },
+})
+govueI18n.i18n.global.mergeLocaleMessage('en', { site: { more: 'More' } })
+```
+
+Use them with `useI18n()` as usual.
+
+Messages use vue-i18n syntax. A bare `|` is a plural separator, `@` starts a linked message, and
+`{` and `}` open a placeholder. Write a literal one as a quoted literal: `{'|'}`, `{'@'}`,
+`{'{'}` and `{'}'}`, for example `"mail{'@'}host"`. Without it, `A | B` renders only `A`, and
+`a@b.de` fails to compile.
+
+### An app that already uses vue-i18n
+
+Pass the instance, created with `legacy: false`. govue merges its catalogue into it and shares
+it, so there is one instance. The app installs its own instance itself. The plugin then leaves
+the instance's locale alone, so the app's router stays in charge; pass `detect: true` to run the
+choice order anyway, or `locale` to force one.
+
+```ts
+const i18n = createI18n({ legacy: false, locale: 'de', fallbackLocale: 'de', messages })
+app.use(i18n).use(createGovueI18n({ i18n }))
+```
+
+### Adding a language
+
+Add a catalogue file next to `web/src/i18n/de.ts`, and one line in `web/src/i18n/catalogues.ts`.
+The switch, the choice order and the completeness test all read that list. The test fails the
+build when a language lacks a key or uses other named placeholders than German.
 
 ## Generating a theme
 
