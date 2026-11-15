@@ -1,7 +1,7 @@
 # Every tool this repository needs, pinned. CI installs from this same file through
 # mise-action, so local and CI run identical versions. Nothing is installed any other way.
 [tools]
-go = "1.27.3"
+go = "1.27.4"
 task = "3"
 # The web/ package. pnpm is the package manager, so npm is never called directly, and the
 # lockfile is written by the major pinned here.
