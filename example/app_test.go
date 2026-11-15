@@ -20,6 +20,7 @@ import (
 	"github.com/ostendorf-cloud/govue/logging"
 	"github.com/ostendorf-cloud/govue/middleware"
 	"github.com/ostendorf-cloud/govue/session"
+	"github.com/ostendorf-cloud/govue/themeboot"
 )
 
 // writeKeyFile writes 32 random bytes, hex encoded, to a file under t's
@@ -460,6 +461,10 @@ func TestNonceReachesTheHandlerThatRenderedUnderIt(t *testing.T) {
 
 	if !strings.Contains(rec.Body.String(), `nonce="`+nonce+`"`) {
 		t.Errorf("the handler's inline script does not carry the header's own nonce: body=%s header=%s", rec.Body.String(), csp)
+	}
+
+	if !strings.Contains(rec.Body.String(), `<head><script nonce="`+nonce+`">`+themeboot.Script()) {
+		t.Errorf("the theme boot script is not first in the head under the header's nonce: %s", rec.Body.String())
 	}
 }
 

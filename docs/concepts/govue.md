@@ -357,6 +357,26 @@ The design of the library and the reasoning behind it.
 - Contrast is a test, not a review step: the theme files are parseable, so a test fails any pair
   below WCAG 2.2 AA in either mode.
 
+### The theme switch and its boot script
+
+- `GovueThemeSwitch` is a radio group of three native buttons, system, light and dark, over
+  `useTheme`. Only the active option is in the tab order and the arrow keys move the choice,
+  which is the keyboard model a screen reader user expects of a radio group. Its strings are
+  props with English defaults, so the language layer can fill them without an i18n dependency
+  here. `GovueHeader` shows it through a `themeSwitch` prop, off by default.
+- A choice kept in `localStorage` is only readable once script runs, so a page that waits for
+  the bundle flashes the wrong theme. The Go package `themeboot` injects a small inline script
+  into the head that sets `data-theme` and `data-mode` before the first paint.
+- Under the default policy an inline script runs only with the response's nonce, so injection
+  happens at serve time and takes the nonce from `middleware.Nonce`. A static `index.html`
+  cannot carry one. The response is `no-store`, since a cached nonce is a reused nonce.
+- The script is a plain file embedded in the Go package, not generated from the TypeScript. The
+  key and the attribute names live in `themeStorage.ts` and in `themeboot` as constants, and a
+  Vitest test runs the shipped file in a DOM and checks it against both, so a drift fails a
+  test instead of showing up as a flash.
+- With nothing stored the script leaves `data-mode` off, because the stylesheet already follows
+  the system setting through `light-dark()` and an explicit value would only pin it.
+
 ### Component behaviour
 
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a
