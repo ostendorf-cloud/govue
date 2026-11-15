@@ -253,6 +253,25 @@ const client = createClient({ csrfToken: () => csrf.value })
 const things = await client.get<Thing[]>('/things')
 ```
 
+## Heading levels
+
+A page has one `h1`, set through `GovuePage`'s `title`. A component that renders a heading takes
+its level from the caller where the right level depends on the place it is used, so the outline
+of a page has no skipped level.
+
+`GovueCard` renders its `title` at level 2 by default, which fits a card directly under the page's
+`h1`. A card inside a section headed by an `h2` passes `:heading-level="3"`. The prop takes 2 to 6
+and the styling is the same for every level. An invalid value falls back to level 2. Write
+`:heading-level="3"` with the colon: `heading-level="3"` passes the string `"3"`, which is invalid.
+
+```vue
+<GovueCard title="Recent activity">...</GovueCard>
+<GovueCard title="Sessions" :heading-level="3">...</GovueCard>
+```
+
+`GovueEmptyState` and `GovueErrorState` render an `h2`, `GovueDialog` renders its title through a
+dialog title (also an `h2`, in its own portal, outside the page outline).
+
 ## Generating a theme
 
 A consumer with no design background can still get a full, accessible theme: the `web/` package

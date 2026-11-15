@@ -13,11 +13,33 @@ describe('GovueCard', () => {
     expect(screen.getByText('Four projects, two of them shared')).toBeVisible()
   })
 
-  it('renders a title as a third level heading', () => {
+  it('renders a title as a second level heading by default', () => {
     render(GovueCard, { props: { title: 'Recent activity' }, slots: { default: 'Body' } })
 
-    expect(screen.getByRole('heading', { level: 3, name: 'Recent activity' })).toBeVisible()
+    expect(screen.getByRole('heading', { level: 2, name: 'Recent activity' })).toBeVisible()
   })
+
+  it.each([3, 4, 5, 6] as const)('renders the title at level %i when asked to', (level) => {
+    render(GovueCard, {
+      props: { title: 'Recent activity', headingLevel: level },
+      slots: { default: 'Body' },
+    })
+
+    expect(screen.getByRole('heading', { level, name: 'Recent activity' })).toBeVisible()
+  })
+
+  it.each([0, 1, NaN, 2.5, '3', null, 7])(
+    'falls back to a second level heading for %j, which is not a heading level',
+    (level) => {
+      render(GovueCard, {
+        // The types refuse these values, the runtime still copes.
+        props: { title: 'Recent activity', headingLevel: level as never },
+        slots: { default: 'Body' },
+      })
+
+      expect(screen.getByRole('heading', { level: 2, name: 'Recent activity' })).toBeVisible()
+    },
+  )
 
   it('is a plain surface by default, not a part of the page a reader can jump to', () => {
     render(GovueCard, { props: { title: 'Recent activity' }, slots: { default: 'Body' } })
