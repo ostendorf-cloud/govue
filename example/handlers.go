@@ -15,6 +15,7 @@ import (
 	"github.com/ostendorf-cloud/govue/middleware"
 	"github.com/ostendorf-cloud/govue/oidc"
 	"github.com/ostendorf-cloud/govue/session"
+	"github.com/ostendorf-cloud/govue/themeboot"
 )
 
 // loginCookieName carries the signed Login state between the redirect to the
@@ -119,10 +120,12 @@ func (a *app) createNote(w http.ResponseWriter, r *http.Request) error {
 func (a *app) home(w http.ResponseWriter, r *http.Request) error {
 	nonce := middleware.Nonce(r.Context())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, err := fmt.Fprintf(w, "<!doctype html><html><head><title>govue example</title></head>"+
+	// The theme boot script goes first in the head, under the same nonce, so
+	// the saved theme is on the page before the first paint.
+	_, err := fmt.Fprintf(w, "<!doctype html><html><head>%s<title>govue example</title></head>"+
 		"<body><p>govue example application.</p>"+
 		"<script nonce=%q>console.log(\"loaded under the nonce\");</script>"+
-		"</body></html>", nonce)
+		"</body></html>", themeboot.Tag(nonce), nonce)
 	if err != nil {
 		return fmt.Errorf("example: write home page: %w", err)
 	}

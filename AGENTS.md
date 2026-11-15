@@ -23,12 +23,12 @@ repeated here.
   with `useToasts`, the form input components (`GovueField`, `GovueInput`, `GovueSelect`,
   `GovueCheckbox`, `GovueSwitch`, `GovueTextarea`, `GovueButton`) with `useForm`, and the layout
   components (`GovuePage`, `GovueHeader`, `GovueFooter`, `GovueNav`, `GovueSkipLink`,
-  `GovueCard`, `GovueBadge`, `GovueSkeleton`).
+  `GovueCard`, `GovueBadge`, `GovueSkeleton`), and `GovueThemeSwitch`.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
-- Twelve Go packages live at the module root: `api`, `clientip`, `csrf`, `envconf`, `health`,
-  `httpserver`, `logging`, `metrics`, `middleware`, `oidc`, `ratelimit`, `session`.
+- Thirteen Go packages live at the module root: `api`, `clientip`, `csrf`, `envconf`, `health`,
+  `httpserver`, `logging`, `metrics`, `middleware`, `oidc`, `ratelimit`, `session`, `themeboot`.
 
 ## Commands
 
@@ -105,6 +105,10 @@ task example:build   # compile the example application
   dependency.
 
 ## Deviations
+
+- `themeboot/boot.js` carries no license header. The license check covers `.go`, `.ts` and
+  `.vue` only, and the file is sent inline in every page, so a header would cost bytes on each
+  response. The Go package that embeds it carries the header.
 
 - The license-header file set is written twice. CI calls the organisation's shared
   `reusable-license.yaml`, which pins `addlicense` itself and takes the `find` invocations as an

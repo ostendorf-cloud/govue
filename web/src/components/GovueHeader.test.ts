@@ -65,6 +65,28 @@ describe('GovueHeader', () => {
     expect(action).toHaveFocus()
   })
 
+  it('shows no theme switch unless asked', () => {
+    renderHeader()
+
+    expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument()
+  })
+
+  it('shows the theme switch with the themeSwitch prop', () => {
+    render(GovueHeader, { props: { themeSwitch: true } })
+
+    expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeVisible()
+  })
+
+  it('lets a theme slot replace the switch', () => {
+    render(GovueHeader, {
+      props: { themeSwitch: true },
+      slots: { theme: () => h('button', { type: 'button' }, 'Own toggle') },
+    })
+
+    expect(screen.getByRole('button', { name: 'Own toggle' })).toBeVisible()
+    expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument()
+  })
+
   it('wraps to two rows on a narrow screen instead of scrolling sideways', () => {
     renderHeader()
 

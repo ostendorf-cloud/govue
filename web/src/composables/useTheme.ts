@@ -3,6 +3,8 @@
 
 import { computed, readonly, ref, watch, type ComputedRef, type Ref } from 'vue'
 
+import { THEME_STORAGE_KEY } from './themeStorage'
+
 /**
  * The example themes this package ships. An app fills the same contract in its
  * own repository and passes that theme's name, so the type stays open.
@@ -35,7 +37,7 @@ export interface ThemeState {
   cycleMode: () => void
 }
 
-const DEFAULT_STORAGE_KEY = 'govue-theme'
+const DEFAULT_STORAGE_KEY = THEME_STORAGE_KEY
 const DEFAULT_THEME: ThemeName = 'sample'
 
 // One page has one theme, so the state is shared rather than created per

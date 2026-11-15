@@ -119,6 +119,52 @@ const { theme, mode, resolvedMode, setTheme, setMode, cycleMode } = useTheme({ t
 The choice is persisted, so it survives a reload, and it wins over the system setting in both
 directions.
 
+`GovueThemeSwitch` is the ready made control for it: a radio group with system, light and dark,
+operable with the arrow keys, Home and End, with the active choice announced. The default is the
+system setting. Its strings are props with English defaults, `label`, `systemLabel`, `lightLabel`
+and `darkLabel`, so a site translates them without a library:
+
+```vue
+<GovueThemeSwitch label="Design" system-label="Auto" light-label="Hell" dark-label="Dunkel" />
+```
+
+The switch uses the shared `useTheme` state, and the first `useTheme` call decides its defaults
+and storage key. An app with its own default theme or `storageKey` calls `useTheme({ ... })` in
+its setup before any switch renders.
+
+`GovueHeader` shows it without markup from the site: set `theme-switch`. The `theme` slot of the
+header replaces the switch with the site's own control, and a header without either is unchanged.
+
+```vue
+<GovueHeader theme-switch>
+  <template #brand>My app</template>
+</GovueHeader>
+```
+
+Without help, a page paints in the system theme first and switches once the bundle runs. The Go
+package `themeboot` removes that flash: it ships a small inline script that reads the same
+storage key as `useTheme` and sets `data-theme` and `data-mode` on the root element before the
+first paint. Under the default Content-Security-Policy an inline script runs only with the
+response's nonce, so `themeboot` takes it from `middleware.Nonce`. `themeboot.Shell` serves the
+built `index.html` with the script injected right after the opening head tag, and must sit inside
+`middleware.Security`, which makes the nonce:
+
+```go
+mux.Handle("GET /{path...}", themeboot.Shell(indexHTML))
+```
+
+A server that renders its own page puts `themeboot.Tag(middleware.Nonce(r.Context()))` first in
+the head instead. Without a nonce `Tag`, `Inject` and `Shell` panic: a script without one is
+blocked silently under the policy, so a missing security middleware must not go unnoticed.
+`Shell` then panics per request, which the recover middleware answers with a 500. An app that
+gives `useTheme` its own `storageKey` passes the same key with
+`themeboot.WithStorageKey("my-key")`, which accepts letters, digits and `. _ : -` and panics on
+anything else. The response is sent `Cache-Control: no-store`, because a response with a nonce
+must never be cached. A page with no stored choice keeps a `data-theme` the server rendered on the
+root element, otherwise `sample`, and leaves `data-mode` off so the system decides. The key and
+the attribute names are exported on both sides, `themeboot.StorageKey` and `THEME_STORAGE_KEY`,
+and a test runs the shipped script against the composable.
+
 `GovueField`, `GovueInput`, `GovueSelect`, `GovueCheckbox`, `GovueSwitch`, `GovueTextarea` and
 `GovueButton` are the form input components, all styled on the same tokens. `useForm` ties a set
 of values to validation and a submit function, and hands back the state a form needs to render
