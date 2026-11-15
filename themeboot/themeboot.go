@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/ostendorf-cloud/govue/favicon"
 	"github.com/ostendorf-cloud/govue/middleware"
 )
 
@@ -48,6 +49,7 @@ var keyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
 
 type config struct {
 	storageKey string
+	icons      *favicon.Icons
 }
 
 // Option changes how the script is built.
@@ -63,6 +65,16 @@ func WithStorageKey(key string) Option {
 		panic(fmt.Sprintf("themeboot: invalid storage key %q", key))
 	}
 	return func(c *config) { c.storageKey = key }
+}
+
+// WithFavicon makes Inject and Shell write the favicon links and the theme
+// colour meta tag into the head, right behind the boot script, so every page
+// they serve carries them, in every language. icons comes from favicon.Load,
+// which has already failed for a missing file. Tag and Script are not
+// affected, they only ever carry the script. The page must not carry the
+// links itself.
+func WithFavicon(icons favicon.Icons) Option {
+	return func(c *config) { c.icons = &icons }
 }
 
 func build(opts []Option) config {
@@ -95,15 +107,20 @@ func Tag(nonce string, opts ...Option) string {
 
 // Inject returns page with the boot script placed right after the opening
 // head tag, ahead of every stylesheet, so the attributes are set before the
-// first paint. Only a real head tag counts: not a header element and not a
-// tag inside a comment. A page without a head element is returned unchanged.
+// first paint. With WithFavicon the icon links follow the script. Only a
+// real head tag counts: not a header element and not a tag inside a comment.
+// A page without a head element is returned unchanged.
 // An empty nonce panics, see Tag.
 func Inject(page []byte, nonce string, opts ...Option) []byte {
 	at := afterHeadTag(string(page))
 	if at < 0 {
 		return page
 	}
-	return []byte(string(page[:at]) + Tag(nonce, opts...) + string(page[at:]))
+	inject := Tag(nonce, opts...)
+	if c := build(opts); c.icons != nil {
+		inject += c.icons.Links()
+	}
+	return []byte(string(page[:at]) + inject + string(page[at:]))
 }
 
 // afterHeadTag returns the index just after the opening head tag, or -1.
@@ -160,7 +177,21 @@ func hasPrefixASCIIFold(s, prefix string) bool {
 // recovers panics answers it instead of a page that flashes. The response is
 // marked no-store: a response carrying a nonce must never be served again
 // from a cache.
+//
+// With WithFavicon, Shell panics when it is built, at startup, for a page
+// without a head element, which would serve no icons, and for a page that
+// already carries icon links or a theme-color tag, which would serve them
+// twice. Inject itself stays total and leaves such a page unchanged, so the
+// guarantee for a prerendered site is favicon.CheckPages in its tests.
 func Shell(page []byte, opts ...Option) http.Handler {
+	if build(opts).icons != nil {
+		if afterHeadTag(string(page)) < 0 {
+			panic("themeboot: WithFavicon on a page without a head element, it would serve no icons")
+		}
+		if favicon.Present(page) {
+			panic("themeboot: WithFavicon on a page that already has icon links or a theme-color tag")
+		}
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := Inject(page, middleware.Nonce(r.Context()), opts...)
 		h := w.Header()

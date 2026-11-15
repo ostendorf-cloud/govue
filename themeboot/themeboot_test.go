@@ -9,7 +9,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 
+	"github.com/ostendorf-cloud/govue/favicon"
 	"github.com/ostendorf-cloud/govue/middleware"
 	"github.com/ostendorf-cloud/govue/themeboot"
 )
@@ -151,6 +153,100 @@ func TestTagEscapesTheNonce(t *testing.T) {
 	got := themeboot.Tag(`a"><b`)
 	if strings.Contains(got, `a"><b`) || !strings.Contains(got, "a&#34;&gt;&lt;b") {
 		t.Errorf("the nonce is not escaped: %s", got)
+	}
+}
+
+func TestWithFavicon(t *testing.T) {
+	public := fstest.MapFS{
+		favicon.SVGFile:   {Data: []byte("<svg/>")},
+		favicon.PNGFile:   {Data: []byte("\x89PNG\r\n\x1a\n")},
+		favicon.TouchFile: {Data: []byte("\x89PNG\r\n\x1a\n")},
+	}
+	icons, err := favicon.Load(public, "#0f766e")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		lang string
+	}{
+		{name: "english", lang: "en"},
+		{name: "german", lang: "de"},
+		{name: "french", lang: "fr"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := strings.Replace(page, `lang="en"`, `lang="`+tt.lang+`"`, 1)
+			h := middleware.DefaultSecurity().Middleware(themeboot.Shell([]byte(src), themeboot.WithFavicon(icons)))
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+			body := rec.Body.String()
+
+			if err := favicon.CheckPage(rec.Body.Bytes(), public); err != nil {
+				t.Errorf("the served page fails the favicon check: %v", err)
+			}
+			scriptEnd := strings.Index(body, "</script>")
+			iconAt := strings.Index(body, `<link rel="icon"`)
+			styleAt := strings.Index(body, `<link rel="stylesheet"`)
+			if scriptEnd < 0 || iconAt != scriptEnd+len("</script>") || styleAt < iconAt {
+				t.Errorf("the icon links do not follow the boot script ahead of the stylesheet: %s", body)
+			}
+		})
+	}
+}
+
+func TestShellWithFaviconRefusesAPageThatCannotCarryTheIcons(t *testing.T) {
+	icons, err := favicon.Load(fstest.MapFS{
+		favicon.SVGFile:   {Data: []byte("<svg/>")},
+		favicon.PNGFile:   {Data: []byte("\x89PNG\r\n\x1a\n")},
+		favicon.TouchFile: {Data: []byte("\x89PNG\r\n\x1a\n")},
+	}, "#0f766e")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		page      string
+		wantPanic bool
+	}{
+		{name: "plain page", page: page},
+		{name: "no head element", page: "<p>fragment</p>", wantPanic: true},
+		{name: "icon link already there", page: strings.Replace(page, "<head>", `<head><link rel="icon" href="/favicon.svg">`, 1), wantPanic: true},
+		{name: "theme colour already there", page: strings.Replace(page, "<head>", `<head><meta name="theme-color" content="#fff">`, 1), wantPanic: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if got := recover() != nil; got != tt.wantPanic {
+					t.Errorf("panic = %v, want %v", got, tt.wantPanic)
+				}
+			}()
+			themeboot.Shell([]byte(tt.page), themeboot.WithFavicon(icons))
+		})
+	}
+}
+
+func TestInjectLeavesAPageWithoutHeadWithoutIcons(t *testing.T) {
+	icons, err := favicon.Load(fstest.MapFS{
+		favicon.SVGFile:   {Data: []byte("<svg/>")},
+		favicon.PNGFile:   {Data: []byte("\x89PNG\r\n\x1a\n")},
+		favicon.TouchFile: {Data: []byte("\x89PNG\r\n\x1a\n")},
+	}, "#0f766e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const fragment = "<p>no head</p>"
+	if got := string(themeboot.Inject([]byte(fragment), "abc", themeboot.WithFavicon(icons))); got != fragment {
+		t.Errorf("got %q, want the page unchanged", got)
+	}
+}
+
+func TestInjectWithoutFaviconAddsNoIconLinks(t *testing.T) {
+	got := string(themeboot.Inject([]byte(page), "abc"))
+	if strings.Contains(got, `rel="icon"`) || strings.Contains(got, "theme-color") {
+		t.Errorf("icon markup without WithFavicon: %s", got)
 	}
 }
 

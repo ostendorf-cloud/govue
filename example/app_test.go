@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/ostendorf-cloud/govue/csrf"
+	"github.com/ostendorf-cloud/govue/favicon"
 	"github.com/ostendorf-cloud/govue/logging"
 	"github.com/ostendorf-cloud/govue/middleware"
 	"github.com/ostendorf-cloud/govue/session"
@@ -465,6 +467,24 @@ func TestNonceReachesTheHandlerThatRenderedUnderIt(t *testing.T) {
 
 	if !strings.Contains(rec.Body.String(), `<head><script nonce="`+nonce+`">`+themeboot.Script()) {
 		t.Errorf("the theme boot script is not first in the head under the header's nonce: %s", rec.Body.String())
+	}
+}
+
+// TestHomePageCarriesAWorkingFavicon runs the shared favicon check, the one a
+// site calls on its own prerendered pages, against the example's page.
+func TestHomePageCarriesAWorkingFavicon(t *testing.T) {
+	t.Parallel()
+
+	a, _ := newTestApp(t, 1000)
+	rec := httptest.NewRecorder()
+	a.handler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/app", nil))
+
+	public, err := fs.Sub(publicFiles, "web/public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := favicon.CheckPage(rec.Body.Bytes(), public); err != nil {
+		t.Errorf("the example page fails the favicon check: %v", err)
 	}
 }
 
