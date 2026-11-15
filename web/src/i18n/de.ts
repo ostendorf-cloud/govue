@@ -1,0 +1,55 @@
+// Copyright 2026 Simon Ostendorf
+// SPDX-License-Identifier: Apache-2.0
+
+import type { MessageTree } from './messages'
+
+/** govue's own visitor-facing strings, German. Every key lives under govue. */
+const de: MessageTree = {
+  govue: {
+    skipLink: 'Zum Inhalt springen',
+    button: {
+      loading: 'Wird ausgeführt',
+    },
+    confirm: {
+      confirm: 'Löschen',
+      cancel: 'Abbrechen',
+    },
+    empty: {
+      title: 'Noch nichts vorhanden',
+      description: 'Hier gibt es noch keine Einträge.',
+    },
+    error: {
+      title: 'Etwas ist schiefgegangen',
+      message: 'Die Anfrage ist fehlgeschlagen. Bitte erneut versuchen.',
+      retry: 'Erneut versuchen',
+      requestId: 'Anfrage-ID',
+    },
+    field: {
+      required: '(Pflichtfeld)',
+    },
+    footer: {
+      label: 'Fußbereich',
+    },
+    nav: {
+      label: 'Hauptmenü',
+      menu: 'Menü',
+    },
+    toast: {
+      success: 'Erfolg',
+      info: 'Hinweis',
+      error: 'Fehler',
+      dismiss: 'Schließen',
+    },
+    theme: {
+      label: 'Darstellung',
+      system: 'System',
+      light: 'Hell',
+      dark: 'Dunkel',
+    },
+    language: {
+      label: 'Sprache',
+    },
+  },
+}
+
+export default de
