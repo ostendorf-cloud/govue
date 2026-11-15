@@ -5,14 +5,17 @@ package main
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 
 	"github.com/ostendorf-cloud/govue/api"
 	"github.com/ostendorf-cloud/govue/clientip"
 	"github.com/ostendorf-cloud/govue/csrf"
+	"github.com/ostendorf-cloud/govue/favicon"
 	"github.com/ostendorf-cloud/govue/health"
 	"github.com/ostendorf-cloud/govue/metrics"
 	"github.com/ostendorf-cloud/govue/middleware"
@@ -59,7 +62,20 @@ type app struct {
 	accessLog middleware.AccessLog
 
 	notes *noteStore
+
+	icons favicon.Icons
 }
+
+// themeColor is the accent of the example theme, the colour browsers tint
+// their toolbar with.
+const themeColor = "#904769"
+
+// publicFiles holds the favicon files, generated from favicon.svg with the
+// favicon:generate task target. A site embeds its web/public the same way, or
+// serves the built frontend's copy of it.
+//
+//go:embed all:web/public
+var publicFiles embed.FS
 
 // newApp constructs every dependency from cfg. It returns every construction
 // problem at once, the same way loadConfig does, rather than stopping at the
@@ -121,6 +137,17 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 	})
 	fail(err)
 	a.oidc = provider
+
+	// The favicon files are embedded from web/public, the one path a site keeps
+	// them at. A missing or empty file fails startup here, naming the file.
+	public, err := fs.Sub(publicFiles, "web/public")
+	if err != nil {
+		fail(fmt.Errorf("example: favicon directory: %w", err))
+	} else {
+		icons, err := favicon.Load(public, themeColor)
+		fail(err)
+		a.icons = icons
+	}
 
 	a.health = health.New()
 	// A real dependency, a database or the identity provider, would be

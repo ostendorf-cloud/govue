@@ -377,6 +377,32 @@ The design of the library and the reasoning behind it.
 - With nothing stored the script leaves `data-mode` off, because the stylesheet already follows
   the system setting through `light-dark()` and an explicit value would only pin it.
 
+### Favicons are a build requirement
+
+- Every site needs a favicon, and a site that forgets one ships the browser's default icon
+  without anyone noticing. So the absence is an error, not a missing nicety.
+- The Go package `favicon` fixes three file names in one directory per site, `web/public`: an
+  SVG, a 32 pixel PNG fallback and a 180 pixel Apple touch icon. `favicon.Load` fails at startup
+  naming the file and the path it expected. A web manifest stays optional and is not generated.
+- The links are written by `themeboot.Inject`, through `themeboot.WithFavicon`, in the same step
+  as the boot script. A second injection point would have been a second place to forget. The
+  links hold no script, so they need no nonce.
+- The PNG files are generated from the one source SVG by the `favicon:generate` task target with
+  ImageMagick, pinned in `mise.toml`, and committed. Output depends on the tool version, so the
+  pin matters. A site brings its own artwork. A site without a brand mark gets a placeholder SVG,
+  a monogram on its accent colour.
+- `favicon.CheckPages` is the shared check, called from a site's own tests on its prerendered
+  pages. It reads the links back from the HTML instead of trusting the shell, so it also catches
+  a prerender that dropped them. It scans the head only, with a small tokenizer that skips
+  comments and script content like a browser, because a regular expression over the whole page
+  passes on a link inside a comment or a string. It also checks content, so a file that is
+  merely non-empty, such as a `robots.txt` typed as an SVG, fails.
+- `Inject` stays total and returns a page without a head unchanged, as it did before. `Shell`
+  with `WithFavicon` panics at construction for such a page and for one that already carries
+  icon markup, the same startup failure as the empty nonce of the theme boot script. The
+  check on the built pages remains the guarantee.
+- Not covered here: `og:image` (govue#69) and the Vue components, which write no head markup.
+
 ### Component behaviour
 
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a

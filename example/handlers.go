@@ -122,10 +122,12 @@ func (a *app) home(w http.ResponseWriter, r *http.Request) error {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// The theme boot script goes first in the head, under the same nonce, so
 	// the saved theme is on the page before the first paint.
-	_, err := fmt.Fprintf(w, "<!doctype html><html><head>%s<title>govue example</title></head>"+
+	// themeboot.Inject adds the favicon links in the same step.
+	page := fmt.Sprintf("<!doctype html><html><head><title>govue example</title></head>"+
 		"<body><p>govue example application.</p>"+
 		"<script nonce=%q>console.log(\"loaded under the nonce\");</script>"+
-		"</body></html>", themeboot.Tag(nonce), nonce)
+		"</body></html>", nonce)
+	_, err := w.Write(themeboot.Inject([]byte(page), nonce, themeboot.WithFavicon(a.icons)))
 	if err != nil {
 		return fmt.Errorf("example: write home page: %w", err)
 	}

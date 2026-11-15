@@ -165,6 +165,53 @@ root element, otherwise `sample`, and leaves `data-mode` off so the system decid
 the attribute names are exported on both sides, `themeboot.StorageKey` and `THEME_STORAGE_KEY`,
 and a test runs the shipped script against the composable.
 
+### Favicon
+
+Every site has a favicon, and a site without one fails instead of shipping the browser's default
+icon. The package `favicon` is the contract.
+
+What a site provides:
+
+- One source `favicon.svg` in `web/public/`, its own artwork. A site without a brand mark uses a
+  placeholder: a monogram on the site's accent colour.
+- The generated PNG files next to it, made with `task favicon:generate` and committed. The target
+  needs `imagemagick`, pinned in `mise.toml`. A site copies the target and the pin, and sets
+  `FAVICON_DIR` to `web/public`. Nobody edits a PNG by hand.
+- A theme colour, a hex value such as `#0f766e`, usually the accent colour.
+
+What govue does:
+
+- `favicon.LoadDir("web/public", "#0f766e")`, or `favicon.Load` on an `fs.FS`, checks that
+  `favicon.svg`, `favicon-32x32.png` and `apple-touch-icon.png` exist, are not empty and hold
+  what their type says: an `svg` element, the PNG signature. It fails at startup and names every
+  bad file with the path it expected, so a site cannot start without them. A symbolic link is
+  accepted, the file system decides what it resolves to.
+- `themeboot.WithFavicon(icons)` makes `Shell` and `Inject` write the icon links and the
+  `theme-color` meta tag right behind the boot script, on every page and so in every language.
+  The links are root absolute, so the frontend build must copy `web/public` to the root of the
+  served files. `Shell` panics when it is built, at startup, for a page without a head element
+  or one that already carries icon links or a `theme-color` tag, because either would serve no
+  icons or serve them twice. `Inject` stays total and returns such a page unchanged, so
+  `CheckPages` is the guarantee. A server that renders its own page calls `icons.Links()`.
+- `favicon.CheckPages` is the check a site's own test suite calls on its prerendered pages, and
+  `favicon.CheckPage` checks one page. Each reads only the head, the way a browser does:
+  comments, script and textarea content do not count, and an unterminated comment runs to the
+  end of the page. A link with a `media` query other than `all` does not count, because it is not
+  the icon of every screen. Attribute values are entity decoded. Each fails when a page lacks an
+  icon link, a link is not a root absolute path, a link points at another file than
+  `favicon.svg`, `favicon-32x32.png` or `apple-touch-icon.png` for its role, or the linked file
+  is missing, empty or not what its type says. Match the cause with `errors.Is` against
+  `favicon.ErrNoLink`, `ErrBadHref`, `ErrWrongFile`, `ErrMissing`, `ErrEmpty` and `ErrInvalid`.
+
+```go
+public := os.DirFS("web/public")
+if err := favicon.CheckPages(os.DirFS("dist"), public); err != nil {
+    t.Fatal(err)
+}
+```
+
+The example application carries a favicon in `example/web/public/` and passes the check.
+
 `GovueField`, `GovueInput`, `GovueSelect`, `GovueCheckbox`, `GovueSwitch`, `GovueTextarea` and
 `GovueButton` are the form input components, all styled on the same tokens. `useForm` ties a set
 of values to validation and a submit function, and hands back the state a form needs to render

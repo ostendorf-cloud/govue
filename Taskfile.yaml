@@ -66,6 +66,23 @@ tasks:
     cmds:
       - go build -o /dev/null ./example
 
+  # Sites copy this target and the imagemagick pin of mise.toml. The PNG files are generated
+  # output and committed, never edited by hand. Run it again whenever the SVG changes.
+  # Variables: FAVICON_DIR holds favicon.svg and receives the PNG files, web/public in a site.
+  favicon:generate:
+    desc: Generate the favicon PNG files from favicon.svg
+    vars:
+      FAVICON_DIR: '{{.FAVICON_DIR | default "example/web/public"}}'
+    cmds:
+      - >-
+        magick -background none -density 1200 {{.FAVICON_DIR}}/favicon.svg -resize 32x32
+        -depth 8 -strip -define png:exclude-chunks=date,time {{.FAVICON_DIR}}/favicon-32x32.png
+      # The touch icon is opaque: iOS fills transparent pixels with black.
+      - >-
+        magick -background white -density 1200 {{.FAVICON_DIR}}/favicon.svg -resize 180x180
+        -alpha remove -alpha off -depth 8 -strip -define png:exclude-chunks=date,time
+        {{.FAVICON_DIR}}/apple-touch-icon.png
+
   test:go:
     desc: Go test
     cmds:
