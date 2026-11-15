@@ -4,6 +4,8 @@
 
 import { computed } from 'vue'
 
+import { useGovueText } from '../i18n/plugin'
+
 type Variant = 'primary' | 'secondary' | 'quiet' | 'danger'
 
 const props = withDefaults(
@@ -21,9 +23,11 @@ const props = withDefaults(
   {
     variant: 'secondary',
     type: 'button',
-    loadingLabel: 'Working',
+    loadingLabel: undefined,
   },
 )
+
+const { t } = useGovueText()
 
 const inert = computed(() => props.disabled || props.loading)
 
@@ -78,7 +82,7 @@ const classes = computed(() => [
         stroke-linecap="round"
       />
     </svg>
-    <span v-if="loading" class="sr-only">{{ loadingLabel }}</span>
+    <span v-if="loading" class="sr-only">{{ loadingLabel ?? t('govue.button.loading') }}</span>
     <slot />
   </button>
 </template>

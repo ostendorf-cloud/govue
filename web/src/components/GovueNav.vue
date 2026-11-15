@@ -4,6 +4,8 @@
 
 import { ref, useId } from 'vue'
 
+import { useGovueText } from '../i18n/plugin'
+
 export interface NavItem {
   href: string
   label: string
@@ -19,8 +21,10 @@ withDefaults(
     /** The accessible name of the button that opens the collapsed list. */
     toggleLabel?: string
   }>(),
-  { ariaLabel: 'Main', toggleLabel: 'Menu' },
+  { ariaLabel: undefined, toggleLabel: undefined },
 )
+
+const { t } = useGovueText()
 
 const listId = useId()
 const open = ref(false)
@@ -38,7 +42,7 @@ function close(): void {
 </script>
 
 <template>
-  <nav :aria-label="ariaLabel" @keydown.escape="close">
+  <nav :aria-label="ariaLabel ?? t('govue.nav.label')" @keydown.escape="close">
     <!-- Only below sm: from there the list is always on screen and the button
          would be a second way to do nothing. -->
     <button
@@ -58,7 +62,7 @@ function close(): void {
           stroke-linecap="round"
         />
       </svg>
-      {{ toggleLabel }}
+      {{ toggleLabel ?? t('govue.nav.menu') }}
     </button>
 
     <ul

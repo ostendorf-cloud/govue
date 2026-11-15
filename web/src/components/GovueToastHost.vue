@@ -13,6 +13,7 @@
 // back any coverage jsdom could not already give.
 import { computed } from 'vue'
 
+import { useGovueText } from '../i18n/plugin'
 import { useToasts, type Toast, type ToastKind } from '../composables/useToasts'
 import GovueButton from './GovueButton.vue'
 
@@ -26,11 +27,7 @@ interface Region {
 
 const { toasts, dismiss } = useToasts()
 
-const kindLabels: Record<ToastKind, string> = {
-  success: 'Success',
-  info: 'Info',
-  error: 'Error',
-}
+const { t } = useGovueText()
 
 // The word above the title is what carries the kind; the colour repeats it.
 const kindClasses: Record<ToastKind, string> = {
@@ -83,7 +80,7 @@ const regions = computed<Region[]>(() => [
         >
           <div class="flex min-w-0 flex-col gap-0.5">
             <p :class="['text-xs font-medium', kindClasses[toast.kind]]">
-              {{ kindLabels[toast.kind] }}
+              {{ t(`govue.toast.${toast.kind}`) }}
             </p>
             <p class="text-sm font-semibold">{{ toast.title }}</p>
             <p v-if="toast.message" class="text-sm text-text-muted">{{ toast.message }}</p>
@@ -92,7 +89,7 @@ const regions = computed<Region[]>(() => [
           <GovueButton
             variant="quiet"
             class="ml-auto shrink-0"
-            aria-label="Dismiss"
+            :aria-label="t('govue.toast.dismiss')"
             @click="dismiss(toast.id)"
           >
             <svg class="size-4" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
