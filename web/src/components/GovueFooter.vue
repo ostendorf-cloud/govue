@@ -2,6 +2,8 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
+import { useGovueText } from '../i18n/plugin'
+
 export interface FooterLink {
   href: string
   label: string
@@ -16,8 +18,10 @@ withDefaults(
     /** The footer navigation needs a name of its own, next to the main one. */
     ariaLabel?: string
   }>(),
-  { links: () => [], note: undefined, ariaLabel: 'Footer' },
+  { links: () => [], note: undefined, ariaLabel: undefined },
 )
+
+const { t } = useGovueText()
 </script>
 
 <template>
@@ -27,7 +31,7 @@ withDefaults(
         <slot />
       </div>
 
-      <nav v-if="links.length > 0" :aria-label="ariaLabel">
+      <nav v-if="links.length > 0" :aria-label="ariaLabel ?? t('govue.footer.label')">
         <ul class="flex flex-wrap items-center gap-x-4">
           <li v-for="link in links" :key="link.href">
             <a

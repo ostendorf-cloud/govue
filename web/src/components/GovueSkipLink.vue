@@ -2,6 +2,10 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
+import { useGovueText } from '../i18n/plugin'
+
+const { t } = useGovueText()
+
 withDefaults(
   defineProps<{
     /** The main landmark of the page. GovuePage carries this id. */
@@ -21,6 +25,6 @@ withDefaults(
     :href="target"
     class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:inline-flex focus:min-h-11 focus:items-center focus:rounded-md focus:border focus:border-border-strong focus:bg-surface focus:px-4 focus:text-base focus:font-medium focus:text-text focus:shadow-dialog"
   >
-    <slot>Skip to content</slot>
+    <slot>{{ t('govue.skipLink') }}</slot>
   </a>
 </template>

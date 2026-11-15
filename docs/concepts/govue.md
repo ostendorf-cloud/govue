@@ -362,8 +362,8 @@ The design of the library and the reasoning behind it.
 - `GovueThemeSwitch` is a radio group of three native buttons, system, light and dark, over
   `useTheme`. Only the active option is in the tab order and the arrow keys move the choice,
   which is the keyboard model a screen reader user expects of a radio group. Its strings are
-  props with English defaults, so the language layer can fill them without an i18n dependency
-  here. `GovueHeader` shows it through a `themeSwitch` prop, off by default.
+  props that override the catalogue of the language layer. `GovueHeader` shows it through a
+  `themeSwitch` prop, off by default.
 - A choice kept in `localStorage` is only readable once script runs, so a page that waits for
   the bundle flashes the wrong theme. The Go package `themeboot` injects a small inline script
   into the head that sets `data-theme` and `data-mode` before the first paint.
@@ -376,6 +376,32 @@ The design of the library and the reasoning behind it.
   test instead of showing up as a flash.
 - With nothing stored the script leaves `data-mode` off, because the stylesheet already follows
   the system setting through `light-dark()` and an explicit value would only pin it.
+
+### The language layer
+
+- Every site built on govue is German and English, so the translation lives here once, not per
+  site. `vue-i18n` in Composition API mode carries it. It is a peer dependency like `vue`: the
+  plugin installs onto the app's instance, and two copies would be two injection keys and two
+  states. A site that already depends on `vue-i18n` passes its instance and shares it.
+- `createGovueI18n` merges the govue catalogue under one `govue.` namespace, picks the language
+  (stored choice, browser, German), keeps `lang` on the document element in step with the
+  locale, and provides the state the components and the switch read. The languages are listed in
+  one place, `web/src/i18n/catalogues.ts`, so a third language is a catalogue file and one line.
+- Components take their default text from the catalogue and keep their text props as overrides.
+  The props no longer carry English defaults: left out, they follow the language. Without the
+  plugin the components read the English catalogue directly, so an app that never installs it
+  sees what it saw before.
+- `GovueLanguageSwitch` is a native select, not a radio group like the theme switch. The list
+  of languages is open ended, a select stays one control at any length, and the platform gives
+  it keyboard handling, screen reader support and a touch picker. Focus stays on it after a
+  change, and nothing navigates.
+- Catalogues are TypeScript files, not JSON, so each carries the license header and no
+  exception is needed. Only visitor-facing text is translated; developer errors stay English.
+- The choice is kept in `localStorage` by default. A cookie or an account callback serves
+  signed in areas that need no path prefix. A test compares the key sets and the named
+  placeholders of all catalogues, so a missing key fails the build.
+- Path prefixes, `hreflang`, the redirect at `/`, the sitemap and prerendering are routing
+  and are not part of this layer.
 
 ### Favicons are a build requirement
 

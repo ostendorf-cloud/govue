@@ -24,6 +24,11 @@ repeated here.
   `GovueCheckbox`, `GovueSwitch`, `GovueTextarea`, `GovueButton`) with `useForm`, and the layout
   components (`GovuePage`, `GovueHeader`, `GovueFooter`, `GovueNav`, `GovueSkipLink`,
   `GovueCard`, `GovueBadge`, `GovueSkeleton`), and `GovueThemeSwitch`.
+- `web/src/i18n/` holds the language layer: the `createGovueI18n` plugin, the German and
+  English catalogues and `catalogues.ts`, the one list of languages. `GovueLanguageSwitch`
+  lives in `web/src/components/` with the other components.
+  A visitor-facing default text goes into both catalogues under `govue.`, never into a
+  component as a string. A text prop stays as an override.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
@@ -86,6 +91,9 @@ task example:build   # compile the example application
   decides whether the values are usable.
 - Focus is styled once, globally. A component never adds a focus ring and never removes one.
 - Touch targets are at least 44px.
+- `vue-i18n` (Composition API mode, `legacy: false`) is the one translation library and a peer
+  dependency like `vue`, so an app and govue share one instance. Do not add a second i18n
+  library.
 - For component behaviour nothing custom covers yet, modals, dropdowns and comboboxes, evaluate
   adopting a maintained headless primitives library before writing one. Reka UI, the Vue port of
   Radix, is wired up as a dependency for `GovueDialog`, whose focus trap, inert background and

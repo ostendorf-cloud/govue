@@ -5,14 +5,15 @@
 import { ref } from 'vue'
 
 import { useTheme, type ColorMode } from '../composables/useTheme'
+import { useGovueText } from '../i18n/plugin'
 
 // A radio group of three buttons: system, light and dark. Each option is a
 // native button with role radio, so the focus ring is the global one on the
 // element that has focus. Only the active option is in the tab order; the
 // arrow keys move the choice, as a radio group does.
 //
-// The strings are props with English defaults, so the language layer can
-// override them later without this component importing any i18n library.
+// The strings are props that override the catalogue. Left out, they come from
+// the language layer, English when it is not installed.
 //
 // It shares the state of useTheme, and the first useTheme call decides the
 // default theme and the storage key. An app that sets either calls
@@ -25,20 +26,16 @@ const props = withDefaults(
     lightLabel?: string
     darkLabel?: string
   }>(),
-  {
-    label: 'Theme',
-    systemLabel: 'System',
-    lightLabel: 'Light',
-    darkLabel: 'Dark',
-  },
+  { label: undefined, systemLabel: undefined, lightLabel: undefined, darkLabel: undefined },
 )
 
 const { mode, setMode } = useTheme()
+const { t } = useGovueText()
 
 const options = (): Array<{ value: ColorMode; text: string }> => [
-  { value: 'system', text: props.systemLabel },
-  { value: 'light', text: props.lightLabel },
-  { value: 'dark', text: props.darkLabel },
+  { value: 'system', text: props.systemLabel ?? t('govue.theme.system') },
+  { value: 'light', text: props.lightLabel ?? t('govue.theme.light') },
+  { value: 'dark', text: props.darkLabel ?? t('govue.theme.dark') },
 ]
 
 const buttons = ref<HTMLButtonElement[]>([])
@@ -76,7 +73,7 @@ function onKeydown(event: KeyboardEvent, index: number): void {
 <template>
   <div
     role="radiogroup"
-    :aria-label="label"
+    :aria-label="label ?? t('govue.theme.label')"
     class="inline-flex gap-1 rounded-md border border-border-strong bg-surface"
   >
     <button

@@ -30,6 +30,21 @@ export type { Toast, ToastInput, ToastKind, ToastState } from './composables/use
 export { useForm } from './composables/useForm'
 export type { FieldErrors, FormOptions, FormState, Touched } from './composables/useForm'
 
+// The language layer: the plugin, the composables and the catalogue registry.
+export { createGovueI18n, languageKey, pickLocale, useGovueText, useLanguage } from './i18n/plugin'
+export type {
+  ExistingI18n,
+  GovueI18n,
+  GovueI18nOptions,
+  LanguageState,
+  NamedValues,
+} from './i18n/plugin'
+export { catalogues, DEFAULT_LOCALE, isLocaleCode, localeCodes } from './i18n/catalogues'
+export type { LocaleCode } from './i18n/catalogues'
+export type { MessageTree } from './i18n/messages'
+export { LANGUAGE_STORAGE_KEY } from './i18n/languageStorage'
+export type { LanguageStorageOption } from './i18n/languageStorage'
+
 export { default as GovueBadge } from './components/GovueBadge.vue'
 export type { BadgeKind } from './components/GovueBadge.vue'
 export { default as GovueButton } from './components/GovueButton.vue'
@@ -45,6 +60,7 @@ export { default as GovueFooter } from './components/GovueFooter.vue'
 export type { FooterLink } from './components/GovueFooter.vue'
 export { default as GovueHeader } from './components/GovueHeader.vue'
 export { default as GovueInput } from './components/GovueInput.vue'
+export { default as GovueLanguageSwitch } from './components/GovueLanguageSwitch.vue'
 export { default as GovueNav } from './components/GovueNav.vue'
 export type { NavItem } from './components/GovueNav.vue'
 export { default as GovuePage } from './components/GovuePage.vue'

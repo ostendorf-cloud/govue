@@ -25,8 +25,8 @@ export default defineConfig({
     },
     // Vue and Tailwind come from the consuming app, never twice.
     rollupOptions: {
-      external: ['vue'],
-      output: { globals: { vue: 'Vue' } },
+      external: ['vue', 'vue-i18n'],
+      output: { globals: { vue: 'Vue', 'vue-i18n': 'VueI18n' } },
     },
   },
   test: {

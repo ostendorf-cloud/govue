@@ -2,6 +2,7 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
+import { useGovueText } from '../i18n/plugin'
 import GovueButton from './GovueButton.vue'
 import GovueDialog from './GovueDialog.vue'
 
@@ -18,8 +19,10 @@ withDefaults(
     /** The confirmed action is in flight. */
     loading?: boolean
   }>(),
-  { confirmLabel: 'Delete', cancelLabel: 'Cancel' },
+  { confirmLabel: undefined, cancelLabel: undefined },
 )
+
+const { t } = useGovueText()
 
 const open = defineModel<boolean>('open', { default: false })
 
@@ -49,10 +52,10 @@ function confirm(): void {
       <!-- Cancel comes first, so the keyboard reaches the way out before the
            destructive one. -->
       <GovueButton variant="secondary" :disabled="loading" @click="open = false">
-        {{ cancelLabel }}
+        {{ cancelLabel ?? t('govue.confirm.cancel') }}
       </GovueButton>
       <GovueButton variant="danger" :loading="loading" @click="confirm">
-        {{ confirmLabel }}
+        {{ confirmLabel ?? t('govue.confirm.confirm') }}
       </GovueButton>
     </template>
   </GovueDialog>

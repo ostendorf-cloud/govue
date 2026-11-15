@@ -4,7 +4,10 @@
 
 import { computed, provide, useId } from 'vue'
 
+import { useGovueText } from '../i18n/plugin'
 import { fieldKey } from './field'
+
+const { t } = useGovueText()
 
 const props = withDefaults(
   defineProps<{
@@ -44,7 +47,9 @@ provide(fieldKey, { id, describedBy, invalid, required, disabled })
       {{ label }}
       <!-- Spelled out: an asterisk alone is a convention not everybody knows,
            and a screen reader reads it as "star". -->
-      <span v-if="required" class="font-normal text-text-muted">(required)</span>
+      <span v-if="required" class="font-normal text-text-muted">{{
+        t('govue.field.required')
+      }}</span>
     </label>
 
     <slot :id="id" :described-by="describedBy" :invalid="invalid" />

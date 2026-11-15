@@ -2,12 +2,19 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-defineProps<{
-  /** What this place is, not "No data". */
-  title: string
-  /** Why it is empty and what will fill it. */
-  description: string
-}>()
+import { useGovueText } from '../i18n/plugin'
+
+withDefaults(
+  defineProps<{
+    /** What this place is, not "No data". Defaults to a generic line. */
+    title?: string
+    /** Why it is empty and what will fill it. Defaults to a generic line. */
+    description?: string
+  }>(),
+  { title: undefined, description: undefined },
+)
+
+const { t } = useGovueText()
 </script>
 
 <template>
@@ -20,8 +27,10 @@ defineProps<{
       <slot name="icon" />
     </div>
 
-    <h2 class="text-lg font-semibold text-text">{{ title }}</h2>
-    <p class="text-base text-text-muted">{{ description }}</p>
+    <h2 class="text-lg font-semibold text-text">{{ title ?? t('govue.empty.title') }}</h2>
+    <p class="text-base text-text-muted">
+      {{ description ?? t('govue.empty.description') }}
+    </p>
 
     <div v-if="$slots.action" class="flex flex-wrap justify-center gap-2 pt-1">
       <slot name="action" />
