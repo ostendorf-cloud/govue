@@ -102,6 +102,13 @@ jobs:
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db  # v3.6.3
       - run: task lint:actions
 
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db  # v3.6.3
+      - run: task lint:shell
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:
@@ -208,6 +215,39 @@ jobs:
             ${{ runner.os }}-build-
             ${{ runner.os }}-example-build-
       - run: task test:go
+
+  scripts-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db  # v3.6.3
+      - run: task test:scripts
+
+  # The one job that installs the web/ dependencies for their own sake. pnpm 11 and later
+  # refuse a locked version younger than the minimum release age. This job explains that
+  # on the pull request. The install failure itself stays a failure. Only this job gets
+  # write access to pull requests, the workflow default stays read only.
+  web-install:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db  # v3.6.3
+      - name: Install the web dependencies and keep the log
+        # The script sets pipefail, so the exit code is the install's, not tee's.
+        run: bash .github/scripts/install-with-log.sh "$RUNNER_TEMP/web-install.log" task web:deps
+      - name: Explain a minimum release age failure on the pull request
+        # A fork pull request has no write token, so it is skipped without a message.
+        if: >-
+          failure() && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: bash .github/scripts/release-age-comment.sh "$RUNNER_TEMP/web-install.log"
 
   web-lint:
     runs-on: ubuntu-latest
