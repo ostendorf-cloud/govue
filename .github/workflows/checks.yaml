@@ -114,7 +114,8 @@ jobs:
   # The shared reusable workflow pins addlicense itself and takes the file
   # set as complete "find" invocations, one per line. task lint:license
   # keeps the same invocation for local development, and AGENTS.md records
-  # that the two are kept in step by hand.
+  # that the two are kept in step by hand. addlicense 1.2.0 skips .mts files
+  # silently, so the last line checks them through a copy that ends in .ts.
   license:
     uses: ostendorf-cloud/workflows/.github/workflows/reusable-license.yaml@0906f36104c9a448d409732f4b24ece1a0398d26 # v0.1.0
     with:
@@ -125,8 +126,9 @@ jobs:
       addlicense-version: "1.2.0"
       find-commands: |
         find . -name "*.go" -not -path "./.claude/worktrees/*" -not -path "*/node_modules/*"
-        find web/src -type f \( -name "*.ts" -o -name "*.vue" \) -not -path "*/node_modules/*" -not -path "*/dist/*"
-        find web/scripts -type f \( -name "*.ts" -o -name "*.vue" \) -not -path "*/node_modules/*" -not -path "*/dist/*"
+        find web/src -type f \( -name "*.ts" -o -name "*.vue" -o -name "*.mjs" \) -not -path "*/node_modules/*" -not -path "*/dist/*"
+        find web/scripts -type f \( -name "*.ts" -o -name "*.vue" -o -name "*.mjs" \) -not -path "*/node_modules/*" -not -path "*/dist/*"
+        find web/src web/scripts -name "*.mts" | while read -r f; do o=/tmp/mts/$f.ts; mkdir -p "${o%/*}"; cp "$f" "$o"; echo "$o"; done
 
   renovate-config:
     uses: ostendorf-cloud/workflows/.github/workflows/reusable-renovate-config.yaml@287204461266c02cdd2fe9da20527ac3f3ac842c # v0.2.0

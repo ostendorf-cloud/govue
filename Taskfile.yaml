@@ -50,11 +50,21 @@ tasks:
   lint:license:
     desc: License header check for every Go and web source file
     cmds:
+      # addlicense 1.2.0 knows .mjs but silently skips .mts, so a .d.mts file
+      # is checked through a copy that ends in .ts.
       - |
+        d=$(mktemp -d "${TMPDIR:-/tmp}/govue-mts.XXXXXX")
+        trap 'rm -rf "$d"' EXIT
+        for f in $(find web/src web/scripts -type f -name "*.mts" \
+          -not -path "*/node_modules/*" -not -path "*/dist/*"); do
+          mkdir -p "$d/$(dirname "$f")"
+          cp "$f" "$d/$f.ts"
+        done
         addlicense -check -c "Simon Ostendorf" -y 2026 -l apache -s=only \
           $(find . -name "*.go" -not -path "./.claude/worktrees/*" -not -path "*/node_modules/*") \
-          $(find web/src web/scripts -type f \( -name "*.ts" -o -name "*.vue" \) \
-            -not -path "*/node_modules/*" -not -path "*/dist/*")
+          $(find web/src web/scripts -type f \( -name "*.ts" -o -name "*.vue" -o -name "*.mjs" \) \
+            -not -path "*/node_modules/*" -not -path "*/dist/*") \
+          $(find "$d" -type f -name "*.ts")
 
   build:
     desc: Compile every package

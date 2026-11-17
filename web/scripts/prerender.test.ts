@@ -166,7 +166,13 @@ describe('parity with injectIntoTemplate in the render entry', () => {
     ['<html></html>', 'x', undefined],
     ['<!--app-html--><!--app-html-->', 'x', undefined],
     ['abc', 'x', ''],
+    ['aaa', 'x', 'aa'],
   ]
+
+  it('counts overlapping matches as more than one', () => {
+    expect(() => injectIntoTemplate('aaa', 'x', 'aa')).toThrow('more than once')
+    expect(() => injectFromEntry('aaa', 'x', 'aa')).toThrow('more than once')
+  })
 
   it.each(cases)('treats %j the same in both copies', (template, html, placeholder) => {
     const run = (fn: typeof injectIntoTemplate) => {
