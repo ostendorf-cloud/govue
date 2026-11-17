@@ -531,6 +531,46 @@ The design of the library and the reasoning behind it.
 - An unprefixed public path such as `/impressum` is not redirected and answers 404. The
   cookie storage of the language layer stays an option and is not the default.
 
+### The language redirect at the site root
+
+- Public pages live under a path prefix per language, `/de/` and `/en/`. The Go package
+  `language` sends a visitor of `/` to one of them. It is its own package: `middleware` imports
+  `api`, `logging` and `ratelimit`, `session` is for server side state and the cookie here is
+  written by the client, and `themeboot` would pull `favicon` and `middleware` into a redirect.
+  It imports no other govue package.
+- The language comes from the language cookie when its value equals a configured code exactly,
+  else from `Accept-Language`, else from the default, German. The cookie is the one the Vue
+  package writes with its `cookie` storage kind. The default `localStorage` storage is invisible
+  to the server, so a site with public pages picks the cookie kind. A test in `web/` compares
+  the cookie name in both halves.
+- The redirect target is built from the configured codes only: `/`, a code, `/`. The path, the
+  `Host` header, the cookie value and the header text never enter it, so there is no open
+  redirect and no header injection. The query string is carried over with every byte that is not
+  safe in a header escaped.
+- The handler is mounted for `GET /{$}` and answers 404 for any other path. A request for
+  `/en/` never reaches it, so a crawler and a visitor with a stored choice keep the language of
+  the URL they asked for. `HEAD` follows the `GET` pattern. Other methods get 405 when the handler is
+  mounted as `GET /{$}`, because no method-less pattern matches `/`. The handler answers 405
+  itself too.
+- The cookie rules differ in two corners from the Vue reader. The Go side accepts a quoted value
+  and takes the first value that equals a configured code among several cookies of the same name.
+  The Vue `readCookie` takes the first cookie of that name. Both agree on every value the Vue
+  package writes.
+- The status is 302, not 301 or 308: the target depends on the visitor, and a permanent
+  redirect would be cached by the browser. The answer carries `Cache-Control: no-store` and
+  `Vary: Accept-Language, Cookie`, added to the header so a `Vary: Origin` from the CORS
+  middleware stays.
+- `Negotiate` reads the header with bounds. A value over 4 KiB counts as absent and only 32
+  entries are read, the bound `clientip` uses. Tags match by primary subtag, so `de-AT` is `de`.
+  A quality must be 0 to 1 with at most three decimals. An entry with another quality is
+  dropped and the rest still count. A quality of 0 excludes a language. `*` gives its quality
+  to every language the header does not name, and `Redirect` lists the default first so the
+  wildcard means the default. No match means the default.
+- An unprefixed public path such as `/impressum` and an unknown prefix such as `/fr/` are not
+  redirected. They fall to the catch-all 404, because redirecting them would invent URLs and
+  need the route table in Go.
+- `ServeMux` answers `/de` with a 307 to `/de/` and keeps the query. A test pins it.
+
 ### Build time pre-rendering of one page
 
 - A landing page needs real markup for crawlers and a fast first paint. Per-request SSR would
