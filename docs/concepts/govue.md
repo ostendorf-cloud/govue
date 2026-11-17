@@ -331,6 +331,43 @@ The design of the library and the reasoning behind it.
   caller is an HTTP handler, and a bad client secret, a drifted clock and a forged token must not
   be distinguishable from outside.
 
+### Local accounts
+
+- Two applications already carry their own local accounts with a password and TOTP, and more
+  are about to need them. The `account` package is meant to replace those copies before they
+  drift further.
+- govue owns no schema. The existing applications store accounts differently, so a consumer
+  satisfies `account.Store` with an adapter over its own tables. Adoption is an adapter, not a
+  data migration: the password hash format and the TOTP secret format already match.
+- `Store` has five methods, taken from the calls the logic makes: `FindByLogin`, `Create`,
+  `AdvanceTOTPCounter`, `ConfirmTOTP` and `SetPasswordHash`. It has no method for a provider
+  identity, a connected account, a tenant or a list of accounts.
+- That absence is the guarantee. Code in `account` cannot reach what the interface does not
+  offer, so a login can never be matched against a provider account somebody connected for
+  another purpose. A test pins the method set, so widening it is a reviewed decision.
+- Scoping stays in the adapter. A consumer with row level security or tenants reads its scope
+  from `ctx` there.
+- `Identity` carries an opaque `ID` and a `Login`, nothing else. The id is the consumer's
+  account id, never a provider subject, so a session keys on one identifier however the login
+  happened. Tenant, role and groups are added by the consumer when it builds its session. An
+  OIDC login converges by the consumer mapping the subject to its own account id, and `oidc`
+  stays unchanged.
+- A TOTP code is good once, and the store enforces it. `AdvanceTOTPCounter` compares and
+  writes in one statement and answers `ErrNotFound` when the counter did not move. Reading the
+  counter and writing the whole record, the other shape found in the existing code, lets two
+  racing logins with one captured code both pass.
+- A TOTP secret counts only after a code from it was confirmed. An account usable at once with
+  a secret shown once locks out anyone who loses that response before scanning it.
+- Password and TOTP are checked in one login call, as before. A two step login needs somewhere
+  to keep a half authenticated state, which is a second session to design and expire.
+- Every failed login answers `ErrInvalidCredentials`, and a login against an unknown account
+  pays the same hashing cost as a wrong password, so neither the answer nor the time tells which
+  part of a guess was right.
+- Passkeys are meant to follow in a separate `passkey` package with its own store, beside TOTP
+  rather than replacing it. Losing one device must not lock somebody out of their records.
+- Recovery codes are not part of the first version. Losing both the TOTP device and every
+  passkey then locks the account, and the documentation has to say so.
+
 ### Theming through a published token contract
 
 - `web/src/styles/base.css` registers every role token as a Tailwind v4 theme variable with a
@@ -454,6 +491,12 @@ The design of the library and the reasoning behind it.
 - Tokens authored in TypeScript with CSS generated from them: one source of truth. Dropped
   because it adds a generator and generated files to review, and nothing needs the tokens as
   data.
+- Shipping the account tables and migrations with `account`: no adapter to write. Dropped
+  because the existing consumers' schemas already differ, and owning the tables would dictate a
+  shape to every consumer and force a data migration on each.
+- One wide account store with every repository a user table usually has: one interface for
+  every use. Dropped because an interface that offers more than the logic needs turns the
+  boundary into a convention the next consumer does not know about.
 - Publishing the Vue package to npm: the obvious distribution path. Dropped for now because no
   registry is set up for this organisation, and a git dependency pinned to a tag needs no publish
   step and no token.
@@ -476,6 +519,10 @@ The design of the library and the reasoning behind it.
   open until the first component with real focus behaviour lands.
 - Whether `api`'s error shape is the right contract for consumers that already have one of their
   own. Next step: revisit when a second consumer appears.
+- Whether `account` folds the case of a login or leaves it to the store's uniqueness rule. Next
+  step: decide with the login logic.
+- The passkey user handle: the opaque account id or a random handle per account. Next step:
+  decide in the passkey work with its security review.
 - What the first version supports for configuration beyond the environment. Nothing reads the
   environment by itself today, and whether that stays absolute is open.
 
