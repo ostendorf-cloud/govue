@@ -189,14 +189,24 @@ Put `<!--app-html-->` inside the mount element of `index.html`, then build the e
 script. It writes the markup into the template and fails when the placeholder is missing:
 
 ```sh
+pnpm exec vite build
 pnpm exec vite build --ssr src/entry-prerender.ts --outDir dist-ssr
-node node_modules/@ostendorf-cloud/govue/scripts/prerender.ts \
+pnpm exec govue-prerender \
   --entry dist-ssr/entry-prerender.js --template dist/index.html --out dist/index.html
 ```
 
-This renders one page, not a site: no routing, no per-request data and no hydration beyond the
-normal client mount. A dialog or other teleported content is not part of the markup. See
-`docs/concepts/govue.md` for the boundary.
+The script is plain JavaScript and needs Node 24 or later. With `--out` equal to `--template`, the
+marker is consumed, so a second run fails with no placeholder: run it after a fresh `vite build`.
+
+The client starts over the markup with `createApp`, which replaces it, and never with
+`createSSRApp`. The markup is rendered with no visitor, so it knows neither the stored theme nor
+the browser language. Hydrating it would keep a wrong `aria-checked` or language for a visitor with
+a stored dark mode or a German browser, because Vue does not patch attribute mismatches in
+production. The prerendered markup serves the first paint and crawlers.
+
+This renders one page, not a site: no routing, no per-request data and no hydration. A dialog or
+other teleported content is not part of the markup. `useTheme` and `useToasts` keep module level
+state, so a prerendered page raises no toast. See `docs/concepts/govue.md` for the boundary.
 
 ### Favicon
 

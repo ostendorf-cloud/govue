@@ -421,13 +421,14 @@ The design of the library and the reasoning behind it.
   - It takes no route, no language and no template. Language routes, `<html lang>`, canonical and
     `hreflang` are a caller concern: the caller renders once per language with its own `setup`
     and its own template.
-  - It runs in Node with no DOM, keeps no state and swallows no error: a failing component
-    rejects the promise and so fails the build.
+  - It runs in Node with no DOM, keeps no state of its own and swallows no error: a failing
+    component rejects the promise and so fails the build. The composables it renders may keep
+    state, see the limits below.
   - It does not render teleported content, such as an open dialog. A prerendered page shows the
     closed state.
-- `web/scripts/prerender.ts` is the build script: it loads the consumer's SSR bundle (built with
-  `vite build --ssr`, since plain Node cannot load a `.vue` file), calls its `render`, injects
-  the markup into the template and writes the file.
+- `web/scripts/prerender.mjs`, installed as the `govue-prerender` bin, is the build script: it
+  loads the consumer's SSR bundle (built with `vite build --ssr`, since plain Node cannot load a
+  `.vue` file), calls its `render`, injects the markup into the template and writes the file.
 - DOM audit of the exported components and composables: no component reads `window`, `document`
   or `navigator` itself. `useTheme` guards `document`, `window` and `matchMedia`, and skips
   storage altogether without a window, because newer Node versions define a global
@@ -435,9 +436,26 @@ The design of the library and the reasoning behind it.
   and does no detection without a window, so the language is the one passed in, else German.
   Reka UI primitives render without a DOM. A test renders the layout components, both switches
   and a select in a Node environment, not jsdom.
-- One limit stays. `useTheme` keeps its state at module level, because one page has one theme.
-  Rendering several pages with different themes in one process shares that state. A build
-  renders one page per process run, so this is documented rather than changed.
+- Two limits stay. `useTheme` and `useToasts` keep their state at module level, because one page
+  has one theme and one toast host. Rendering several pages with different themes in one
+  process shares the theme. A `notify` call during render would leak a toast into the next
+  render, and its pending timer would keep the build process alive, so a prerendered page never
+  raises a toast. A build renders one page per process run, so this is documented rather than
+  changed.
+- The client mounts with `createApp`, which replaces the prerendered markup, never with
+  `createSSRApp`. The markup is rendered with no visitor: system mode and the language passed to
+  `setup`. The client then reads the stored choice and the browser language. With `createSSRApp`
+  Vue would hydrate instead of replace, and a visitor with a stored dark mode or a German
+  browser gets mismatches, which in production Vue does not patch for attributes: a wrong
+  `aria-checked` would stay on screen. `createApp` gives no warning in those cases, and a test
+  mounts over the markup with a stored choice to keep it that way. The prerendered markup is
+  for the first paint and for crawlers, and the client takes over from it.
+- The script ships as plain JavaScript, `govue-prerender`, because Node does not strip
+  TypeScript types under `node_modules`. It holds its own small copy of `injectIntoTemplate`,
+  and a test runs the same cases through both copies. The package requires Node 24 or later,
+  the lowest the repository's `@tsconfig/node24` targets. Only Node 26 is exercised.
+- With `--out` equal to `--template`, the marker is consumed, so a second run fails with no
+  placeholder. Run it after a fresh `vite build`.
 - What this does not solve: data that changes per request, personalised content, routing,
   multi-page discovery, incremental rebuilds and hydration beyond what a normal client mount does
   once the static HTML has loaded. A site that needs those is better served by a real

@@ -13,7 +13,12 @@
  *     one page per language installs the language in `setup` and puts lang,
  *     canonical and hreflang into the template itself.
  *   - It runs in Node with no DOM. It never touches a global and keeps no
- *     state of its own.
+ *     state of its own. Two composables do keep module level state: useTheme
+ *     and useToasts. A toast shown while rendering would leak into the next
+ *     render, and its pending timer would keep the build process alive, so a
+ *     page must not call notify during render.
+ *   - The client starts over the markup with createApp, never createSSRApp:
+ *     the markup knows no stored choice and no browser language.
  *   - An error in a component rejects the promise. Nothing is swallowed, so a
  *     broken page fails the build instead of shipping empty.
  *
