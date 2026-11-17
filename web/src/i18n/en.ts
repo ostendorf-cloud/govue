@@ -49,6 +49,29 @@ const en: MessageTree = {
     language: {
       label: 'Language',
     },
+    legal: {
+      bindingNotice:
+        'The German version is legally binding. This English version is a translation.',
+      viewGerman: 'View the German version',
+      imprint: {
+        title: 'Imprint',
+        contact: 'Contact',
+        phone: 'Phone:',
+        email: 'Email:',
+        vatHeading: 'VAT ID',
+        vatText: 'VAT identification number per Section 27a of the German VAT Act: {vatId}',
+        disputeHeading: 'Consumer dispute resolution',
+      },
+      privacy: {
+        title: 'Privacy policy',
+        glance: 'Data protection at a glance',
+        hosting: 'Hosting',
+        general: 'General notes and mandatory information',
+        collection: 'Data collection on this website',
+        controller: 'Information about the controller',
+        controllerIntro: 'The controller responsible for data processing on this website is:',
+      },
+    },
   },
 }
 

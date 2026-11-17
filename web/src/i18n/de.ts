@@ -49,6 +49,30 @@ const de: MessageTree = {
     language: {
       label: 'Sprache',
     },
+    legal: {
+      bindingNotice:
+        'Die deutsche Fassung ist rechtlich verbindlich. Diese englische Fassung ist eine Übersetzung.',
+      viewGerman: 'Deutsche Fassung ansehen',
+      imprint: {
+        title: 'Impressum',
+        contact: 'Kontakt',
+        phone: 'Telefon:',
+        email: 'E-Mail:',
+        vatHeading: 'Umsatzsteuer-ID',
+        vatText: 'Umsatzsteuer-Identifikationsnummer gemäß §27a Umsatzsteuergesetz: {vatId}',
+        disputeHeading: 'Verbraucherstreitbeilegung',
+      },
+      privacy: {
+        title: 'Datenschutzerklärung',
+        glance: 'Datenschutz auf einen Blick',
+        hosting: 'Hosting',
+        general: 'Allgemeine Hinweise und Pflichtinformationen',
+        collection: 'Datenerfassung auf dieser Website',
+        controller: 'Hinweis zur verantwortlichen Stelle',
+        controllerIntro:
+          'Die verantwortliche Stelle für die Datenverarbeitung auf dieser Website ist:',
+      },
+    },
   },
 }
 

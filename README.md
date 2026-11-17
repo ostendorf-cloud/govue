@@ -364,6 +364,101 @@ Add a catalogue file next to `web/src/i18n/de.ts`, and one line in `web/src/i18n
 The switch, the choice order and the completeness test all read that list. The test fails the
 build when a language lacks a key or uses other named placeholders than German.
 
+## Imprint and privacy policy
+
+Every site needs an imprint and a privacy policy. govue ships both as building blocks in German
+and English, so the mandatory texts exist once and not in every site. The German text is binding.
+The English text is a translation, and the English page says so.
+
+This is not legal advice. The texts are a starting point. Every site needs its own legal review
+before it goes live.
+
+### What govue provides
+
+- A provider configuration, passed in once: name, address, phone, email, VAT ID and the consumer
+  dispute resolution statement in both languages.
+- `GovueImprintPage`, which renders the imprint from that configuration.
+- `GovuePrivacyPage`, which renders the shared parts: data protection at a glance, hosting,
+  general notes and mandatory information, and the rights of the data subject.
+- Optional blocks for the common cases: `serverLogs`, `sessionCookie`, `contactForm`, `umami` and
+  `rateLimit`. Each states what it stores and for how long, and each takes the facts of the
+  site as options, such as the retention in days.
+- The Go package `legal`, a check for the site's own tests.
+
+### What a site provides
+
+- The provider data, once, with `createGovueLegal`. A blank field throws at setup.
+- The part "data collection on this website". The site lists the blocks its code backs and adds
+  its own sections. A block that the code does not back must not be listed, because the text
+  would be false.
+- Anything specific to the site: a short summary, sections about social media, accounts or
+  payment. These go in the slots or in the section list.
+- The legal review, and the options of each block set to what the site really does.
+
+```ts
+import { createGovueLegal, createGovueI18n } from '@ostendorf-cloud/govue'
+
+createApp(App)
+  .use(createGovueI18n())
+  .use(createGovueLegal({
+    name: 'Example Provider',
+    street: '1 Example Street',
+    postalCode: '00000',
+    city: 'Example City',
+    phone: '+49 000 0000000',
+    email: 'legal@example.invalid',
+    vatId: 'DE000000000',
+    disputeResolution: { de: '...', en: '...' },
+  }))
+```
+
+```vue
+<script setup lang="ts">
+import { contactForm, serverLogs, sessionCookie, GovuePrivacyPage } from '@ostendorf-cloud/govue'
+
+const sections = [sessionCookie(), serverLogs({ retentionDays: 30 }), contactForm()]
+</script>
+
+<template>
+  <GovuePrivacyPage german-href="/de/privacy" :sections="sections">
+    <template #intro>A short summary of what this site does.</template>
+    <template #extra><h2>5. Social media</h2></template>
+  </GovuePrivacyPage>
+</template>
+```
+
+- `GovueImprintPage` takes no content. Pass `german-href` and the English page links to the
+  German one.
+- `GovuePrivacyPage` slots: `intro` (the summary), `glance` (an addition to part 1), the default
+  slot (more content for part 4) and `extra` (further parts after part 4). The prop `sections`
+  is the list for part 4. Part 4 shows when the list or the default slot has content.
+- A section of your own is `legalSection(id, [german, english], blocks)`. Texts are written in
+  both languages, and the types make a missing language an error.
+- The wrapper of each page carries `data-govue-legal` and `lang`. The Go check reads them.
+
+### The build check
+
+`legal.Check` takes the prerendered pages as an `fs.FS` and the file of each page per language.
+It fails when a site has no imprint or no privacy page, when a language is missing, when a page
+carries the wrong `lang` or too little text, and when two languages hold the same text. It does
+not read the words and it does not replace the review. Call it from the site's own test:
+
+```go
+err := legal.Check(os.DirFS("web/dist"), legal.Pages{
+    "de": {Imprint: "de/impressum.html", Privacy: "de/datenschutz.html"},
+    "en": {Imprint: "en/imprint.html", Privacy: "en/privacy.html"},
+})
+```
+
+The example site is `web/src/legal/example/`. It renders both pages with a made up provider.
+
+### Licence of the texts
+
+The legal texts were written for ostendorf.tech, whose repository is proprietary. Their owner is
+the provider of every site built on govue and allows their reuse here. That permission covers
+the sites of this provider. It is not a licence for other providers, who need the owner's
+agreement before they reuse the texts. See [NOTICE.md](NOTICE.md).
+
 ## Generating a theme
 
 A consumer with no design background can still get a full, accessible theme: the `web/` package

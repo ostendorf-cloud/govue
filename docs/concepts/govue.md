@@ -403,6 +403,31 @@ The design of the library and the reasoning behind it.
 - Path prefixes, `hreflang`, the redirect at `/`, the sitemap and prerendering are routing
   and are not part of this layer.
 
+### Imprint and privacy policy are shared building blocks
+
+- Every site needs both pages, in German and English, and the mandatory parts read the same on
+  every site. Fifteen copies would drift apart, and a wrong sentence would have to be found in
+  each. So the shared text lives here once.
+- The provider is the same for all sites, so it is configuration: `createGovueLegal` takes it once
+  and throws at setup for a blank field. No page types it, and the repository holds no real
+  provider data. Tests and docs use placeholders.
+- The texts are TypeScript data, not catalogue keys. They hold headings, lists and long
+  paragraphs, and a record keyed by the language list makes a missing language a type error.
+  Short component strings such as headings of the imprint stay in the catalogues.
+- The privacy page owns parts 1 to 3. Part 4, data collection on this website, differs per site,
+  so a site fills it from a section list and a slot. Optional blocks cover the common cases. Each
+  one carries `stores` and `retention`, and a test fails when either is empty in a language.
+  Site facts that differ, such as the log retention, are options with the defaults of the
+  reference setup. A block never names a third party by default.
+- A block is a claim about the site's code. A site lists only the blocks its code backs.
+- `legal.Check` is the build check, in the shape of `favicon.CheckPages`. It reads the marks
+  `data-govue-legal` and `lang` that the components write. Marks are used because a check that
+  looked for German words would pass on a copied page. The check proves the structure and the
+  language of what was rendered, and nothing about the legal content.
+- Not covered here: the legal review per site, terms and conditions, and a cookie consent
+  banner.
+- The texts are not legal advice. The licence note is in `NOTICE.md`.
+
 ### Favicons are a build requirement
 
 - Every site needs a favicon, and a site that forgets one ships the browser's default icon

@@ -45,6 +45,33 @@ export type { MessageTree } from './i18n/messages'
 export { LANGUAGE_STORAGE_KEY } from './i18n/languageStorage'
 export type { LanguageStorageOption } from './i18n/languageStorage'
 
+// The legal pages: the provider configuration, the shared texts and the optional blocks.
+export { assertProvider, createGovueLegal, useLegalProvider } from './legal/provider'
+export { contactForm, rateLimit, serverLogs, sessionCookie, umami } from './legal/blocks'
+export type {
+  ContactFormOptions,
+  RateLimitOptions,
+  ServerLogsOptions,
+  SessionCookieOptions,
+  UmamiOptions,
+} from './legal/blocks'
+export {
+  p as legalParagraph,
+  section as legalSection,
+  tx as legalText,
+  ul as legalList,
+} from './legal/helpers'
+export type {
+  DataSection,
+  LegalBlock,
+  LegalProvider,
+  LegalSection,
+  LocalizedText,
+} from './legal/types'
+export { default as GovueImprintPage } from './components/GovueImprintPage.vue'
+export { default as GovueLegalSections } from './components/GovueLegalSections.vue'
+export { default as GovuePrivacyPage } from './components/GovuePrivacyPage.vue'
+
 export { default as GovueBadge } from './components/GovueBadge.vue'
 export type { BadgeKind } from './components/GovueBadge.vue'
 export { default as GovueButton } from './components/GovueButton.vue'
