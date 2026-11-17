@@ -61,8 +61,10 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 - Device sessions live behind a new `DeviceStore` interface, separate from `Store`.
 - Every operation is atomic on one record. No operation writes a whole record back.
 - Lookup matches a hash against the current, pending and retired hashes and says which matched.
-- Rotate and confirm are conditional swaps on the presented hash. A second caller with the same
-  hash loses.
+  A store needs an index over up to six hashes per record.
+- Rotate and confirm are conditional swaps on the record state the caller read: current hash,
+  pending hash and nonce. Only a truly concurrent second caller loses. A later caller reads the
+  new state and follows the table below.
 - Touch updates only `LastSeen`. No update recreates a missing record.
 - Revoke by id takes the subject in the same call and removes nothing of another subject.
 - Delete by subject always wins over a concurrent touch, rotate or confirm.
@@ -71,7 +73,7 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 - A full memory store refuses to issue for everyone. That global lever is acceptable for a
   single replica memory store. Open sign up of #104 needs its own bound before it meets it.
 - A conformance suite, like `account/accounttest` of #104, runs these rules and their races
-  against `MemoryDeviceStore` and any product store.
+  against `MemoryDeviceStore` and any product store. It covers lookup through every slot.
 
 ### Issue, lifetime and rotation
 
@@ -85,34 +87,50 @@ reuses the reasoning that already rejected a signed cookie for the web session.
   `Manager.Start`. The `Subject` doc comment will say so.
 - An account that only signs in through OIDC cannot use the token endpoint. That is out of scope.
 - Idle lifetime 30 days, absolute 180 days, both exclusive bounds, checked server side.
-- The client rotates at `POST /api/v1/auth/token/rotate` on app start and at least every 24
-  hours. Each rotate attempt carries a random client nonce.
+- The client rotates at `POST /api/v1/auth/token/rotate` at least every 24 hours and on app
+  start. Each rotate attempt carries a random client nonce.
 - Rotation keeps `ID` and never moves `ExpiresAt`. A new token is pending until its first use.
 - States: Stable has no pending token, Pending has one. Retiring a hash adds it to `Retired`.
   Retired hashes survive every confirm and rotate.
+- Three configurable durations, all server side:
+  - Grace, default five minutes: how long a retired current hash still authenticates. It only
+    covers a token its holder already had.
+  - Minimum interval, default one hour: the least time between two confirmed rotations of one
+    device.
+  - Rotate timeout, default 30 seconds: how long after issue a same nonce retry may overwrite
+    the pending token.
 
 | State | Token presented | Request | Rotate |
 | --- | --- | --- | --- |
-| Stable | Current | Authenticated, touch | New pending with nonce, state Pending |
-| Pending | Current | Authenticated, pending kept | Same nonce: pending overwritten, not retired. Else: pending retired without grace, new pending |
-| Pending | Pending | Confirm: current retired with 60 seconds grace, pending becomes current, state Stable | Confirm as for a request, then new pending, state Pending |
+| Stable | Current | Authenticated, touch | Minimum interval passed: new pending with nonce, state Pending. Else: refused, no revocation |
+| Pending | Current | Authenticated, pending kept | Same nonce within the rotate timeout: pending overwritten, not retired. Else: pending retired without grace, new pending |
+| Pending | Pending | Confirm: current retired with grace, pending becomes current, state Stable | Confirm as for a request, no new pending before the minimum interval |
 | Any | Retired, inside grace | Authenticated | Refused, no revocation |
 | Any | Retired, after grace | Device session revoked | Device session revoked |
 | Any | Unknown, expired or malformed | 401 | 401 |
 
-- A lost rotate response costs nothing. The retry carries the same nonce and overwrites the
-  pending token.
-- The app never presents a replaced pending token, because it never stored it. One in use means
-  a second holder rotated, so it revokes the device.
+- A lost rotate response costs nothing. A retry with the same nonce within the rotate timeout
+  overwrites the pending token. A later one retires it.
+- The app never presents a retired pending token, because it falls back to its current token
+  first. One in use means a second holder rotated, so it revokes the device.
+- The minimum interval keeps app launches from draining `Retired`. In normal use a retired token
+  stays detectable for at least four intervals.
 
 ### Client contract
 
 - One context of the app owns rotation, and its rotate calls are single flight. Other contexts
   read the token at send time and never rotate.
-- The client stores a new token before it sends any further request.
+- The client stores a new token before it sends any further request. It keeps the current token
+  until the pending one has succeeded once.
+- On a 401 for a pending token that has not succeeded yet, the client falls back to its current
+  token and rotates again with a new nonce. A second 401 clears the stored token.
+- A rotate refused for the minimum interval is quiet. The app keeps its current token, and it
+  rotates on start only when the interval has passed.
 - The `Authorization` header is built at send time from the stored token, never kept in a queue.
-- Token issue and rotate calls have short timeouts and no transport level retry. A retry is a new
-  call with the same nonce.
+- Token issue and rotate calls have no transport level retry and a timeout below the rotate
+  timeout. A retry is a new call with the same nonce.
+- Every bearer request has a client timeout well below the grace, so a delayed request never
+  arrives after it.
 - How a Capacitor background runner or an app extension shares the token store is not verified.
 
 ### Revocation
@@ -192,9 +210,10 @@ reuses the reasoning that already rejected a signed cookie for the web session.
   secure storage protects it at rest only.
 - Bad: the token endpoint is a named exception to the origin check. It stays one route and must
   never set a cookie.
-- Bad: reuse detection is best effort against an informed thief who holds the current token.
-  Enough quick rotations push the app's token out of the four retired hashes. It then gets a
-  plain 401 without a theft signal.
+- Bad: reuse detection holds only while the stolen token is among the last four retired hashes.
+  After that it is a plain 401 without a theft signal.
+- Bad: against an informed thief who holds the current token, detection is best effort. Pending
+  replacements also fill `Retired`, and the minimum interval does not bound them.
 - Bad: web cookie session ids are still stored in the clear. Hashing them too is defence in depth
   and tracked in a separate issue.
 
@@ -243,12 +262,15 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 
 ### Theft cases
 
-- Stolen and used before the next rotation: valid until either holder rotates and confirms. The
-  other holder then presents a retired token after its grace window, and the device is revoked.
-- Stolen by a thief who rotates while the app holds a pending token: the app's pending token is
-  retired without grace, and its next use revokes the device.
-- Stolen by a thief who knows this protocol: detection holds while the app's token is among the
-  four retired hashes. Beyond that the app gets a plain 401, see Consequences.
+- Stolen and used: valid until either holder rotates and confirms. The other holder's token is
+  then retired, and its use after the grace revokes the device. This holds while the stolen
+  token is among the last four retired hashes.
+- Stolen and kept passive: the same, and the minimum interval keeps it detectable for at least
+  four intervals in normal use.
+- A thief who replaces the app's pending token: the app falls back to its current token and
+  rotates again, which retires the thief's pending token. Its next use revokes the device.
+- A thief who knows the nonce can overwrite silently only within the rotate timeout. The app's
+  fallback then retires that token as above.
 - Stolen and used after revocation: the hash is gone, the request is 401, nothing falls back to
   a cookie.
 - Stolen from a store dump: only hashes, which are not usable as tokens.
