@@ -502,7 +502,13 @@ The design of the library and the reasoning behind it.
   safe in a header escaped.
 - The handler is mounted for `GET /{$}` and answers 404 for any other path. A request for
   `/en/` never reaches it, so a crawler and a visitor with a stored choice keep the language of
-  the URL they asked for. `HEAD` follows the `GET` pattern. Other methods get 405.
+  the URL they asked for. `HEAD` follows the `GET` pattern. Other methods get 405 when the handler is
+  mounted as `GET /{$}`, because no method-less pattern matches `/`. The handler answers 405
+  itself too.
+- The cookie rules differ in two corners from the Vue reader. The Go side accepts a quoted value
+  and takes the first value that equals a configured code among several cookies of the same name.
+  The Vue `readCookie` takes the first cookie of that name. Both agree on every value the Vue
+  package writes.
 - The status is 302, not 301 or 308: the target depends on the visitor, and a permanent
   redirect would be cached by the browser. The answer carries `Cache-Control: no-store` and
   `Vary: Accept-Language, Cookie`, added to the header so a `Vary: Origin` from the CORS

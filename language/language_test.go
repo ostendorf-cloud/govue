@@ -374,6 +374,7 @@ func TestRedirect_customConfig(t *testing.T) {
 		{"default cookie name ignored", "govue-language=de", "", "/fr/"},
 		{"header", "", "en", "/en/"},
 		{"wildcard goes to the default", "", "*", "/fr/"},
+		{"wildcard with the default named zero", "", "fr;q=0, *", "/en/"},
 		{"nothing", "", "", "/fr/"},
 	}
 	for _, tt := range tests {
@@ -391,6 +392,27 @@ func TestRedirect_customConfig(t *testing.T) {
 				t.Fatalf("Location = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRedirect_defaultNotListedFirst(t *testing.T) {
+	t.Parallel()
+	h := mustRedirect(t, language.Config{Languages: []string{"en", "de"}, Default: "de"})
+	for _, accept := range []string{"*", "", "fr"} {
+		rec := serve(h, http.MethodGet, "/", map[string]string{"Accept-Language": accept})
+		if got := rec.Header().Get("Location"); got != "/de/" {
+			t.Fatalf("Accept-Language %q: Location = %q, want /de/", accept, got)
+		}
+	}
+}
+
+func TestRedirect_languageCount(t *testing.T) {
+	t.Parallel()
+	codes := manyCodes(32)
+	h := mustRedirect(t, language.Config{Languages: codes, Default: codes[0]})
+	rec := serve(h, http.MethodGet, "/", map[string]string{"Accept-Language": codes[31]})
+	if got := rec.Header().Get("Location"); got != "/"+codes[31]+"/" {
+		t.Fatalf("Location = %q", got)
 	}
 }
 

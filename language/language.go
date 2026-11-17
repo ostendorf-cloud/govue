@@ -24,7 +24,8 @@
 //
 // A request for a prefixed path such as /en/ never reaches the handler, and
 // the handler answers 404 for any path but /, so a crawler keeps the language
-// it asked for. The answer depends on the visitor, so it is a 302 with
+// it asked for. Mounted as shown, the pattern also gives 405 with an Allow
+// header for other methods, because no method-less pattern matches /. The answer depends on the visitor, so it is a 302 with
 // Cache-Control: no-store and Vary: Accept-Language, Cookie.
 //
 // The package imports no other govue package.

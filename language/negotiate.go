@@ -34,6 +34,9 @@ type score struct {
 // Among those, the earlier one in languages wins, so a caller that wants the
 // wildcard to mean its default lists the default first.
 //
+// The entries of languages must be lowercase primary subtags such as de. A
+// code like EN or en-US never matches.
+//
 // The result is always an element of languages, never text from the header.
 func Negotiate(header string, languages []string) (string, bool) {
 	if header == "" || len(header) > maxHeaderLen || len(languages) == 0 {
