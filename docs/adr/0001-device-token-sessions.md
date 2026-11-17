@@ -49,8 +49,10 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 - The token travels only in the `Authorization` header. Never in a cookie, a query parameter, a
   form field or a URL.
 - The store holds plain `SHA-256(token)`. 256 random bits need no salt, no slow KDF and no HMAC.
-- Record: `DeviceSession{ID, Subject, Name, CreatedAt, LastSeen, ExpiresAt, TokenHash,
-  PendingHash, ReplacedHash, PreviousHash, PreviousValidUntil}`.
+- Record: `DeviceSession{ID, Subject, Name, CreatedAt, LastSeen, ExpiresAt, CurrentHash,
+  PendingHash, PendingNonce, Retired}`.
+- `Retired` holds at most the last four retired hashes, each with its grace end. The oldest is
+  dropped first.
 - `ID` is a random handle for listing and revoking, never a credential. `Name` is a bounded
   display label, never trusted.
 
@@ -58,15 +60,16 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 
 - Device sessions live behind a new `DeviceStore` interface, separate from `Store`.
 - Every operation is atomic on one record. No operation writes a whole record back.
-- Lookup matches a hash against the current, pending, replaced or previous slot and says which
-  matched.
+- Lookup matches a hash against the current, pending and retired hashes and says which matched.
 - Rotate and confirm are conditional swaps on the presented hash. A second caller with the same
   hash loses.
 - Touch updates only `LastSeen`. No update recreates a missing record.
 - Revoke by id takes the subject in the same call and removes nothing of another subject.
 - Delete by subject always wins over a concurrent touch, rotate or confirm.
 - Each subject has a device cap. Issuing past it evicts that subject's least recently seen
-  device, never another subject's. A full memory store refuses to issue.
+  device, never another subject's.
+- A full memory store refuses to issue for everyone. That global lever is acceptable for a
+  single replica memory store. Open sign up of #104 needs its own bound before it meets it.
 - A conformance suite, like `account/accounttest` of #104, runs these rules and their races
   against `MemoryDeviceStore` and any product store.
 
@@ -83,25 +86,34 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 - An account that only signs in through OIDC cannot use the token endpoint. That is out of scope.
 - Idle lifetime 30 days, absolute 180 days, both exclusive bounds, checked server side.
 - The client rotates at `POST /api/v1/auth/token/rotate` on app start and at least every 24
-  hours. Its rotate calls are single flight.
-- Rotation keeps `ID` and never moves `ExpiresAt`. A new token is confirmed on first use:
+  hours. Each rotate attempt carries a random client nonce.
+- Rotation keeps `ID` and never moves `ExpiresAt`. A new token is pending until its first use.
+- States: Stable has no pending token, Pending has one. Retiring a hash adds it to `Retired`.
+  Retired hashes survive every confirm and rotate.
 
-| State | Event | Result |
-| --- | --- | --- |
-| Stable | Request with current | Authenticated, touch |
-| Stable | Rotate with current | New pending token returned, state Pending |
-| Pending | Request with current | Authenticated, pending kept |
-| Pending | Rotate with current | Old pending becomes replaced, new pending returned, state Pending |
-| Any | Request or rotate with replaced | Device session revoked |
-| Pending | Request with pending | Pending becomes current, current becomes previous for 60 seconds, state Stable |
-| Any | Request with previous inside 60 seconds | Authenticated |
-| Any | Rotate with previous inside 60 seconds | Refused, no revocation |
-| Any | Previous after 60 seconds | Device session revoked |
-| Any | Unknown, expired or malformed token | 401 |
+| State | Token presented | Request | Rotate |
+| --- | --- | --- | --- |
+| Stable | Current | Authenticated, touch | New pending with nonce, state Pending |
+| Pending | Current | Authenticated, pending kept | Same nonce: pending overwritten, not retired. Else: pending retired without grace, new pending |
+| Pending | Pending | Confirm: current retired with 60 seconds grace, pending becomes current, state Stable | Confirm as for a request, then new pending, state Pending |
+| Any | Retired, inside grace | Authenticated | Refused, no revocation |
+| Any | Retired, after grace | Device session revoked | Device session revoked |
+| Any | Unknown, expired or malformed | 401 | 401 |
 
-- A lost rotate response therefore costs nothing. The app retries with the token it still holds.
-- The app never presents a replaced token, because it never stored it. A replaced token in use
-  means a second holder rotated, so it counts as reuse.
+- A lost rotate response costs nothing. The retry carries the same nonce and overwrites the
+  pending token.
+- The app never presents a replaced pending token, because it never stored it. One in use means
+  a second holder rotated, so it revokes the device.
+
+### Client contract
+
+- One context of the app owns rotation, and its rotate calls are single flight. Other contexts
+  read the token at send time and never rotate.
+- The client stores a new token before it sends any further request.
+- The `Authorization` header is built at send time from the stored token, never kept in a queue.
+- Token issue and rotate calls have short timeouts and no transport level retry. A retry is a new
+  call with the same nonce.
+- How a Capacitor background runner or an app extension shares the token store is not verified.
 
 ### Revocation
 
@@ -114,18 +126,20 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 
 ### Bearer requests and the CSRF boundary
 
-- One predicate in `internal/` decides what a bearer request is. `session` and `csrf` both
-  import it, so `csrf` still never imports `session`.
-- A bearer request has exactly one `Authorization` header whose auth scheme is `Bearer`, compared
-  case insensitively (RFC 9110 section 11.1).
-- The predicate counts every value of the header. More than one value is answered with 400.
-- It looks at the scheme only. An empty or malformed token is a bearer request that fails.
+- One predicate in `internal/` classifies a request. `session` and `csrf` both import it, so
+  `csrf` still never imports `session`.
+- It has three answers: none, bearer and malformed. It counts every value of `Authorization`.
+- Bearer: exactly one value whose auth scheme is `Bearer`, compared case insensitively (RFC 9110
+  section 11.1). An empty or malformed token is still bearer and fails.
+- Malformed: more than one value. It is handled exactly like a failed bearer request.
+- None: no `Authorization` header, or one with another scheme.
 - It never reads a query parameter or a form field. There is no `access_token` (RFC 6750).
-- A bearer request skips both halves of the CSRF check. Every other request keeps both.
-- A bearer request authenticates by the token only. There is no fallback to the cookie.
-- On a bearer request `session` does not read the cookie at all: not in `Read`, `End`, `Rotate`
-  or the `Codec` login cookie. The cookie is not cleared.
-- Every token failure, invalid, expired, revoked or revoked for reuse, is the same 401.
+- Bearer and malformed skip both halves of the CSRF check. None keeps both.
+- Bearer and malformed authenticate by the token only, never by the cookie. On them `session`
+  does not read the cookie at all: not in `Read`, `End`, `Rotate` or the `Codec` login cookie.
+  The cookie is not cleared.
+- Every token failure, invalid, expired, revoked, revoked for reuse or malformed, is the same
+  401. A 400 for two headers would need a second writer and tell a caller which check failed.
 - A reuse event is logged with device id and subject. No log line and no error text carries a
   token or a hash.
 - A cross site page cannot attach an `Authorization` header without a preflight, and a browser
@@ -141,8 +155,10 @@ reuses the reasoning that already rejected a signed cookie for the web session.
   sends no cookie.
 - The exemption is safe because the endpoint carries no ambient credential and changes no browser
   state. Its only effect is a response that a caller must read cross origin through CORS.
-- `csrf.Protector` gets a dedicated method that names exactly one method and path. It refuses a
-  pattern without a method, with a trailing slash or with a wildcard at setup.
+- `csrf.Protector` gets a dedicated method that names exactly one method and path. It returns an
+  error at setup for a missing method, a host part, a trailing slash, `{$}` or a wildcard.
+- The underlying `net/http` bypass panics on an invalid or conflicting pattern. The method
+  validates first and turns a conflict into an error, so refusal stays an error at setup.
 - Tests in `csrf` pin the refusals, and that a neighbouring path and a path with a trailing slash
   still get the origin check. The `example/` contract test covers the token route.
 
@@ -176,8 +192,9 @@ reuses the reasoning that already rejected a signed cookie for the web session.
   secure storage protects it at rest only.
 - Bad: the token endpoint is a named exception to the origin check. It stays one route and must
   never set a cookie.
-- Bad: only one previous hash is kept, so a token two rotations old is a plain 401 without a
-  theft signal.
+- Bad: reuse detection is best effort against an informed thief who holds the current token.
+  Enough quick rotations push the app's token out of the four retired hashes. It then gets a
+  plain 401 without a theft signal.
 - Bad: web cookie session ids are still stored in the clear. Hashing them too is defence in depth
   and tracked in a separate issue.
 
@@ -226,8 +243,12 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 
 ### Theft cases
 
-- Stolen and used before the next rotation: valid until the app rotates and confirms. Then the
-  stale holder presents a previous token after the grace window, and the device is revoked.
+- Stolen and used before the next rotation: valid until either holder rotates and confirms. The
+  other holder then presents a retired token after its grace window, and the device is revoked.
+- Stolen by a thief who rotates while the app holds a pending token: the app's pending token is
+  retired without grace, and its next use revokes the device.
+- Stolen by a thief who knows this protocol: detection holds while the app's token is among the
+  four retired hashes. Beyond that the app gets a plain 401, see Consequences.
 - Stolen and used after revocation: the hash is gone, the request is 401, nothing falls back to
   a cookie.
 - Stolen from a store dump: only hashes, which are not usable as tokens.
