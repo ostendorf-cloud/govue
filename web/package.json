@@ -9,10 +9,18 @@
     "*.css"
   ],
   "files": [
-    "src"
+    "src",
+    "scripts/prerender.mjs"
   ],
+  "bin": {
+    "govue-prerender": "./scripts/prerender.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
   "exports": {
     ".": "./src/index.ts",
+    "./server": "./src/entry-server.ts",
     "./styles.css": "./src/styles/base.css",
     "./themes/*.css": "./src/styles/themes/*.css"
   },

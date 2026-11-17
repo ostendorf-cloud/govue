@@ -401,7 +401,67 @@ The design of the library and the reasoning behind it.
   signed in areas that need no path prefix. A test compares the key sets and the named
   placeholders of all catalogues, so a missing key fails the build.
 - Path prefixes, `hreflang`, the redirect at `/`, the sitemap and prerendering are routing
-  and are not part of this layer.
+  and are not part of this layer. Prerendering is the render entry described below.
+
+### Build time pre-rendering of one page
+
+- A landing page needs real markup for crawlers and a fast first paint. Per-request SSR would
+  need a live Node process, hydration handling and per-route data fetching, which is the
+  framework shape this repository avoids. So the page is rendered once, at build time, into a
+  static HTML file the Go server serves like any other static asset. Nothing changes in the
+  backend and no Node process runs in production.
+- `@ostendorf-cloud/govue/server` (`web/src/entry-server.ts`) is the render entry. The package
+  only reaches `vue/server-renderer` through that separate export, so a browser bundle never
+  pulls it in. The contract is deliberately small:
+  - `render(root, { props, setup })` returns the HTML of one root component as a string. `setup`
+    receives the app before it renders, which is where a plugin such as `createGovueI18n` is
+    installed.
+  - `injectIntoTemplate(template, html, placeholder)` puts the markup into a template, and
+    throws when the placeholder (default `<!--app-html-->`) is missing or appears twice.
+  - It takes no route, no language and no template. Language routes, `<html lang>`, canonical and
+    `hreflang` are a caller concern: the caller renders once per language with its own `setup`
+    and its own template.
+  - It runs in Node with no DOM, keeps no state of its own and swallows no error: a failing
+    component rejects the promise and so fails the build. The composables it renders may keep
+    state, see the limits below.
+  - It does not render teleported content, such as an open dialog. A prerendered page shows the
+    closed state.
+- `web/scripts/prerender.mjs`, installed as the `govue-prerender` bin, is the build script: it
+  loads the consumer's SSR bundle (built with `vite build --ssr`, since plain Node cannot load a
+  `.vue` file), calls its `render`, injects the markup into the template and writes the file.
+- DOM audit of the exported components and composables: no component reads `window`, `document`
+  or `navigator` itself. `useTheme` guards `document`, `window` and `matchMedia`, and skips
+  storage altogether without a window, because newer Node versions define a global
+  `localStorage` that warns on access. The language layer guards `document` and `navigator`
+  and does no detection without a window, so the language is the one passed in, else German.
+  Reka UI primitives render without a DOM. A test renders the layout components, both switches
+  and a select in a Node environment, not jsdom.
+- Two limits stay. `useTheme` and `useToasts` keep their state at module level, because one page
+  has one theme and one toast host. Rendering several pages with different themes in one
+  process shares the theme. A `notify` call during render would leak a toast into the next
+  render, and its pending timer would keep the build process alive, so a prerendered page never
+  raises a toast. A build renders one page per process run, so this is documented rather than
+  changed.
+- The client mounts with `createApp`, which replaces the prerendered markup, never with
+  `createSSRApp`. The markup is rendered with no visitor: system mode and the language passed to
+  `setup`. The client then reads the stored choice and the browser language. With `createSSRApp`
+  Vue would hydrate instead of replace, and a visitor with a stored dark mode or a German
+  browser gets mismatches, which in production Vue does not patch for attributes: a wrong
+  `aria-checked` would stay on screen. `createApp` gives no warning in those cases, and a test
+  mounts over the markup with a stored choice to keep it that way. The prerendered markup is
+  for the first paint and for crawlers, and the client takes over from it.
+- The script ships as plain JavaScript, `govue-prerender`, because Node does not strip
+  TypeScript types under `node_modules`. It holds its own small copy of `injectIntoTemplate`,
+  and a test runs the same cases through both copies. The package requires Node 24 or later,
+  the lowest the repository's `@tsconfig/node24` targets. Only Node 26 is exercised.
+- With `--out` equal to `--template`, the marker is consumed, so a second run fails with no
+  placeholder. Run it after a fresh `vite build`.
+- What this does not solve: data that changes per request, personalised content, routing,
+  multi-page discovery, incremental rebuilds and hydration beyond what a normal client mount does
+  once the static HTML has loaded. A site that needs those is better served by a real
+  meta-framework.
+- The render entry is the base of the language routes, which render one page per language
+  through the same entry.
 
 ### Favicons are a build requirement
 

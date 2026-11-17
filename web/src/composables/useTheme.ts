@@ -129,6 +129,11 @@ function watchSystem(): void {
 /** restore reads the stored choice. Storage can throw or be empty, and a page
  *  with no stored choice is the normal case, so neither is an error. */
 function restore(): void {
+  if (typeof window === 'undefined') {
+    // A prerender has no visitor and no stored choice. Newer Node versions
+    // define a global localStorage that warns on access, so it is not read.
+    return
+  }
   try {
     const raw = globalThis.localStorage?.getItem(storageKey)
     if (!raw) {
@@ -147,6 +152,9 @@ function restore(): void {
 }
 
 function persist(): void {
+  if (typeof window === 'undefined') {
+    return
+  }
   try {
     globalThis.localStorage?.setItem(
       storageKey,

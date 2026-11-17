@@ -166,6 +166,48 @@ root element, otherwise `sample`, and leaves `data-mode` off so the system decid
 the attribute names are exported on both sides, `themeboot.StorageKey` and `THEME_STORAGE_KEY`,
 and a test runs the shipped script against the composable.
 
+A landing page that needs real markup for crawlers and a fast first paint can be pre-rendered once
+at build time, with no Node process at runtime. The Go server serves the result like any other
+static file. Write a small SSR entry that renders the page through `@ostendorf-cloud/govue/server`:
+
+```ts
+// src/entry-prerender.ts
+import { createGovueI18n } from '@ostendorf-cloud/govue'
+import { render as renderPage } from '@ostendorf-cloud/govue/server'
+
+import Landing from './Landing.vue'
+
+export const render = () =>
+  renderPage(Landing, {
+    setup: (app) => {
+      app.use(createGovueI18n({ locale: 'en' }))
+    },
+  })
+```
+
+Put `<!--app-html-->` inside the mount element of `index.html`, then build the entry and run the
+script. It writes the markup into the template and fails when the placeholder is missing:
+
+```sh
+pnpm exec vite build
+pnpm exec vite build --ssr src/entry-prerender.ts --outDir dist-ssr
+pnpm exec govue-prerender \
+  --entry dist-ssr/entry-prerender.js --template dist/index.html --out dist/index.html
+```
+
+The script is plain JavaScript and needs Node 24 or later. With `--out` equal to `--template`, the
+marker is consumed, so a second run fails with no placeholder: run it after a fresh `vite build`.
+
+The client starts over the markup with `createApp`, which replaces it, and never with
+`createSSRApp`. The markup is rendered with no visitor, so it knows neither the stored theme nor
+the browser language. Hydrating it would keep a wrong `aria-checked` or language for a visitor with
+a stored dark mode or a German browser, because Vue does not patch attribute mismatches in
+production. The prerendered markup serves the first paint and crawlers.
+
+This renders one page, not a site: no routing, no per-request data and no hydration. A dialog or
+other teleported content is not part of the markup. `useTheme` and `useToasts` keep module level
+state, so a prerendered page raises no toast. See `docs/concepts/govue.md` for the boundary.
+
 ### Favicon
 
 Every site has a favicon, and a site without one fails instead of shipping the browser's default
