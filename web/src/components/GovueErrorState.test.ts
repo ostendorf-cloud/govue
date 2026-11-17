@@ -42,7 +42,7 @@ describe('GovueErrorState', () => {
     ).toBeVisible()
   })
 
-  it.each([1, 7, 0, 2.5, '3', null])(
+  it.each([1, 7, 0, -2, Number.NaN, 2.5, '3', null])(
     'falls back to a second level heading for %j, which is not a heading level',
     (level) => {
       render(GovueErrorState, { props: { ...props, headingLevel: level as never } })

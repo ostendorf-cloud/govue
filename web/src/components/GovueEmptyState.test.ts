@@ -33,7 +33,7 @@ describe('GovueEmptyState', () => {
     expect(screen.getByRole('heading', { level, name: 'No deployments yet' })).toBeVisible()
   })
 
-  it.each([1, 7, 0, 2.5, '3', null])(
+  it.each([1, 7, 0, -2, Number.NaN, 2.5, '3', null])(
     'falls back to a second level heading for %j, which is not a heading level',
     (level) => {
       render(GovueEmptyState, { props: { ...props, headingLevel: level as never } })

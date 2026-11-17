@@ -8,7 +8,11 @@ import { type HeadingLevel, headingTag as tagFor } from './headingLevel'
 
 export type CardAs = 'div' | 'section' | 'article'
 
-/** The level of the card title. Level 1 is the page's own heading. */
+/**
+ * The level of the card title. Level 1 is the page's own heading.
+ *
+ * @deprecated Use `HeadingLevel`, which the card, the empty state and the error state share.
+ */
 export type CardHeadingLevel = HeadingLevel
 
 const props = withDefaults(

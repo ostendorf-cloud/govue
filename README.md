@@ -275,7 +275,7 @@ and the styling is the same for every level. An invalid value falls back to leve
 the state sits in a card or section headed by an `h2`.
 
 ```vue
-<GovueCard title="Sessions" :heading-level="2">
+<GovueCard title="Sessions">
   <GovueEmptyState :heading-level="3" />
 </GovueCard>
 ```
