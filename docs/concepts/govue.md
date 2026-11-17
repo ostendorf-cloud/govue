@@ -400,8 +400,35 @@ The design of the library and the reasoning behind it.
 - The choice is kept in `localStorage` by default. A cookie or an account callback serves
   signed in areas that need no path prefix. A test compares the key sets and the named
   placeholders of all catalogues, so a missing key fails the build.
-- Path prefixes, `hreflang`, the redirect at `/`, the sitemap and prerendering are routing
-  and are not part of this layer. Prerendering is the render entry described below.
+- The redirect at `/` and prerendering are routing and are not part of this layer.
+  Prerendering is the render entry described below. The route helper is described in the next
+  section.
+
+### Language routes
+
+- Public pages live under `/de/` and `/en/`. `web/src/i18n/routes.ts` is pure TypeScript with no
+  Vue import and reads the languages from `catalogues.ts`, so the build, the sitemap and the
+  client navigation share one implementation.
+- A site writes its route table as plain data, `[{ path: '/impressum', public: true }]`.
+  `public` defaults to false, so a forgotten flag hides a page from the sitemap instead of
+  exposing an app route. App routes keep no prefix and are not in any output of the helper.
+- `validateRoutes` rejects a path without a leading `/`, with `//`, a dot segment, a query, a
+  fragment, a space, a backslash, a trailing slash (except `/`), a language prefix or a
+  duplicate.
+- `localizeRoutes(routes)` returns one `{ source, locale, path }` per language for every public
+  route. The root becomes `/en/`, every other path `/en/impressum`.
+- `localizedPath(path, code)` swaps or adds the prefix, so a language switch passes
+  `location.pathname` and navigates to the result. `localeFromPath(path)` reads the language
+  from the first segment, exact match only, so a site can pass it as the `locale` of
+  `createGovueI18n` on a public page.
+- `hreflangLinks(variant, origin)` returns the head markup of one variant: a self referential
+  absolute canonical, one alternate per language and `x-default`, which points at the German
+  variant of every page. `sitemapXml(routes, origin)` lists every variant with the same
+  alternates, no `lastmod`, and fails above 50,000 URLs.
+- The origin is `https://host[:port]` with no path, query, fragment or userinfo. `http` is
+  accepted for `localhost` only. Path segments are percent encoded, then escaped for markup.
+- An unprefixed public path such as `/impressum` is not redirected and answers 404. The
+  cookie storage of the language layer stays an option and is not the default.
 
 ### Build time pre-rendering of one page
 

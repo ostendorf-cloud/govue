@@ -42,6 +42,16 @@ export type {
 export { catalogues, DEFAULT_LOCALE, isLocaleCode, localeCodes } from './i18n/catalogues'
 export type { LocaleCode } from './i18n/catalogues'
 export type { MessageTree } from './i18n/messages'
+export {
+  hreflangLinks,
+  localeFromPath,
+  localizedPath,
+  localizeRoutes,
+  sitemapXml,
+  validateOrigin,
+  validateRoutes,
+} from './i18n/routes'
+export type { LocalizedRoute, RouteDef } from './i18n/routes'
 export { LANGUAGE_STORAGE_KEY } from './i18n/languageStorage'
 export type { LanguageStorageOption } from './i18n/languageStorage'
 
