@@ -35,22 +35,35 @@ export interface LocalizedRoute {
 /** The sitemap protocol allows 50,000 URLs per file. */
 export const SITEMAP_MAX_URLS = 50_000
 
-function hasForbiddenCharacter(path: string): boolean {
-  for (let i = 0; i < path.length; i++) {
-    const code = path.charCodeAt(i)
-    // Control characters, space, DEL and the backslash.
-    if (code <= 0x20 || code === 0x7f || code === 0x5c) return true
-  }
-  return false
-}
+/** The sitemap protocol allows 50 MiB uncompressed per file. */
+export const SITEMAP_MAX_BYTES = 50 * 1024 * 1024
+
+/** The sitemap protocol allows a URL of at most 2048 characters. */
+export const SITEMAP_MAX_LOC_LENGTH = 2048
+
+/**
+ * A path is decoded text. These never belong in it: Unicode white space
+ * (\p{White_Space}: space, no break space, U+2028, U+2029), control characters
+ * (\p{Cc}, which include DEL), format characters (\p{Cf}: zero width space,
+ * joiners, byte order mark, bidi marks), a lone surrogate (\p{Cs}) and the
+ * backslash.
+ */
+const FORBIDDEN_CHARACTER = /[\p{White_Space}\p{Cc}\p{Cf}\p{Cs}\\]/u
 
 /** Checks the shape of one path and throws a message naming it. */
 function checkPath(path: unknown): asserts path is string {
   if (typeof path !== 'string' || !path.startsWith('/')) {
     throw new Error(`govue route: path ${JSON.stringify(path)} must start with "/"`)
   }
-  if (hasForbiddenCharacter(path)) {
-    throw new Error(`govue route: path ${JSON.stringify(path)} has a space, control or backslash`)
+  if (FORBIDDEN_CHARACTER.test(path)) {
+    throw new Error(
+      `govue route: path ${JSON.stringify(path)} has white space, a control or format character, a lone surrogate or a backslash`,
+    )
+  }
+  if (path.includes('%')) {
+    throw new Error(
+      `govue route: path ${JSON.stringify(path)} must be decoded text and must not contain "%"`,
+    )
   }
   if (path.includes('?') || path.includes('#')) {
     throw new Error(`govue route: path "${path}" must not carry a query or a fragment`)
@@ -68,11 +81,22 @@ function checkPath(path: unknown): asserts path is string {
   }
 }
 
-/** The language of the first segment, when it is exactly a configured code. */
+/**
+ * The language of the first segment, when it is exactly a configured code.
+ * The path is decoded text, not the percent encoded `location.pathname`.
+ */
 export function localeFromPath(path: string): LocaleCode | undefined {
   if (!path.startsWith('/')) return undefined
   const first = path.split('/')[1]
   return isLocaleCode(first) ? first : undefined
+}
+
+/** A route path as written in the table: well formed and without a language prefix. */
+function checkRoutePath(path: unknown): asserts path is string {
+  checkPath(path)
+  if (localeFromPath(path) !== undefined) {
+    throw new Error(`govue route: path "${path}" already starts with a language prefix`)
+  }
 }
 
 /**
@@ -83,10 +107,7 @@ export function localeFromPath(path: string): LocaleCode | undefined {
 export function validateRoutes(routes: readonly RouteDef[]): void {
   const seen = new Set<string>()
   for (const route of routes) {
-    checkPath(route.path)
-    if (localeFromPath(route.path) !== undefined) {
-      throw new Error(`govue route: path "${route.path}" already starts with a language prefix`)
-    }
+    checkRoutePath(route.path)
     if (route.public !== undefined && typeof route.public !== 'boolean') {
       throw new Error(`govue route: public of "${route.path}" must be a boolean`)
     }
@@ -100,6 +121,7 @@ export function validateRoutes(routes: readonly RouteDef[]): void {
 /**
  * validateOrigin returns the origin when it is `https://host[:port]` with no
  * path, query, fragment or userinfo. `http` is allowed for localhost only.
+ * Internal: every generator validates its origin itself.
  */
 export function validateOrigin(origin: string): string {
   let url: URL
@@ -112,29 +134,43 @@ export function validateOrigin(origin: string): string {
   if (url.protocol !== 'https:' && !httpLocal) {
     throw new Error(`govue origin: "${origin}" must use https, or http for localhost`)
   }
-  // url.origin drops a path, a query, a fragment and userinfo and lower cases
-  // the host, so an exact match means the input had none of them.
+  // url.origin drops a path, a query, a fragment and userinfo, lower cases
+  // scheme and host, converts a host to punycode and drops a default port, so
+  // an exact match means the input had none of that.
   if (url.origin !== origin) {
-    throw new Error(`govue origin: "${origin}" must be scheme, lower case host and optional port`)
+    throw new Error(
+      `govue origin: "${origin}" must be scheme://host[:port] with a lower case scheme and host, a punycode host, no default port and no userinfo, path, query or fragment`,
+    )
+  }
+  if (url.port === '0') {
+    throw new Error(`govue origin: "${origin}" must not use port 0`)
+  }
+  if (url.hostname.endsWith('.')) {
+    throw new Error(`govue origin: "${origin}" must not have a trailing dot in the host`)
   }
   return origin
 }
 
 /**
  * localizedPath puts the language prefix in front of a path. A path that
- * already has a prefix gets it swapped, so the language switch can pass
- * `location.pathname`. The root becomes `/en/`.
+ * already has a prefix gets it swapped, so the language switch can pass the
+ * decoded `location.pathname`. A single trailing slash on the input is
+ * dropped, as the served `/de/impressum/` is the canonical `/de/impressum`.
+ * The root becomes `/en/`. The path is decoded text: a `%` throws.
  */
 export function localizedPath(path: string, code: LocaleCode): string {
   if (!isLocaleCode(code)) {
     throw new Error(`govue route: unknown language "${String(code)}"`)
   }
-  let rest = path
-  const current = localeFromPath(path)
+  // `//` stays as it is and fails the path check below.
+  let text = path
+  if (text.length > 1 && text.endsWith('/') && !text.endsWith('//')) text = text.slice(0, -1)
+  let rest = text
+  const current = localeFromPath(text)
   if (current !== undefined) {
-    rest = path.slice(current.length + 1) || '/'
-    // `/en/` is the prefix root, not a path with a trailing slash.
-    if (rest === '/' || rest === '') return `/${code}/`
+    rest = text.slice(current.length + 1)
+    // `/en` is the prefix root.
+    if (rest === '') return `/${code}/`
   }
   checkPath(rest)
   return rest === '/' ? `/${code}/` : `/${code}${rest}`
@@ -156,6 +192,8 @@ export function localizeRoutes(routes: readonly RouteDef[]): LocalizedRoute[] {
   return out
 }
 
+// encodeURIComponent leaves only the apostrophe of these five characters
+// unescaped. The other four are defence in depth should the encoding change.
 function escapeMarkup(text: string): string {
   return text
     .replaceAll('&', '&amp;')
@@ -165,10 +203,14 @@ function escapeMarkup(text: string): string {
     .replaceAll("'", '&#39;')
 }
 
+/** The absolute, percent encoded URL of a prefixed path, not yet markup safe. */
+function plainUrl(origin: string, path: string): string {
+  return origin + path.split('/').map(encodeURIComponent).join('/')
+}
+
 /** The absolute, percent encoded, markup safe URL of a prefixed path. */
 function absoluteUrl(origin: string, path: string): string {
-  const encoded = path.split('/').map(encodeURIComponent).join('/')
-  return escapeMarkup(origin + encoded)
+  return escapeMarkup(plainUrl(origin, path))
 }
 
 /** The alternates of one source path: every language, then x-default. */
@@ -191,6 +233,7 @@ function alternates(source: string, origin: string): { hreflang: string; href: s
  */
 export function hreflangLinks(variant: LocalizedRoute, origin: string): string {
   validateOrigin(origin)
+  checkRoutePath(variant.source)
   if (localizedPath(variant.source, variant.locale) !== variant.path) {
     throw new Error(`govue route: variant "${variant.path}" does not match its source and language`)
   }
@@ -201,21 +244,51 @@ export function hreflangLinks(variant: LocalizedRoute, origin: string): string {
   return lines.join('\n')
 }
 
+export interface SitemapLimits {
+  maxUrls: number
+  maxBytes: number
+  maxLocLength: number
+}
+
+const SITEMAP_LIMITS: SitemapLimits = {
+  maxUrls: SITEMAP_MAX_URLS,
+  maxBytes: SITEMAP_MAX_BYTES,
+  maxLocLength: SITEMAP_MAX_LOC_LENGTH,
+}
+
 /**
  * sitemapXml returns the sitemap of the public routes: one url per language
  * variant, each with the alternates of all languages and x-default. There is
- * no lastmod. It throws without a public route and above 50,000 urls.
+ * no lastmod. It throws without a public route, above 50,000 urls, above 50
+ * MiB of UTF-8 and for a url longer than 2048 characters.
  */
 export function sitemapXml(routes: readonly RouteDef[], origin: string): string {
+  return buildSitemap(routes, origin, SITEMAP_LIMITS)
+}
+
+/** sitemapXml with the limits as a parameter, so a test can reach a boundary. */
+export function buildSitemap(
+  routes: readonly RouteDef[],
+  origin: string,
+  limits: SitemapLimits,
+): string {
   validateOrigin(origin)
   const variants = localizeRoutes(routes)
   if (variants.length === 0) {
     throw new Error('govue sitemap: the route table has no public route')
   }
-  if (variants.length > SITEMAP_MAX_URLS) {
+  if (variants.length > limits.maxUrls) {
     throw new Error(
-      `govue sitemap: ${variants.length} urls exceed the limit of ${SITEMAP_MAX_URLS} per file`,
+      `govue sitemap: ${variants.length} urls exceed the limit of ${limits.maxUrls} per file`,
     )
+  }
+  for (const variant of variants) {
+    const length = plainUrl(origin, variant.path).length
+    if (length > limits.maxLocLength) {
+      throw new Error(
+        `govue sitemap: the url of "${variant.path}" has ${length} characters, the limit is ${limits.maxLocLength}`,
+      )
+    }
   }
   const lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -229,5 +302,12 @@ export function sitemapXml(routes: readonly RouteDef[], origin: string): string 
     lines.push('  </url>')
   }
   lines.push('</urlset>', '')
-  return lines.join('\n')
+  const xml = lines.join('\n')
+  const bytes = new TextEncoder().encode(xml).length
+  if (bytes > limits.maxBytes) {
+    throw new Error(
+      `govue sitemap: ${bytes} bytes exceed the limit of ${limits.maxBytes} bytes per file`,
+    )
+  }
+  return xml
 }

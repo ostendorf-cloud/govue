@@ -412,21 +412,41 @@ The design of the library and the reasoning behind it.
 - A site writes its route table as plain data, `[{ path: '/impressum', public: true }]`.
   `public` defaults to false, so a forgotten flag hides a page from the sitemap instead of
   exposing an app route. App routes keep no prefix and are not in any output of the helper.
-- `validateRoutes` rejects a path without a leading `/`, with `//`, a dot segment, a query, a
-  fragment, a space, a backslash, a trailing slash (except `/`), a language prefix or a
-  duplicate.
+- Route paths are decoded text. `validateRoutes` rejects a path without a leading `/`, with `//`,
+  a dot segment, a query, a fragment, a `%`, a backslash, a trailing slash (except `/`), a
+  language prefix or a duplicate. It also rejects Unicode white space (`\p{White_Space}`, which
+  covers the no break space, U+2028 and U+2029), control characters (`\p{Cc}`, which include
+  DEL), format characters (`\p{Cf}`, such as the zero width space and the byte order mark) and a
+  lone surrogate (`\p{Cs}`). Every error starts with `govue route:`.
 - `localizeRoutes(routes)` returns one `{ source, locale, path }` per language for every public
   route. The root becomes `/en/`, every other path `/en/impressum`.
-- `localizedPath(path, code)` swaps or adds the prefix, so a language switch passes
-  `location.pathname` and navigates to the result. `localeFromPath(path)` reads the language
+- The route table is the source of the canonical form: `/de/impressum` has no trailing slash and
+  the root is `/de/`. The canonical link, the alternates and the sitemap all use it.
+- `localizedPath(path, code)` swaps or adds the prefix, so a language switch passes the decoded
+  `location.pathname` and navigates to the result. A single trailing slash on the input is
+  dropped, so `/de/impressum/` gives `/en/impressum` and the root stays `/en/`. An empty
+  segment inside the path, such as `//`, still throws. `localeFromPath(path)` reads the language
   from the first segment, exact match only, so a site can pass it as the `locale` of
-  `createGovueI18n` on a public page.
+  `createGovueI18n` on a public page. Both take decoded text, never the percent encoded
+  `location.pathname`: a `%` throws.
 - `hreflangLinks(variant, origin)` returns the head markup of one variant: a self referential
   absolute canonical, one alternate per language and `x-default`, which points at the German
   variant of every page. `sitemapXml(routes, origin)` lists every variant with the same
-  alternates, no `lastmod`, and fails above 50,000 URLs.
-- The origin is `https://host[:port]` with no path, query, fragment or userinfo. `http` is
-  accepted for `localhost` only. Path segments are percent encoded, then escaped for markup.
+  alternates and no `lastmod`. It fails above 50,000 URLs, above 50 MiB of UTF-8 for the whole
+  document and for a URL longer than 2048 characters, the limits of the sitemap protocol.
+- The origin is `https://host[:port]` with a lower case scheme and host, a punycode host, no
+  default port, no port 0, no trailing dot and no path, query, fragment or userinfo. `http` is
+  accepted for `localhost` only. The generators validate it themselves, so the check is not
+  exported. Path segments are percent encoded, then escaped for markup.
+- Serving is a requirement for the later steps, because the build writes `de/impressum/index.html`
+  while the canonical URL is `/de/impressum`. A directory file server such as
+  `http.FileServerFS` answers `/de/impressum` with a redirect to `/de/impressum/`, so the
+  canonical URL would redirect. The handler added with the prerender and example steps must serve
+  the exact path of every route (`GET /de/impressum` and `GET /de/{$}`) and must answer the slash
+  form with 404 or a redirect. Step 2 and step 4 each need a test that requests every `loc` of
+  the sitemap through the real mux and expects 200 with no `Location` header. A review run of the
+  Go `ServeMux` answered `/de` against a `GET /de/{$}` pattern with a 307, which that test pins
+  too.
 - An unprefixed public path such as `/impressum` is not redirected and answers 404. The
   cookie storage of the language layer stays an option and is not the default.
 

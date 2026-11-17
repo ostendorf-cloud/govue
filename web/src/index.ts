@@ -48,7 +48,6 @@ export {
   localizedPath,
   localizeRoutes,
   sitemapXml,
-  validateOrigin,
   validateRoutes,
 } from './i18n/routes'
 export type { LocalizedRoute, RouteDef } from './i18n/routes'

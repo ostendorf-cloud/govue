@@ -3,18 +3,37 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { localeCodes } from './catalogues'
+import { DEFAULT_LOCALE, localeCodes } from './catalogues'
 import {
+  buildSitemap,
   hreflangLinks,
   localeFromPath,
   localizedPath,
   localizeRoutes,
+  SITEMAP_MAX_BYTES,
+  SITEMAP_MAX_LOC_LENGTH,
+  SITEMAP_MAX_URLS,
   sitemapXml,
   validateOrigin,
   validateRoutes,
 } from './routes'
 
 const ORIGIN = 'https://example.com'
+
+/** The prefixed path of a plain ASCII source path, written out by hand. */
+function prefixed(source: string, code: string): string {
+  return source === '/' ? `/${code}/` : `/${code}${source}`
+}
+
+/** Every language, then x-default on the default language: [hreflang, absolute URL]. */
+function expectedAlternates(source: string): [string, string][] {
+  const list: [string, string][] = localeCodes.map((code) => [
+    code,
+    `${ORIGIN}${prefixed(source, code)}`,
+  ])
+  list.push(['x-default', `${ORIGIN}${prefixed(source, DEFAULT_LOCALE)}`])
+  return list
+}
 
 describe('validateRoutes', () => {
   const bad: [string, string][] = [
@@ -29,16 +48,42 @@ describe('validateRoutes', () => {
     ['trailing slash', '/impressum/'],
     ['backslash', '/a\\b'],
     ['space', '/a b'],
-    ['control character', '/a\u0000b'],
+    ['tab', '/a\tb'],
+    ['newline', '/a\nb'],
+    ['null character', '/a\u0000b'],
+    ['DEL', '/a\u007fb'],
+    ['no break space', '/a b'],
+    ['line separator', '/a b'],
+    ['paragraph separator', '/a b'],
+    ['zero width space', '/a​b'],
+    ['byte order mark', '/a﻿b'],
+    ['lone high surrogate', '/a\ud800'],
+    ['lone low surrogate', '/a\udc00b'],
+    ['percent sign', '/a%20b'],
     ['language prefix', '/de/impressum'],
     ['bare language prefix', '/en'],
   ]
   it.each(bad)('rejects %s', (_name, path) => {
-    expect(() => validateRoutes([{ path }])).toThrow(/route/i)
+    expect(() => validateRoutes([{ path }])).toThrow(/^govue route:/)
+  })
+
+  it('wraps a lone surrogate in a govue error, not a URIError', () => {
+    let caught: unknown
+    try {
+      validateRoutes([{ path: '/a\ud800' }])
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(Error)
+    expect(caught).not.toBeInstanceOf(URIError)
   })
 
   it('names the trailing slash, not an empty segment', () => {
     expect(() => validateRoutes([{ path: '/impressum/' }])).toThrow(/end with/)
+  })
+
+  it('says that a path is decoded text when it holds a percent sign', () => {
+    expect(() => validateRoutes([{ path: '/a%20b' }])).toThrow(/decoded/)
   })
 
   it('rejects a duplicate path', () => {
@@ -82,9 +127,25 @@ describe('validateOrigin', () => {
     ['userinfo', 'https://user:pw@example.com'],
     ['another scheme', 'ftp://example.com'],
     ['upper case host', 'https://Example.com'],
+    ['upper case scheme', 'HTTPS://example.com'],
+    ['a default port', 'https://example.com:443'],
+    ['a host that is not punycode', 'https://exämple.com'],
   ]
   it.each(bad)('rejects %s', (_name, origin) => {
-    expect(() => validateOrigin(origin)).toThrow(/origin/i)
+    expect(() => validateOrigin(origin)).toThrow(/^govue origin:/)
+  })
+
+  it('says what is wrong with a malformed origin', () => {
+    expect(() => validateOrigin('https://Example.com')).toThrow(/punycode/)
+    expect(() => validateOrigin('https://example.com:443')).toThrow(/default port/)
+  })
+
+  it('rejects port 0 and names it', () => {
+    expect(() => validateOrigin('https://example.com:0')).toThrow(/port 0/)
+  })
+
+  it('rejects a trailing dot in the host and names it', () => {
+    expect(() => validateOrigin('https://example.com.')).toThrow(/trailing dot/)
   })
 })
 
@@ -104,22 +165,43 @@ describe('localizedPath', () => {
     expect(localizedPath('/en', 'de')).toBe('/de/')
   })
 
+  it('tolerates a single trailing slash on the input', () => {
+    expect(localizedPath('/de/impressum/', 'en')).toBe('/en/impressum')
+    expect(localizedPath('/impressum/', 'en')).toBe('/en/impressum')
+    expect(localizedPath('/a/b/', 'en')).toBe('/en/a/b')
+  })
+
+  it('throws for an empty segment, also behind a trailing slash', () => {
+    expect(() => localizedPath('//', 'de')).toThrow(/^govue route:/)
+    expect(() => localizedPath('/en//', 'de')).toThrow(/^govue route:/)
+    expect(() => localizedPath('/impressum//', 'de')).toThrow(/^govue route:/)
+    expect(() => localizedPath('/a//b/', 'de')).toThrow(/^govue route:/)
+    expect(() => localizedPath('/en//x', 'de')).toThrow(/^govue route:/)
+  })
+
   it('does not strip a first segment that only starts like a language', () => {
     expect(localizedPath('/deutsch', 'en')).toBe('/en/deutsch')
   })
 
+  it('takes decoded text and rejects a percent encoded pathname', () => {
+    expect(localizedPath('/de/über', 'en')).toBe('/en/über')
+    expect(() => localizedPath('/de/%C3%BCber', 'en')).toThrow(/decoded/)
+  })
+
   it('throws for an unknown language and for an invalid path', () => {
     expect(() => localizedPath('/a', 'fr' as never)).toThrow(/language/i)
-    expect(() => localizedPath('//evil.example.com', 'de')).toThrow(/route/i)
-    expect(() => localizedPath('/a/../b', 'de')).toThrow(/route/i)
+    expect(() => localizedPath('//evil.example.com', 'de')).toThrow(/^govue route:/)
+    expect(() => localizedPath('/a/../b', 'de')).toThrow(/^govue route:/)
   })
 })
 
 describe('localeFromPath', () => {
   it('reads the language of a prefixed path', () => {
-    expect(localeFromPath('/en/')).toBe('en')
-    expect(localeFromPath('/en')).toBe('en')
-    expect(localeFromPath('/de/impressum')).toBe('de')
+    for (const code of localeCodes) {
+      expect(localeFromPath(`/${code}/`)).toBe(code)
+      expect(localeFromPath(`/${code}`)).toBe(code)
+      expect(localeFromPath(`/${code}/impressum`)).toBe(code)
+    }
   })
 
   it('returns undefined without a prefix', () => {
@@ -127,6 +209,13 @@ describe('localeFromPath', () => {
     expect(localeFromPath('/impressum')).toBeUndefined()
     expect(localeFromPath('/deutsch')).toBeUndefined()
     expect(localeFromPath('')).toBeUndefined()
+  })
+
+  it('needs the leading slash', () => {
+    for (const code of localeCodes) {
+      expect(localeFromPath(`x/${code}`)).toBeUndefined()
+      expect(localeFromPath(`${code}/x`)).toBeUndefined()
+    }
   })
 
   it('matches the exact code only', () => {
@@ -137,16 +226,11 @@ describe('localeFromPath', () => {
 
 describe('localizeRoutes', () => {
   it('returns one variant per language for every public route', () => {
-    const out = localizeRoutes([
-      { path: '/', public: true },
-      { path: '/impressum', public: true },
-    ])
-    expect(out).toEqual([
-      { source: '/', locale: 'de', path: '/de/' },
-      { source: '/', locale: 'en', path: '/en/' },
-      { source: '/impressum', locale: 'de', path: '/de/impressum' },
-      { source: '/impressum', locale: 'en', path: '/en/impressum' },
-    ])
+    const sources = ['/', '/impressum']
+    const expected = sources.flatMap((source) =>
+      localeCodes.map((locale) => ({ source, locale, path: prefixed(source, locale) })),
+    )
+    expect(localizeRoutes(sources.map((path) => ({ path, public: true })))).toEqual(expected)
   })
 
   it('leaves out app routes and routes without the flag', () => {
@@ -155,38 +239,39 @@ describe('localizeRoutes', () => {
   })
 
   it('validates the table', () => {
-    expect(() => localizeRoutes([{ path: '/a/', public: true }])).toThrow(/route/i)
-  })
-
-  it('covers every configured language', () => {
-    const out = localizeRoutes([{ path: '/a', public: true }])
-    expect(out.map((v) => v.locale)).toEqual(localeCodes)
+    expect(() => localizeRoutes([{ path: '/a/', public: true }])).toThrow(/^govue route:/)
   })
 })
 
 describe('hreflangLinks', () => {
   const variant = { source: '/impressum', locale: 'en', path: '/en/impressum' } as const
 
+  function expectedLines(own: string, source: string): string[] {
+    return [
+      `<link rel="canonical" href="${ORIGIN}${own}">`,
+      ...expectedAlternates(source).map(
+        ([lang, href]) => `<link rel="alternate" hreflang="${lang}" href="${href}">`,
+      ),
+    ]
+  }
+
   it('emits the canonical, every language and x-default', () => {
     expect(hreflangLinks(variant, ORIGIN)).toBe(
-      [
-        '<link rel="canonical" href="https://example.com/en/impressum">',
-        '<link rel="alternate" hreflang="de" href="https://example.com/de/impressum">',
-        '<link rel="alternate" hreflang="en" href="https://example.com/en/impressum">',
-        '<link rel="alternate" hreflang="x-default" href="https://example.com/de/impressum">',
-      ].join('\n'),
+      expectedLines('/en/impressum', '/impressum').join('\n'),
     )
   })
 
   it('has the same alternates on every variant and its own canonical', () => {
-    const de = hreflangLinks({ source: '/impressum', locale: 'de', path: '/de/impressum' }, ORIGIN)
-    expect(de.split('\n')[0]).toBe('<link rel="canonical" href="https://example.com/de/impressum">')
-    expect(de.split('\n').slice(1)).toEqual(hreflangLinks(variant, ORIGIN).split('\n').slice(1))
+    for (const locale of localeCodes) {
+      const own = prefixed('/impressum', locale)
+      const out = hreflangLinks({ source: '/impressum', locale, path: own }, ORIGIN)
+      expect(out).toBe(expectedLines(own, '/impressum').join('\n'))
+    }
   })
 
-  it('points x-default at the German variant, also for the root', () => {
+  it('points x-default at the default language variant, also for the root', () => {
     const out = hreflangLinks({ source: '/', locale: 'en', path: '/en/' }, ORIGIN)
-    expect(out).toContain('hreflang="x-default" href="https://example.com/de/"')
+    expect(out).toContain(`hreflang="x-default" href="${ORIGIN}/${DEFAULT_LOCALE}/"`)
   })
 
   it('percent encodes non ASCII and reserved characters in the path', () => {
@@ -211,6 +296,14 @@ describe('hreflangLinks', () => {
       /variant/i,
     )
   })
+
+  it('validates the source like a route table does', () => {
+    const bad = ['/de/a', '/a/', '/a?x=1', '/a//b', '/a%20b', 'a', '/a\ud800']
+    for (const source of bad) {
+      const v = { source, locale: 'en', path: '/en/a' } as const
+      expect(() => hreflangLinks(v, ORIGIN)).toThrow(/^govue route:/)
+    }
+  })
 })
 
 describe('sitemapXml', () => {
@@ -219,51 +312,36 @@ describe('sitemapXml', () => {
     { path: '/impressum', public: true },
     { path: '/app' },
   ]
+  const publicSources = ['/', '/impressum']
 
-  function alt(lang: string, href: string): string {
-    return `<xhtml:link rel="alternate" hreflang="${lang}" href="${href}"/>`
-  }
-
-  function entry(loc: string, hrefs: [string, string, string]): string {
+  function entry(source: string, locale: string): string {
     return [
       '  <url>',
-      `    <loc>${loc}</loc>`,
-      `    ${alt('de', hrefs[0])}`,
-      `    ${alt('en', hrefs[1])}`,
-      `    ${alt('x-default', hrefs[2])}`,
+      `    <loc>${ORIGIN}${prefixed(source, locale)}</loc>`,
+      ...expectedAlternates(source).map(
+        ([lang, href]) => `    <xhtml:link rel="alternate" hreflang="${lang}" href="${href}"/>`,
+      ),
       '  </url>',
     ].join('\n')
   }
 
   it('lists every variant of every public route with its alternates', () => {
-    const root: [string, string, string] = [
-      'https://example.com/de/',
-      'https://example.com/en/',
-      'https://example.com/de/',
-    ]
-    const imp: [string, string, string] = [
-      'https://example.com/de/impressum',
-      'https://example.com/en/impressum',
-      'https://example.com/de/impressum',
-    ]
     expect(sitemapXml(routes, ORIGIN)).toBe(
       [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">',
-        entry('https://example.com/de/', root),
-        entry('https://example.com/en/', root),
-        entry('https://example.com/de/impressum', imp),
-        entry('https://example.com/en/impressum', imp),
+        ...publicSources.flatMap((source) => localeCodes.map((code) => entry(source, code))),
         '</urlset>',
         '',
       ].join('\n'),
     )
   })
 
-  it('has four url entries with three alternates each for two public routes', () => {
+  it('has one url entry per variant and one alternate per language plus x-default', () => {
     const xml = sitemapXml(routes, ORIGIN)
-    expect(xml.match(/<url>/g)).toHaveLength(4)
-    expect(xml.match(/<xhtml:link /g)).toHaveLength(12)
+    const urls = publicSources.length * localeCodes.length
+    expect(xml.match(/<url>/g)).toHaveLength(urls)
+    expect(xml.match(/<xhtml:link /g)).toHaveLength(urls * (localeCodes.length + 1))
   })
 
   it('leaves out an app route and carries no lastmod', () => {
@@ -288,9 +366,45 @@ describe('sitemapXml', () => {
     const make = (n: number) =>
       Array.from({ length: n }, (_, i) => ({ path: `/p${i}`, public: true }))
     const perRoute = localeCodes.length
-    const fits = Math.floor(50_000 / perRoute)
+    const fits = Math.floor(SITEMAP_MAX_URLS / perRoute)
+    expect(SITEMAP_MAX_URLS).toBe(50_000)
     expect(() => sitemapXml(make(fits), ORIGIN)).not.toThrow()
     expect(() => sitemapXml(make(fits + 1), ORIGIN)).toThrow(/50000|50,000/)
+  })
+
+  it('accepts a document of exactly the byte limit and fails one byte above', () => {
+    const size = new TextEncoder().encode(sitemapXml(routes, ORIGIN)).length
+    const limits = { maxUrls: SITEMAP_MAX_URLS, maxLocLength: SITEMAP_MAX_LOC_LENGTH }
+    expect(() => buildSitemap(routes, ORIGIN, { ...limits, maxBytes: size })).not.toThrow()
+    expect(() => buildSitemap(routes, ORIGIN, { ...limits, maxBytes: size - 1 })).toThrow(/bytes/)
+  })
+
+  it('fails above 50 MiB with the real limit', () => {
+    expect(SITEMAP_MAX_BYTES).toBe(50 * 1024 * 1024)
+    const pad = 'a'.repeat(1900)
+    const big = Array.from({ length: 3500 }, (_, i) => ({ path: `/p${i}${pad}`, public: true }))
+    expect(() => sitemapXml(big, ORIGIN)).toThrow(/bytes/)
+  })
+
+  it('accepts a url of exactly 2048 characters and fails at 2049', () => {
+    expect(SITEMAP_MAX_LOC_LENGTH).toBe(2048)
+    const longest = Math.max(...localeCodes.map((code) => code.length))
+    // Origin, then "/code", then the source path "/" plus the padding.
+    const fill = SITEMAP_MAX_LOC_LENGTH - ORIGIN.length - (1 + longest) - 1
+    const fits = [{ path: `/${'a'.repeat(fill)}`, public: true }]
+    const tooLong = [{ path: `/${'a'.repeat(fill + 1)}`, public: true }]
+    expect(() => sitemapXml(fits, ORIGIN)).not.toThrow()
+    expect(() => sitemapXml(tooLong, ORIGIN)).toThrow(/2048/)
+  })
+
+  it('measures the url after percent encoding', () => {
+    const longest = Math.max(...localeCodes.map((code) => code.length))
+    // Each "ü" becomes six characters.
+    const fill = SITEMAP_MAX_LOC_LENGTH - ORIGIN.length - (1 + longest) - 1
+    const count = Math.floor(fill / 6) + 1
+    expect(() => sitemapXml([{ path: `/${'ü'.repeat(count)}`, public: true }], ORIGIN)).toThrow(
+      /2048/,
+    )
   })
 
   it('rejects an invalid origin and an invalid table', () => {
