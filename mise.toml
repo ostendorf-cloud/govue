@@ -11,6 +11,12 @@ pnpm = "10"
 # cannot read the stdlib export data of a newer one, so the two versions move together.
 golangci-lint = "2.15.0"
 actionlint = "1"
+# Lints the shell scripts under .github/scripts. actionlint also uses it for run: blocks.
+shellcheck = "0.11.0"
+# The shell tests under .github/scripts apply a jq expression to fixture JSON and read
+# checks.yaml with yq.
+jq = "1.8.2"
+yq = "4.53.2"
 markdownlint-cli2 = "0.24.1"
 yamllint = "1"
 gitleaks = "8"
