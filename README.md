@@ -255,7 +255,30 @@ createApp(Page)
 ```
 
 The Go server must serve `/de/impressum` itself and not through a directory file server, which
-redirects it to `/de/impressum/`. govue ships no directory handler.
+redirects it to `/de/impressum/`. govue ships no directory handler. A site registers its routes
+once, in the route table, and the build writes them into `sitemap.xml`. The server reads that
+file at startup, so Go holds no second copy:
+
+```go
+redirect, err := language.Redirect(language.Config{}) // de and en, German by default
+if err != nil { /* ... */ }
+mux.Handle("GET /{$}", redirect) // the root only, a prefixed path never reaches it
+
+// For every <loc> of sitemap.xml, with the decoded path p of the loc:
+mux.Handle("GET "+p, page)       // GET /de/impressum
+mux.Handle("GET /de/{$}", page)  // the language root, written as /de/ in the sitemap
+```
+
+`example/site.go` does this with `themeboot.Shell` per page and refuses a `loc` that is not a plain
+path under a configured language, a sitemap of more than one origin and a page that links out of
+the directory. It opens the directory with `os.OpenRoot`. It also serves `dist/assets/`, the
+hashed bundle and stylesheet of a Vite build, with `GET /assets/{file...}`: files only, no
+listing, immutable cache headers. Files of `public/` next to `index.html`, such as the favicon,
+are not served, a site serves them itself. A route path may not contain `{` or `}`, because the
+server registers it as a `ServeMux` pattern. Run the example with `SITE_DIR=dist`. Use the cookie
+storage kind of `createGovueI18n` so the redirect sees the visitor's stored choice. A request for
+`/de/impressum/` or an unknown prefix answers 404, and `/` answers 302 to the language of the
+cookie, then of `Accept-Language`, then German.
 
 Neither mode adds routing, per-request data or hydration. A dialog or other teleported content is
 not part of the markup. `useTheme` and `useToasts` keep module level state, so a prerendered page

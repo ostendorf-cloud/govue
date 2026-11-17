@@ -43,6 +43,10 @@ type config struct {
 	rateLimitPer   time.Duration
 
 	allowPlainHTTP bool
+
+	// siteDir is the output directory of the prerender step. Empty means the
+	// example serves no language pages and no redirect at /.
+	siteDir string
 }
 
 // loadConfig reads every setting through envconf, so a misconfigured
@@ -96,6 +100,8 @@ func loadConfig(getenv func(string) string) (config, error) {
 	cfg.rateLimitPer = l.Duration("RATE_LIMIT_PER", time.Minute, time.Second, time.Hour)
 
 	cfg.allowPlainHTTP = l.Bool("ALLOW_PLAIN_HTTP", false)
+
+	cfg.siteDir = l.String("SITE_DIR", "")
 
 	if err := errors.Join(append(problems, l.Err())...); err != nil {
 		return config{}, fmt.Errorf("example: load config: %w", err)

@@ -60,6 +60,9 @@ describe('validateRoutes', () => {
     ['lone high surrogate', '/a\ud800'],
     ['lone low surrogate', '/a\udc00b'],
     ['percent sign', '/a%20b'],
+    ['opening brace', '/a{b'],
+    ['closing brace', '/a}b'],
+    ['wildcard syntax', '/a/{b}'],
     ['language prefix', '/de/impressum'],
     ['bare language prefix', '/en'],
   ]
@@ -80,6 +83,10 @@ describe('validateRoutes', () => {
 
   it('names the trailing slash, not an empty segment', () => {
     expect(() => validateRoutes([{ path: '/impressum/' }])).toThrow(/end with/)
+  })
+
+  it('names the brace, because a Go ServeMux reads it as pattern syntax', () => {
+    expect(() => validateRoutes([{ path: '/a{b}' }])).toThrow(/"\{" or "\}".*ServeMux/)
   })
 
   it('says that a path is decoded text when it holds a percent sign', () => {
