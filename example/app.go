@@ -71,6 +71,18 @@ type app struct {
 	// are nil without SITE_DIR.
 	site             *site
 	languageRedirect http.Handler
+	// siteRoot is the open site directory, nil without SITE_DIR. Pages are
+	// read from it at startup and assets on every request, so it stays open
+	// until close.
+	siteRoot *os.Root
+}
+
+// close releases the site directory. It is safe to call without SITE_DIR.
+func (a *app) close() error {
+	if a.siteRoot == nil {
+		return nil
+	}
+	return a.siteRoot.Close()
 }
 
 // themeColor is the accent of the example theme, the colour browsers tint
@@ -162,9 +174,17 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 		redirect, err := language.Redirect(language.Config{Languages: siteLanguages})
 		fail(err)
 		a.languageRedirect = redirect
-		site, err := loadSite(os.DirFS(cfg.siteDir), siteLanguages, a.icons)
+		// OpenRoot, not DirFS: the root refuses a symbolic link that leaves
+		// the directory, so a page or an asset can never be read from
+		// outside it. A page that links out fails startup, naming the page.
+		root, err := os.OpenRoot(cfg.siteDir)
 		fail(err)
-		a.site = site
+		if err == nil {
+			a.siteRoot = root
+			site, err := loadSite(root.FS(), siteLanguages, a.icons)
+			fail(err)
+			a.site = site
+		}
 	}
 
 	a.health = health.New()
@@ -203,6 +223,7 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 	a.accessLog = middleware.AccessLog{ClientIP: a.clientIPs}
 
 	if err := errors.Join(problems...); err != nil {
+		_ = a.close()
 		return nil, fmt.Errorf("example: build app: %w", err)
 	}
 	return a, nil

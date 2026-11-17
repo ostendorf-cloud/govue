@@ -30,20 +30,30 @@ const sitemapFile = "sitemap.xml"
 // sitemap protocol.
 const maxSitemapBytes = 50 << 20
 
+// sitemapNamespace is the namespace of a sitemap's urlset element.
+const sitemapNamespace = "http://www.sitemaps.org/schemas/sitemap/0.9"
+
+// assetsDir is the directory of the build's hashed files, Vite's default.
+const assetsDir = "assets"
+
 // sitePage is one page the sitemap lists, ready to serve.
 type sitePage struct {
 	// pattern is the ServeMux pattern for the exact path of the page.
 	pattern string
 	handler http.Handler
+	// origin is the scheme and host of the loc.
+	origin string
 }
 
-// site is the output of the prerender step, loaded into memory. The pages
-// are known from the sitemap, so the server serves exactly those paths and
-// reads no file per request: nothing a request carries is ever joined to a
-// file name.
+// site is the output of the prerender step. The pages are known from the
+// sitemap and read into memory once, so the server serves exactly those
+// paths and no request path is ever joined to a file name. Only the assets
+// are read per request, see assetHandler.
 type site struct {
 	pages   []sitePage
 	sitemap []byte
+	// fsys is the site directory, kept for the assets only.
+	fsys fs.FS
 }
 
 // loadSite reads the prerender output in fsys. The sitemap is the list of
@@ -66,28 +76,47 @@ func loadSite(fsys fs.FS, languages []string, icons favicon.Icons) (*site, error
 	}
 
 	var doc struct {
-		URLs []struct {
-			Loc string `xml:"loc"`
+		XMLName xml.Name
+		URLs    []struct {
+			Locs []string `xml:"loc"`
 		} `xml:"url"`
 	}
 	if err := xml.Unmarshal(raw, &doc); err != nil {
 		return nil, fmt.Errorf("example: load site: parse %s: %w", sitemapFile, err)
 	}
+	if doc.XMLName != (xml.Name{Space: sitemapNamespace, Local: "urlset"}) {
+		return nil, fmt.Errorf("example: load site: %s must be a urlset in the sitemap namespace, not {%s}%s",
+			sitemapFile, doc.XMLName.Space, doc.XMLName.Local)
+	}
 	if len(doc.URLs) == 0 {
 		return nil, fmt.Errorf("example: load site: %s lists no url", sitemapFile)
 	}
 
-	s := &site{sitemap: raw}
+	s := &site{sitemap: raw, fsys: fsys}
 	seen := make(map[string]bool, len(doc.URLs))
 	var problems []error
+	// origin is the scheme and host of the first loc. A sitemap covers one
+	// origin, so a loc of another one is a build mistake.
+	origin := ""
 	for _, u := range doc.URLs {
-		page, err := loadPage(fsys, strings.TrimSpace(u.Loc), languages, icons)
+		if len(u.Locs) == 0 {
+			problems = append(problems, fmt.Errorf("example: load site: a url of %s has no loc", sitemapFile))
+			continue
+		}
+		if len(u.Locs) > 1 {
+			problems = append(problems, fmt.Errorf("example: load site: a url of %s has more than one loc, first %q",
+				sitemapFile, strings.TrimSpace(u.Locs[0])))
+			continue
+		}
+		loc := strings.TrimSpace(u.Locs[0])
+		page, err := loadPage(fsys, loc, languages, icons, origin)
 		if err != nil {
 			problems = append(problems, err)
 			continue
 		}
+		origin = page.origin
 		if seen[page.pattern] {
-			problems = append(problems, fmt.Errorf("example: load site: %q is listed twice", u.Loc))
+			problems = append(problems, fmt.Errorf("example: load site: loc %q is listed twice", loc))
 			continue
 		}
 		seen[page.pattern] = true
@@ -100,7 +129,8 @@ func loadSite(fsys fs.FS, languages []string, icons favicon.Icons) (*site, error
 }
 
 // loadPage turns one loc into its pattern and handler.
-func loadPage(fsys fs.FS, loc string, languages []string, icons favicon.Icons) (page sitePage, err error) {
+// wantOrigin is the scheme and host of the first loc, empty for the first.
+func loadPage(fsys fs.FS, loc string, languages []string, icons favicon.Icons, wantOrigin string) (page sitePage, err error) {
 	bad := func(reason string) (sitePage, error) {
 		return sitePage{}, fmt.Errorf("example: load site: loc %q %s", loc, reason)
 	}
@@ -110,6 +140,15 @@ func loadPage(fsys fs.FS, loc string, languages []string, icons favicon.Icons) (
 	}
 	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.User != nil {
 		return bad("has a query, a fragment or userinfo")
+	}
+	origin := u.Scheme + "://" + u.Host
+	if wantOrigin != "" && origin != wantOrigin {
+		return bad("uses another origin than the first loc, " + wantOrigin)
+	}
+	// The decoded path below would turn %2f into a slash and %5c into a
+	// backslash, and so change the number of segments. Refuse them as written.
+	if lower := strings.ToLower(u.EscapedPath()); strings.Contains(lower, "%2f") || strings.Contains(lower, "%5c") {
+		return bad("has an encoded slash or backslash")
 	}
 	// Path is the decoded form. The decoded text is what the route table held,
 	// so it must hold nothing a file name or a ServeMux pattern would read as
@@ -157,7 +196,41 @@ func loadPage(fsys fs.FS, loc string, languages []string, icons favicon.Icons) (
 			page, err = sitePage{}, fmt.Errorf("example: load site: page %s: %v", file, r)
 		}
 	}()
-	return sitePage{pattern: pattern, handler: themeboot.Shell(content, themeboot.WithFavicon(icons))}, nil
+	return sitePage{pattern: pattern, origin: origin, handler: themeboot.Shell(content, themeboot.WithFavicon(icons))}, nil
+}
+
+// assetHandler serves the files of the build's assets directory: hashed,
+// immutable files such as the client bundle and the stylesheet. A request
+// names a file or nothing: a directory, a trailing slash, a missing file and a
+// symbolic link out of the site directory all answer 404, and a directory is
+// never listed. The name is checked with fs.ValidPath and the file system
+// refuses to leave its root, so no request reaches a file outside the
+// directory. The files are not in the sitemap, because they are not pages,
+// which is why this one is a prefix pattern and the pages are not.
+func (s *site) assetHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if !strings.HasPrefix(name, assetsDir+"/") || strings.HasSuffix(name, "/") || !fs.ValidPath(name) {
+			http.NotFound(w, r)
+			return
+		}
+		f, err := s.fsys.Open(name)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer func() { _ = f.Close() }()
+		info, err := f.Stat()
+		rs, seekable := f.(io.ReadSeeker)
+		if err != nil || !info.Mode().IsRegular() || !seekable {
+			http.NotFound(w, r)
+			return
+		}
+		h := w.Header()
+		h.Set("Cache-Control", "public, max-age=31536000, immutable")
+		h.Set("X-Content-Type-Options", "nosniff")
+		http.ServeContent(w, r, info.Name(), info.ModTime(), rs)
+	})
 }
 
 // sitemapHandler serves the sitemap as it was built.
@@ -177,4 +250,5 @@ func (s *site) mount(mux *http.ServeMux, route func(http.Handler) http.Handler) 
 		mux.Handle(p.pattern, route(p.handler))
 	}
 	mux.Handle("GET /"+sitemapFile, route(s.sitemapHandler()))
+	mux.Handle("GET /"+assetsDir+"/{file...}", route(s.assetHandler()))
 }

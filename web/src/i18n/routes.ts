@@ -94,6 +94,13 @@ export function localeFromPath(path: string): LocaleCode | undefined {
 /** A route path as written in the table: well formed and without a language prefix. */
 function checkRoutePath(path: unknown): asserts path is string {
   checkPath(path)
+  // Go registers a page as a ServeMux pattern, where braces are wildcard
+  // syntax. A route with one would fail the server's startup instead.
+  if (path.includes('{') || path.includes('}')) {
+    throw new Error(
+      `govue route: path "${path}" must not contain "{" or "}", a Go ServeMux reads them as pattern syntax`,
+    )
+  }
   if (localeFromPath(path) !== undefined) {
     throw new Error(`govue route: path "${path}" already starts with a language prefix`)
   }

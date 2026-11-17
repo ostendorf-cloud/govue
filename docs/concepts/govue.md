@@ -528,10 +528,28 @@ The design of the library and the reasoning behind it.
   it reads `sitemap.xml` from the prerender output, takes the path of every `loc` and registers
   one exact pattern per page, each served through `themeboot.Shell`. A page is read into memory
   once, so no request path is ever joined to a file name and a directory listing cannot exist.
-  A `loc` that is not a plain path under a configured language, such as a dot segment, a
-  backslash, `{`, `%` or an encoded `/` in its decoded form, a duplicate, or a page file that
-  is missing or has no `<head>`, fails startup. `SITE_DIR` points at the directory. Without it
-  the example mounts neither the redirect nor the pages.
+  Startup fails, naming the `loc`, for:
+  - a sitemap that is not a `urlset` in the sitemap namespace, such as a `sitemapindex`, one
+    over 50 MiB, a `url` without a `loc` or with more than one, and locs of more than one origin.
+  - a `loc` that is not a plain path under a configured language: a relative or non HTTP URL,
+    userinfo, a query or a fragment, a bare `/de`, a dot, empty or control segment, white space,
+    `\`, `{`, `}` or `%` in a decoded segment, and a `%2f` or `%5c` in the written path, because
+    decoding it would change the segment count.
+  - a duplicate, a page file that is missing, has no `<head>` or links out of the directory.
+  The directory is opened with `os.OpenRoot`, not `os.DirFS`: a symbolic link inside it that
+  leaves it is refused, and so a page that links out fails startup. A link that stays inside is
+  allowed. `SITE_DIR` points at the directory, and the example closes it on shutdown. Without it
+  the example mounts neither the redirect, the pages nor the assets.
+- A route path of the table may not hold `{` or `}`: `validateRoutes` rejects them, because the
+  Go side registers the path as a `ServeMux` pattern, where they are wildcard syntax.
+- The build's `assets/` directory (Vite's default name) holds the client bundle and the
+  stylesheet, so a real build renders without them otherwise. The example serves it with
+  `GET /assets/{file...}`, the one prefix pattern of the site, because the files are hashed and
+  not in the sitemap. The handler answers a regular file only: a directory, a trailing slash, a
+  missing file and a link out of the site directory give 404, and nothing is listed. A file is
+  sent with `Cache-Control: public, max-age=31536000, immutable` and `nosniff`, and its content
+  type comes from the extension. The files of `public/` that sit next to `index.html`, such as
+  the favicon, are not served by the example's page handlers. A site serves them itself.
 - `GET /{$}` carries the `language` redirect and sits in the same route chain as every app
   route, so CORS, the rate limiter and the CSRF check see it. The middleware order does not
   change. The example's tests build a directory like the prerender output, request every `loc`
@@ -539,8 +557,13 @@ The design of the library and the reasoning behind it.
   `Location` header. They also check the redirect order, the crawler case, 404 for the slash
   form, an unknown prefix and a file the sitemap does not list, and path traversal attempts.
   `ServeMux` answers a bare `/de` with a 307 to `/de/` before any handler runs, which a test
-  pins. A path it has to clean, such as `/de/../x`, is redirected the same way and the target
-  is refused.
+  pins. A path it has to clean is redirected the same way. `/de/../x` leads to a 404, but
+  `GET /de/../en/` gets a 307 to `/en/` and is served there. Those 307s come from the mux
+  before any handler runs, so they carry no `Vary` and no `Cache-Control`, and a raw client
+  can reach another language this way. That is accepted: it is a path the client chose, no
+  crawler follows it, and the target is a listed page that answers 200 itself. A test pins it.
+  A POST to a page answers 404 from the catch-all. The 405 of `language.Redirect` is not
+  reachable through this mux, because no pattern of the site is registered without its method.
 - An unprefixed public path such as `/impressum` is not redirected and answers 404. The
   cookie storage of the language layer stays an option and is not the default.
 

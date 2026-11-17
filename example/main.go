@@ -42,6 +42,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// The site directory stays open while the server runs, because assets
+	// are read per request.
+	defer func() {
+		if err := a.close(); err != nil {
+			logger.Error("close the site directory", "error", err)
+		}
+	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

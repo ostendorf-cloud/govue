@@ -4,6 +4,8 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -99,11 +101,12 @@ type testSite struct {
 const (
 	secretText  = "outside-the-site-directory"
 	privateText = "inside-but-not-in-the-sitemap"
+	scriptText  = "console.log('asset');"
 )
 
 // writeTestSite writes the prerender output of the fixture routes into a
-// fresh directory, plus a page the sitemap does not list and a file outside
-// the directory.
+// fresh directory, plus a page the sitemap does not list, build assets, a
+// symbolic link out of the directory and a file outside it.
 func writeTestSite(t *testing.T) testSite {
 	t.Helper()
 	parent := t.TempDir()
@@ -133,8 +136,15 @@ func writeTestSite(t *testing.T) testSite {
 	write("sitemap.xml", fixtureSitemap(fixtureRoutes))
 	write("de/draft/index.html", privateText)
 	write("private.html", privateText)
+	write("assets/app-abc123.js", scriptText)
+	write("assets/app-abc123.css", "body{margin:0}")
+	write("assets/sub/deep.js", scriptText)
+	write("assets/index.html", "<p>an asset that is named index.html</p>")
 	if err := os.WriteFile(filepath.Join(parent, "secret.txt"), []byte(secretText), 0o600); err != nil {
 		t.Fatalf("write secret: %v", err)
+	}
+	if err := os.Symlink("../../secret.txt", filepath.Join(dir, "assets", "link.js")); err != nil {
+		t.Fatalf("symlink: %v", err)
 	}
 	return testSite{dir: dir, secret: secretText, locs: locs}
 }
@@ -142,8 +152,20 @@ func writeTestSite(t *testing.T) testSite {
 // newSiteApp builds the app with SITE_DIR set, the way main would.
 func newSiteApp(t *testing.T, dir string) *app {
 	t.Helper()
-	a, _ := newTestAppEnv(t, 1000, map[string]string{"SITE_DIR": dir})
+	a, _ := newSiteAppLogs(t, dir, 1000)
 	return a
+}
+
+// newSiteAppLogs is newSiteApp with the rate limit burst and the access log.
+func newSiteAppLogs(t *testing.T, dir string, burst int) (*app, *bytes.Buffer) {
+	t.Helper()
+	a, logs := newTestAppEnv(t, burst, map[string]string{"SITE_DIR": dir})
+	t.Cleanup(func() {
+		if err := a.close(); err != nil {
+			t.Errorf("close: %v", err)
+		}
+	})
+	return a, logs
 }
 
 // do sends one request through the real handler. It never follows a redirect.
@@ -258,6 +280,198 @@ func TestPagesCarryTheBootScriptFaviconAndSecurityHeaders(t *testing.T) {
 	}
 	if res.Header.Get("X-Request-Id") == "" {
 		t.Fatal("no request id: the page skipped the outer chain")
+	}
+}
+
+func TestBuildAssetsAreServedAsImmutableFiles(t *testing.T) {
+	s := writeTestSite(t)
+	h := newSiteApp(t, s.dir).handler()
+
+	for _, tc := range []struct {
+		target   string
+		wantType string
+		wantBody string
+	}{
+		{"/assets/app-abc123.js", "text/javascript", scriptText},
+		{"/assets/app-abc123.css", "text/css", "body{margin:0}"},
+		{"/assets/sub/deep.js", "text/javascript", scriptText},
+		// A file named index.html is a file, not a directory index: no redirect.
+		{"/assets/index.html", "text/html", "an asset that is named index.html"},
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			t.Run(method+" "+tc.target, func(t *testing.T) {
+				res := do(t, h, method, tc.target, nil)
+				body := bodyOf(t, res)
+				if res.StatusCode != http.StatusOK {
+					t.Fatalf("status = %d, want 200", res.StatusCode)
+				}
+				if got := res.Header.Get("Location"); got != "" {
+					t.Fatalf("Location = %q, want none", got)
+				}
+				if got := res.Header.Get("Content-Type"); !strings.HasPrefix(got, tc.wantType) {
+					t.Fatalf("Content-Type = %q, want prefix %q", got, tc.wantType)
+				}
+				if got := res.Header.Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+					t.Fatalf("Cache-Control = %q, want public, max-age=31536000, immutable", got)
+				}
+				if got := res.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+					t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+				}
+				if method == http.MethodGet && !strings.Contains(body, tc.wantBody) {
+					t.Fatalf("body = %q, want it to hold %q", body, tc.wantBody)
+				}
+			})
+		}
+	}
+}
+
+// The security middleware already sends nosniff on every response of the
+// example. The asset handler sends it itself, so it holds in an application
+// that mounts the handler without that middleware.
+func TestAssetHandlerSendsNosniffWithoutTheChain(t *testing.T) {
+	fsys := fstest.MapFS{
+		"sitemap.xml":      {Data: []byte(fixtureSitemapOf("https://e.test/de/"))},
+		"de/index.html":    {Data: []byte(pageHTML("/de/"))},
+		"assets/app.js":    {Data: []byte(scriptText)},
+		"assets/dir/x.css": {Data: []byte("a{}")},
+	}
+	s, err := loadSite(fsys, []string{"de", "en"}, favicon.Icons{})
+	if err != nil {
+		t.Fatalf("loadSite: %v", err)
+	}
+	h := s.assetHandler()
+	for target, want := range map[string]int{
+		"/assets/app.js":    http.StatusOK,
+		"/assets/dir":       http.StatusNotFound,
+		"/assets/dir/":      http.StatusNotFound,
+		"/assets/nope.js":   http.StatusNotFound,
+		"/de/index.html":    http.StatusNotFound,
+		"/assets/../de/":    http.StatusNotFound,
+		"/assets/dir/x.css": http.StatusOK,
+	} {
+		res := do(t, h, http.MethodGet, target, nil)
+		_ = bodyOf(t, res)
+		if res.StatusCode != want {
+			t.Fatalf("GET %s = %d, want %d", target, res.StatusCode, want)
+		}
+		if want == http.StatusOK && res.Header.Get("X-Content-Type-Options") != "nosniff" {
+			t.Fatalf("GET %s: X-Content-Type-Options = %q, want nosniff", target, res.Header.Get("X-Content-Type-Options"))
+		}
+	}
+}
+
+// fixtureSitemapOf is a minimal urlset of the given locs.
+func fixtureSitemapOf(locs ...string) string {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0"?><urlset xmlns="` + sitemapNamespace + `">`)
+	for _, l := range locs {
+		b.WriteString("<url><loc>" + l + "</loc></url>")
+	}
+	b.WriteString("</urlset>")
+	return b.String()
+}
+
+func TestAssetsNeverListOrEscape(t *testing.T) {
+	s := writeTestSite(t)
+	h := newSiteApp(t, s.dir).handler()
+
+	for _, target := range []string{
+		"/assets",
+		"/assets/",
+		"/assets/sub",
+		"/assets/sub/",
+		"/assets/app-abc123.js/",
+		"/assets/missing.js",
+		"/assets/link.js",
+		"/assets/%2e%2e/secret.txt",
+		"/assets/..%2fsecret.txt",
+		"/assets/..%5csecret.txt",
+		"/assets/%2e%2e/%2e%2e/secret.txt",
+		"/assets/../secret.txt",
+		"/assets/sub/../../secret.txt",
+	} {
+		t.Run(target, func(t *testing.T) {
+			res := do(t, h, http.MethodGet, target, nil)
+			body := bodyOf(t, res)
+			for _, leak := range []string{s.secret, "app-abc123", "deep.js", "link.js\""} {
+				if strings.Contains(body, leak) {
+					t.Fatalf("status %d: body shows %q: %s", res.StatusCode, leak, body)
+				}
+			}
+			switch res.StatusCode {
+			case http.StatusNotFound:
+			case http.StatusTemporaryRedirect:
+				// The mux cleans a non canonical path. The target must refuse again.
+				u, err := url.Parse(res.Header.Get("Location"))
+				if err != nil || u.Host != "" {
+					t.Fatalf("redirect to %q is not a local path", res.Header.Get("Location"))
+				}
+				next := do(t, h, http.MethodGet, u.RequestURI(), nil)
+				if got := bodyOf(t, next); strings.Contains(got, s.secret) {
+					t.Fatalf("redirect target leaks the secret")
+				}
+				if next.StatusCode != http.StatusNotFound {
+					t.Fatalf("redirect target status = %d, want 404", next.StatusCode)
+				}
+			default:
+				t.Fatalf("status = %d, want 404", res.StatusCode)
+			}
+		})
+	}
+}
+
+func TestEveryRouteOfTheSiteSitsInTheRouteChain(t *testing.T) {
+	s := writeTestSite(t)
+
+	// A burst of one: the second request from the same client is refused by
+	// the rate limiter, and only a handler inside the route chain sees it.
+	for _, target := range []string{"/", "/de/impressum", "/sitemap.xml", "/assets/app-abc123.js"} {
+		t.Run(target, func(t *testing.T) {
+			a, _ := newSiteAppLogs(t, s.dir, 1)
+			h := a.handler()
+			first := do(t, h, http.MethodGet, target, nil)
+			_ = bodyOf(t, first)
+			if first.StatusCode >= 400 {
+				t.Fatalf("first request status = %d, want a success or redirect", first.StatusCode)
+			}
+			second := do(t, h, http.MethodGet, target, nil)
+			_ = bodyOf(t, second)
+			if second.StatusCode != http.StatusTooManyRequests {
+				t.Fatalf("second request status = %d, want 429: the handler is outside the route chain", second.StatusCode)
+			}
+		})
+	}
+}
+
+func TestRootRedirectIsMountedForTheRootAlone(t *testing.T) {
+	s := writeTestSite(t)
+	a, logs := newSiteAppLogs(t, s.dir, 1000)
+	h := a.handler()
+
+	for _, tc := range []struct {
+		target    string
+		wantRoute string
+		wantCode  int
+	}{
+		{"/", "GET /{$}", http.StatusFound},
+		// Another path is the catch-all's, not the redirect handler's own 404:
+		// the pattern must be "GET /{$}", never "GET /".
+		{"/x", "/", http.StatusNotFound},
+		{"/impressum", "/", http.StatusNotFound},
+	} {
+		logs.Reset()
+		res := do(t, h, http.MethodGet, tc.target, nil)
+		_ = bodyOf(t, res)
+		if res.StatusCode != tc.wantCode {
+			t.Fatalf("GET %s = %d, want %d", tc.target, res.StatusCode, tc.wantCode)
+		}
+		lines := accessLogLines(t, logs)
+		if len(lines) != 1 {
+			t.Fatalf("GET %s: got %d access log lines, want 1", tc.target, len(lines))
+		}
+		if got := lines[0]["route"]; got != tc.wantRoute {
+			t.Fatalf("GET %s route = %v, want %q", tc.target, got, tc.wantRoute)
+		}
 	}
 }
 
@@ -383,16 +597,51 @@ func TestBareLanguagePrefixIsRedirectedByTheMux(t *testing.T) {
 	}
 }
 
+// A path the mux has to clean is answered with a 307 before any handler runs,
+// so the redirect carries no Vary and no Cache-Control, and the cleaned path
+// can name another language than the one the client typed. A raw client can
+// reach the other language this way. The target is a listed page that answers
+// 200 directly.
+func TestCleanedPathIsRedirectedByTheMuxToTheCleanedPage(t *testing.T) {
+	s := writeTestSite(t)
+	h := newSiteApp(t, s.dir).handler()
+
+	res := do(t, h, http.MethodGet, "/de/../en/", http.Header{"Accept-Language": {"de"}})
+	_ = bodyOf(t, res)
+	if res.StatusCode != http.StatusTemporaryRedirect {
+		t.Fatalf("status = %d, want 307", res.StatusCode)
+	}
+	if got := res.Header.Get("Location"); got != "/en/" {
+		t.Fatalf("Location = %q, want /en/", got)
+	}
+	if got := res.Header.Get("Cache-Control"); got != "" {
+		t.Fatalf("Cache-Control = %q, want none on the mux redirect", got)
+	}
+	if got := res.Header.Values("Vary"); len(got) != 0 {
+		t.Fatalf("Vary = %q, want none on the mux redirect", got)
+	}
+	next := do(t, h, http.MethodGet, "/en/", nil)
+	_ = bodyOf(t, next)
+	if next.StatusCode != http.StatusOK {
+		t.Fatalf("target status = %d, want 200", next.StatusCode)
+	}
+}
+
+// Every path the site serves answers GET and HEAD only. A POST reaches the
+// catch-all, which answers 404: no handler of the site is registered without
+// its method, so language.Redirect's own 405 for other methods is never
+// reached through this mux. ServeMux would answer 405 only if the catch-all
+// were absent.
 func TestPostToAPageIsNotServed(t *testing.T) {
 	s := writeTestSite(t)
 	a := newSiteApp(t, s.dir)
 	h := a.handler()
 
-	for _, target := range []string{"/", "/de/", "/de/impressum", "/sitemap.xml"} {
+	for _, target := range []string{"/", "/de/", "/de/impressum", "/sitemap.xml", "/assets/app-abc123.js"} {
 		res := do(t, h, http.MethodPost, target, nil)
 		_ = bodyOf(t, res)
-		if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusFound {
-			t.Fatalf("POST %s = %d, want a refusal", target, res.StatusCode)
+		if res.StatusCode != http.StatusNotFound {
+			t.Fatalf("POST %s = %d, want 404 from the catch-all", target, res.StatusCode)
 		}
 	}
 }
@@ -448,8 +697,6 @@ func TestPathTraversalNeverReadsOutsideTheSite(t *testing.T) {
 					}
 				}
 			case http.StatusOK:
-				// Only a listed page may answer, and never one that
-				// is not the page of its own path.
 				if !strings.Contains(body, "page:") {
 					t.Fatalf("200 for %s with a body that is no listed page: %s", target, body)
 				}
@@ -464,7 +711,7 @@ func TestWithoutASiteDirectoryNoLanguageRouteExists(t *testing.T) {
 	a, _ := newTestApp(t, 1000)
 	h := a.handler()
 
-	for _, target := range []string{"/", "/de/", "/en/", "/sitemap.xml"} {
+	for _, target := range []string{"/", "/de/", "/en/", "/sitemap.xml", "/assets/app.js"} {
 		res := do(t, h, http.MethodGet, target, nil)
 		_ = bodyOf(t, res)
 		if res.StatusCode != http.StatusNotFound {
@@ -473,42 +720,124 @@ func TestWithoutASiteDirectoryNoLanguageRouteExists(t *testing.T) {
 	}
 }
 
-func TestNewAppFailsOnABrokenSiteDirectory(t *testing.T) {
+// appFromEnv builds the app and returns the error instead of failing.
+func appFromEnv(t *testing.T, siteDir string) (*app, error) {
+	t.Helper()
 	env := testEnv(t, 1000)
-	env["SITE_DIR"] = filepath.Join(t.TempDir(), "missing")
+	env["SITE_DIR"] = siteDir
 	cfg, err := loadConfig(func(key string) string { return env[key] })
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
-	if _, err := newApp(cfg, testLogger()); err == nil {
+	return newApp(cfg, testLogger())
+}
+
+func TestNewAppFailsOnABrokenSiteDirectory(t *testing.T) {
+	if _, err := appFromEnv(t, filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("newApp accepted a site directory that does not exist")
+	}
+	if _, err := appFromEnv(t, t.TempDir()); err == nil {
 		t.Fatal("newApp accepted a site directory without a sitemap")
 	}
 }
 
+// A page that is a symbolic link out of the site directory fails startup and
+// names the page. os.OpenRoot refuses the link, so the page is never read.
+func TestNewAppRefusesAPageThatLinksOutOfTheSiteDirectory(t *testing.T) {
+	s := writeTestSite(t)
+	page := filepath.Join(s.dir, "de", "impressum", "index.html")
+	if err := os.Remove(page); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	// The target is a valid page, so only the link itself can be the reason
+	// the load fails.
+	outside := filepath.Join(filepath.Dir(s.dir), "outside.html")
+	if err := os.WriteFile(outside, []byte(pageHTML("/de/impressum")), 0o600); err != nil {
+		t.Fatalf("write outside page: %v", err)
+	}
+	if err := os.Symlink("../../../outside.html", page); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	a, err := appFromEnv(t, s.dir)
+	if err == nil {
+		_ = a.close()
+		t.Fatal("newApp accepted a page that links out of the site directory")
+	}
+	if !strings.Contains(err.Error(), "de/impressum/index.html") || !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("error = %v, want it to name the page and say the link escapes", err)
+	}
+}
+
+// A link that stays inside the site directory is fine.
+func TestNewAppAcceptsAPageThatLinksInsideTheSiteDirectory(t *testing.T) {
+	s := writeTestSite(t)
+	page := filepath.Join(s.dir, "de", "impressum", "index.html")
+	if err := os.Remove(page); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if err := os.Symlink("../../en/impressum/index.html", page); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	a, err := appFromEnv(t, s.dir)
+	if err != nil {
+		t.Fatalf("newApp: %v", err)
+	}
+	_ = a.close()
+}
+
+const (
+	reasonURL       = "is not an absolute http or https URL"
+	reasonQuery     = "has a query, a fragment or userinfo"
+	reasonEncoded   = "has an encoded slash or backslash"
+	reasonLanguage  = "is not under a configured language prefix"
+	reasonBare      = "is a language prefix without its trailing slash"
+	reasonSegment   = "has a segment that is not a plain path segment"
+	reasonOrigin    = "uses another origin than the first loc"
+	reasonRoot      = "must be a urlset in the sitemap namespace"
+	reasonMultiLoc  = "has more than one loc"
+	reasonDuplicate = "is listed twice"
+)
+
 func TestLoadSite(t *testing.T) {
 	langs := []string{"de", "en"}
-	page := func(lang string) []byte { return []byte(pageHTML("/" + lang + "/")) }
-	sitemap := func(locs ...string) *fstest.MapFile {
+	const ns = "http://www.sitemaps.org/schemas/sitemap/0.9"
+	doc := func(root, namespace string, urls ...string) *fstest.MapFile {
 		var b strings.Builder
-		b.WriteString(`<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`)
-		for _, l := range locs {
-			b.WriteString("<url><loc>" + l + "</loc></url>")
+		b.WriteString(`<?xml version="1.0"?><` + root + ` xmlns="` + namespace + `">`)
+		for _, u := range urls {
+			b.WriteString("<url>" + u + "</url>")
 		}
-		b.WriteString("</urlset>")
+		b.WriteString("</" + root + ">")
 		return &fstest.MapFile{Data: []byte(b.String())}
 	}
-	pages := func(extra fstest.MapFS) fstest.MapFS {
-		fsys := fstest.MapFS{
-			"de/index.html":           {Data: page("de")},
-			"en/index.html":           {Data: page("en")},
-			"de/impressum/index.html": {Data: []byte(pageHTML("/de/impressum"))},
-			// Files of a language and a path the site does not serve. A loc
-			// naming them must still be refused.
-			"fr/index.html":       {Data: []byte(pageHTML("/fr/"))},
-			"app/x/index.html":    {Data: []byte(pageHTML("/app/x"))},
-			"de/a%25b/index.html": {Data: []byte(pageHTML("/de/a%25b"))},
-			"de/{x}/index.html":   {Data: []byte(pageHTML("/de/{x}"))},
+	locs := func(list ...string) *fstest.MapFile {
+		urls := make([]string, 0, len(list))
+		for _, l := range list {
+			urls = append(urls, "<loc>"+l+"</loc>")
 		}
+		return doc("urlset", ns, urls...)
+	}
+	// Every file a case names exists, so a missing file never stands in for
+	// the refusal the case asserts.
+	site := func(sitemap *fstest.MapFile) fstest.MapFS {
+		page := func(p string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(pageHTML(p))} }
+		return fstest.MapFS{
+			"sitemap.xml":             sitemap,
+			"de/index.html":           page("/de/"),
+			"en/index.html":           page("/en/"),
+			"de/impressum/index.html": page("/de/impressum"),
+			"fr/index.html":           page("/fr/"),
+			"app/x/index.html":        page("/app/x"),
+			"de/a%25b/index.html":     page("/de/a%25b"),
+			"de/{x}/index.html":       page("/de/{x}"),
+			"de/a b/index.html":       page("/de/a b"),
+			"de/a\x01b/index.html":    page("/de/a\x01b"),
+			"de/a/b/index.html":       page("/de/a/b"),
+			"de/a\\b/index.html":      page("/de/a\\b"),
+		}
+	}
+	with := func(sitemap *fstest.MapFile, extra fstest.MapFS) fstest.MapFS {
+		fsys := site(sitemap)
 		for k, v := range extra {
 			fsys[k] = v
 		}
@@ -516,126 +845,66 @@ func TestLoadSite(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		name    string
-		fsys    fstest.MapFS
+		name string
+		fsys fstest.MapFS
+		// wantErr is the refusal reason. Empty means the load succeeds.
 		wantErr string
+		// missing allows the error to be a missing file. Every other case
+		// must not be one.
+		missing bool
+		// wantPages is the number of pages on success.
+		wantPages int
 	}{
+		{name: "valid", fsys: site(locs("https://e.test/de/", "https://e.test/en/", "https://e.test/de/impressum")), wantPages: 3},
+		{name: "white space around a loc", fsys: site(locs("\n  https://e.test/de/ \n", "\thttps://e.test/en/\t")), wantPages: 2},
+		{name: "http origin", fsys: site(locs("http://localhost:8080/de/", "http://localhost:8080/en/")), wantPages: 2},
+		{name: "no sitemap", fsys: fstest.MapFS{}, wantErr: "sitemap.xml", missing: true},
+		{name: "not xml", fsys: site(&fstest.MapFile{Data: []byte("<urlset><url>")}), wantErr: "parse sitemap.xml"},
+		{name: "empty urlset", fsys: site(locs()), wantErr: "lists no url"},
+		{name: "sitemap index", fsys: site(doc("sitemapindex", ns, "<loc>https://e.test/de/</loc>")), wantErr: reasonRoot},
+		{name: "no namespace", fsys: site(doc("urlset", "", "<loc>https://e.test/de/</loc>")), wantErr: reasonRoot},
+		{name: "another namespace", fsys: site(doc("urlset", "http://example.test/ns", "<loc>https://e.test/de/</loc>")), wantErr: reasonRoot},
+		{name: "two locs in one url", fsys: site(doc("urlset", ns, "<loc>https://e.test/de/</loc><loc>https://e.test/en/</loc>")), wantErr: reasonMultiLoc},
+		{name: "url without a loc", fsys: site(doc("urlset", ns, "<lastmod>2026-01-01</lastmod>")), wantErr: "has no loc"},
+		{name: "mixed host", fsys: site(locs("https://e.test/de/", "https://other.test/en/")), wantErr: reasonOrigin},
+		{name: "mixed scheme", fsys: site(locs("https://e.test/de/", "http://e.test/en/")), wantErr: reasonOrigin},
+		{name: "mixed port", fsys: site(locs("https://e.test/de/", "https://e.test:8443/en/")), wantErr: reasonOrigin},
+		{name: "ftp scheme", fsys: site(locs("ftp://e.test/de/")), wantErr: reasonURL},
+		{name: "not absolute", fsys: site(locs("/de/")), wantErr: reasonURL},
+		{name: "no host", fsys: site(locs("https:///de/")), wantErr: reasonURL},
+		{name: "query", fsys: site(locs("https://e.test/de/?a=1")), wantErr: reasonQuery},
+		{name: "empty query", fsys: site(locs("https://e.test/de/?")), wantErr: reasonQuery},
+		{name: "fragment", fsys: site(locs("https://e.test/de/#a")), wantErr: reasonQuery},
+		{name: "userinfo", fsys: site(locs("https://u:p@e.test/de/")), wantErr: reasonQuery},
+		{name: "lower case encoded slash", fsys: site(locs("https://e.test/de/a%2fb")), wantErr: reasonEncoded},
+		{name: "upper case encoded slash", fsys: site(locs("https://e.test/de/a%2Fb")), wantErr: reasonEncoded},
+		{name: "encoded backslash", fsys: site(locs("https://e.test/de/a%5cb")), wantErr: reasonEncoded},
+		{name: "upper case encoded backslash", fsys: site(locs("https://e.test/de/a%5Cb")), wantErr: reasonEncoded},
+		{name: "dot dot segment", fsys: site(locs("https://e.test/de/../x")), wantErr: reasonSegment},
+		{name: "encoded dot dot segment", fsys: site(locs("https://e.test/de/%2e%2e/x")), wantErr: reasonSegment},
+		{name: "dot segment", fsys: site(locs("https://e.test/de/./x")), wantErr: reasonSegment},
+		{name: "empty segment", fsys: site(locs("https://e.test/de//x")), wantErr: reasonSegment},
+		{name: "pattern syntax", fsys: site(locs("https://e.test/de/%7Bx%7D")), wantErr: reasonSegment},
+		{name: "percent in a decoded segment", fsys: site(locs("https://e.test/de/a%2525b")), wantErr: reasonSegment},
+		{name: "space in a segment", fsys: site(locs("https://e.test/de/a%20b")), wantErr: reasonSegment},
+		{name: "control character in a segment", fsys: site(locs("https://e.test/de/a%01b")), wantErr: reasonSegment},
+		{name: "trailing slash on a deep path", fsys: site(locs("https://e.test/de/impressum/")), wantErr: reasonSegment},
+		{name: "bare language prefix", fsys: site(locs("https://e.test/de")), wantErr: reasonBare},
+		{name: "language not configured", fsys: site(locs("https://e.test/fr/")), wantErr: reasonLanguage},
+		{name: "app path with a file on disk", fsys: site(locs("https://e.test/app/x")), wantErr: reasonLanguage},
+		{name: "root", fsys: site(locs("https://e.test/")), wantErr: reasonLanguage},
+		{name: "sitemap names itself", fsys: site(locs("https://e.test/sitemap.xml")), wantErr: reasonLanguage},
+		{name: "duplicate", fsys: site(locs("https://e.test/de/", "https://e.test/de/")), wantErr: reasonDuplicate},
+		{name: "listed page missing", fsys: site(locs("https://e.test/de/gone")), wantErr: "de/gone/index.html", missing: true},
 		{
-			name: "valid",
-			fsys: pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/de/", "https://e.test/en/", "https://e.test/de/impressum")}),
-		},
-		{
-			name:    "no sitemap",
-			fsys:    pages(nil),
-			wantErr: "sitemap.xml",
-		},
-		{
-			name:    "empty sitemap",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap()}),
-			wantErr: "no url",
-		},
-		{
-			name:    "not xml",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": {Data: []byte("<urlset><url>")}}),
-			wantErr: "sitemap.xml",
-		},
-		{
-			name:    "listed page missing",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/de/", "https://e.test/de/gone")}),
-			wantErr: "de/gone/index.html",
-		},
-		{
-			name:    "dot dot segment",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/de/../x")}),
-			wantErr: "https://e.test/de/../x",
-		},
-		{
-			name:    "encoded dot dot segment",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/de/%2e%2e/x")}),
-			wantErr: "%2e%2e",
-		},
-		{
-			name:    "encoded slash",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/de/a%2fb")}),
-			wantErr: "a%2fb",
-		},
-		{
-			name:    "backslash",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/de/a%5cb")}),
-			wantErr: "a%5cb",
-		},
-		{
-			name:    "pattern syntax",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/de/%7Bx%7D")}),
-			wantErr: "%7Bx%7D",
-		},
-		{
-			name:    "percent in a decoded segment",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/de/a%2525b")}),
-			wantErr: "a%2525b",
-		},
-		{
-			name:    "language not configured",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/fr/")}),
-			wantErr: "https://e.test/fr/",
-		},
-		{
-			name:    "app path",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/app")}),
-			wantErr: "https://e.test/app",
-		},
-		{
-			name:    "app path with a file on disk",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/app/x")}),
-			wantErr: "language prefix",
-		},
-		{
-			name:    "language not configured with a file on disk",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/fr/")}),
-			wantErr: "language prefix",
-		},
-		{
-			name:    "root",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/")}),
-			wantErr: "https://e.test/",
-		},
-		{
-			name:    "trailing slash on a deep path",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/de/impressum/")}),
-			wantErr: "https://e.test/de/impressum/",
-		},
-		{
-			name:    "query",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/de/?a=1")}),
-			wantErr: "https://e.test/de/?a=1",
-		},
-		{
-			name:    "fragment",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/de/#a")}),
-			wantErr: "https://e.test/de/#a",
-		},
-		{
-			name:    "not absolute",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("/de/")}),
-			wantErr: "/de/",
-		},
-		{
-			name:    "duplicate",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/de/", "https://e.test/de/")}),
-			wantErr: "twice",
-		},
-		{
-			name:    "sitemap names itself",
-			fsys:    pages(fstest.MapFS{"sitemap.xml": sitemap("https://e.test/de/", "https://e.test/sitemap.xml")}),
-			wantErr: "https://e.test/sitemap.xml",
-		},
-		{
-			name: "page without a head element",
-			fsys: pages(fstest.MapFS{
-				"sitemap.xml":   sitemap("https://e.test/de/"),
-				"de/index.html": {Data: []byte("<p>no head</p>")},
-			}),
+			name:    "page without a head element",
+			fsys:    with(locs("https://e.test/de/"), fstest.MapFS{"de/index.html": {Data: []byte("<p>no head</p>")}}),
 			wantErr: "head",
+		},
+		{
+			name:    "sitemap over the size limit",
+			fsys:    site(&fstest.MapFile{Data: bytes.Repeat([]byte(" "), maxSitemapBytes+1)}),
+			wantErr: "larger than",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -644,16 +913,19 @@ func TestLoadSite(t *testing.T) {
 				if err != nil {
 					t.Fatalf("loadSite: %v", err)
 				}
-				if s == nil || len(s.pages) != 3 {
-					t.Fatalf("site = %+v, want three pages", s)
+				if s == nil || len(s.pages) != tc.wantPages {
+					t.Fatalf("site = %+v, want %d pages", s, tc.wantPages)
 				}
 				return
 			}
 			if err == nil {
-				t.Fatalf("loadSite accepted the directory, want an error naming %q", tc.wantErr)
+				t.Fatalf("loadSite accepted the directory, want an error saying %q", tc.wantErr)
 			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("error = %v, want it to name %q", err, tc.wantErr)
+				t.Fatalf("error = %v, want it to say %q", err, tc.wantErr)
+			}
+			if !tc.missing && errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("error = %v: a missing file masks the refusal", err)
 			}
 		})
 	}
