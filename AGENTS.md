@@ -105,8 +105,10 @@ task example:build   # compile the example application
 ## Documentation
 
 - ADRs sparingly. The design reasoning lives in `docs/concepts/govue.md`, including the
-  decisions a separate record would otherwise hold. `docs/adr/` does not exist and stays absent
-  until a decision is genuinely contested and expensive to reverse.
+  decisions a separate record would otherwise hold.
+- `docs/adr/` starts with ADR 0001, the device token sessions for native apps. A new ADR is
+  warranted only when a decision is genuinely contested and expensive to reverse, such as a
+  security boundary or a public contract. Everything else goes into the concept doc.
 
 ## Releasing
 

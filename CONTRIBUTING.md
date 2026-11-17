@@ -82,5 +82,6 @@ CI and the final gate run.
 
 The design and the reasoning behind it live in
 [docs/concepts/govue.md](docs/concepts/govue.md). This repository keeps architecture decision
-records sparse: `docs/adr/` does not exist and stays absent until a decision is genuinely
-contested and expensive to reverse. Read the concept doc before proposing a change to the design.
+records sparse. [docs/adr/](docs/adr/) starts with ADR 0001, and a new record is written only
+when a decision is genuinely contested and expensive to reverse. Read the concept doc and the
+ADRs before proposing a change to the design.
