@@ -96,7 +96,8 @@ reuses the reasoning that already rejected a signed cookie for the web session.
   - Grace, default five minutes: how long a retired current hash still authenticates. It only
     covers a token its holder already had.
   - Minimum interval, default one hour: the least time between two confirmed rotations of one
-    device.
+    device. Issuing the token counts as the first, so the first rotation follows one interval
+    after issue.
   - Rotate timeout, default 30 seconds: how long after issue a same nonce retry may overwrite
     the pending token.
 
@@ -111,10 +112,14 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 
 - A lost rotate response costs nothing. A retry with the same nonce within the rotate timeout
   overwrites the pending token. A later one retires it.
-- The app never presents a retired pending token, because it falls back to its current token
-  first. One in use means a second holder rotated, so it revokes the device.
-- The minimum interval keeps app launches from draining `Retired`. In normal use a retired token
-  stays detectable for at least four intervals.
+- The app never presents a retired pending token. It holds only a pending token that was
+  overwritten, which is unknown and gets a 401 and the fallback, or one it never stored. A
+  retired pending token in use means a second holder rotated, so it revokes the device.
+- Rare edge: the server processes the original rotate more than 30 seconds after the retry's
+  pending token was issued. It retires that token, and the app's first use revokes the device.
+  This is acceptable because the client timeout is below the rotate timeout.
+- The minimum interval keeps app launches from draining `Retired`. Without pending replacements
+  a retired token stays detectable for at least four intervals.
 
 ### Client contract
 
@@ -266,7 +271,7 @@ reuses the reasoning that already rejected a signed cookie for the web session.
   then retired, and its use after the grace revokes the device. This holds while the stolen
   token is among the last four retired hashes.
 - Stolen and kept passive: the same, and the minimum interval keeps it detectable for at least
-  four intervals in normal use.
+  four intervals without pending replacements.
 - A thief who replaces the app's pending token: the app falls back to its current token and
   rotates again, which retires the thief's pending token. Its next use revokes the device.
 - A thief who knows the nonce can overwrite silently only within the rotate timeout. The app's
@@ -283,6 +288,9 @@ reuses the reasoning that already rejected a signed cookie for the web session.
   origins. The exemption holds either way.
 - Whether the native HTTP plugin of Capacitor bypasses CORS when a product enables it.
 - Whether passkeys work inside a Capacitor webview.
+- For the code pull request, owner decides: keep retired current hashes and retired pending
+  hashes in two bounded lists, for example four and two. Pending replacements could then not push
+  the app's retired token out. The fallback never relies on a retired pending entry.
 
 ### Related
 
