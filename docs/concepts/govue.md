@@ -338,15 +338,24 @@ The design of the library and the reasoning behind it.
   drift further.
 - govue owns no schema. The existing applications store accounts differently, so a consumer
   satisfies `account.Store` with an adapter over its own tables. Adoption is an adapter, not a
-  data migration: the password hash format and the TOTP secret format already match.
-- `Store` has five methods, taken from the calls the logic makes: `FindByLogin`, `Create`,
-  `AdvanceTOTPCounter`, `ConfirmTOTP` and `SetPasswordHash`. It has no method for a provider
+  data migration: the password hash format and the TOTP secret format already match, and the
+  record needs no column the existing tables lack.
+- `Store` has six methods, taken from the calls the logic makes. `FindByLogin`, `Create` and
+  `AdvanceTOTPCounter` serve signup and login. `ConfirmTOTP` and `ReplaceTOTPSecret` serve TOTP
+  enrolment, and `SetPasswordHash` serves a password change. It has no method for a provider
   identity, a connected account, a tenant or a list of accounts.
 - That absence is the guarantee. Code in `account` cannot reach what the interface does not
   offer, so a login can never be matched against a provider account somebody connected for
-  another purpose. A test pins the method set, so widening it is a reviewed decision.
+  another purpose. Tests pin the method set and the fields of `Record`, so widening either is a
+  reviewed decision.
 - Scoping stays in the adapter. A consumer with row level security or tenants reads its scope
-  from `ctx` there.
+  from `ctx` there, and fails closed when the scope is missing. That a call never acts outside
+  the account it was asked about is structural only where the adapter enforces such a scope.
+- Where the logic looks an account up by login while it already holds an `Identity`, it checks
+  that the record's id equals the identity's id before it writes.
+- `account` has no status field. An account the consumer disables or holds back answers
+  `ErrNotFound` from `FindByLogin` or comes back without a password hash. Both existing
+  applications refuse such accounts today, and the adapter is where that stays true.
 - `Identity` carries an opaque `ID` and a `Login`, nothing else. The id is the consumer's
   account id, never a provider subject, so a session keys on one identifier however the login
   happened. Tenant, role and groups are added by the consumer when it builds its session. An
@@ -358,9 +367,21 @@ The design of the library and the reasoning behind it.
   racing logins with one captured code both pass.
 - A TOTP secret counts only after a code from it was confirmed. An account usable at once with
   a secret shown once locks out anyone who loses that response before scanning it.
+- Confirmation is derived, not stored. `ConfirmTOTP` writes the counter of the confirming code,
+  so a secret is confirmed exactly when the counter is above zero. A nullable counter column
+  maps NULL to zero, and no confirmed column is needed. An existing account with a secret and
+  no counter yet then confirms once before its next login.
+- `ReplaceTOTPSecret` swaps a secret only while it is unconfirmed. Without it, a person who lost
+  the enrolment response could neither confirm nor log in, and signing up again would find the
+  login taken.
+- `AdvanceTOTPCounter` refuses an unconfirmed account, so a login can never confirm a secret.
+- The conformance suite in `account/accounttest`, planned with the login logic, checks every
+  guard an adapter has to hold. That covers the conditional counter write, the secret guard of
+  `ConfirmTOTP`, the unconfirmed guard of `ReplaceTOTPSecret`, an ignored caller supplied id
+  and counter on `Create`, and that a disabled or pending account cannot be found for login.
 - Password and TOTP are checked in one login call, as before. A two step login needs somewhere
   to keep a half authenticated state, which is a second session to design and expire.
-- Every failed login answers `ErrInvalidCredentials`, and a login against an unknown account
+- Every refused login answers `ErrInvalidCredentials`, and a login against an unknown account
   pays the same hashing cost as a wrong password, so neither the answer nor the time tells which
   part of a guess was right.
 - Passkeys are meant to follow in a separate `passkey` package with its own store, beside TOTP

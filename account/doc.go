@@ -22,11 +22,11 @@
 //
 // # The store exposes only what the logic calls
 //
-// [Store] has the five methods the login logic needs and nothing else. There
-// is no method for a provider identity, a connected account or a tenant, so no
-// code here can reach one. That makes the boundary structural rather than a
-// check somebody could forget. See the [Store] doc comment before adding a
-// method.
+// [Store] has the six methods the logic needs for login, TOTP enrolment and
+// password change, and nothing else. There is no method for a provider
+// identity, a connected account or a tenant, so no code here can reach one.
+// That makes the boundary structural rather than a check somebody could
+// forget. See the [Store] doc comment before adding a method.
 //
 // # Replay is refused in the store
 //
@@ -37,6 +37,6 @@
 //
 // # One answer for every failed login
 //
-// A login fails with [ErrInvalidCredentials] whatever went wrong, so the answer
-// never tells which part of a guess was right.
+// Every refused login answers [ErrInvalidCredentials], whatever was wrong, so
+// the answer never tells which part of a guess was right.
 package account

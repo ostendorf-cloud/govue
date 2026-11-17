@@ -5,14 +5,21 @@ package account
 
 import "context"
 
-// Record is one local account as the [Store] holds it: the fields the login
-// logic reads, and nothing a user table usually carries besides.
+// Record is one local account as the [Store] holds it: the fields this package
+// reads, and nothing a user table usually carries besides.
 //
 // An empty PasswordHash or TOTPSecret means the account has none, for example
 // an account a consumer created through OIDC alone. Such an account cannot log
 // in through this package, whatever password somebody guesses for it.
+//
+// An account that must not log in, because it is disabled, pending or
+// otherwise held back by the consumer, answers [ErrNotFound] from
+// [Store.FindByLogin] or comes back with an empty PasswordHash. This package
+// has no status field to check, so the adapter is where such an account is
+// refused.
 type Record struct {
-	// ID is the consumer's account id, opaque here. [Store.Create] fills it.
+	// ID is the consumer's account id, opaque here. [Store.Create] fills it
+	// and ignores any value the caller set.
 	ID string
 
 	// Login is the unique name the person logs in with, usually an email
@@ -28,18 +35,21 @@ type Record struct {
 	// as long as FindByLogin hands back the plain value.
 	TOTPSecret string
 
-	// TOTPConfirmed reports whether a code from TOTPSecret has been confirmed.
-	// An unconfirmed secret never satisfies a login.
-	TOTPConfirmed bool
-
 	// TOTPCounter is the RFC 6238 counter of the last code this account
-	// consumed, zero when none was. Counter zero is the first thirty seconds
-	// of 1970, so no live code ever has it.
+	// consumed. Zero means no code was ever consumed, which is also what an
+	// unconfirmed TOTP secret looks like: [Store.ConfirmTOTP] writes the
+	// counter of the confirming code, so a secret counts as confirmed exactly
+	// when TOTPCounter is above zero. Counter zero is the first thirty
+	// seconds of 1970, so no live code ever has it. A nullable counter
+	// column maps NULL to zero, and no separate confirmed column is needed.
 	TOTPCounter int64
 }
 
-// Store is what this package needs from a consumer's storage: the five calls
-// the login logic makes, and no more. It is defined here, at the consumer of
+// Store is what this package needs from a consumer's storage: the six calls
+// its logic makes for login, TOTP enrolment and password change, and no more.
+// FindByLogin, Create and AdvanceTOTPCounter serve signup and login.
+// ConfirmTOTP and ReplaceTOTPSecret serve TOTP enrolment, and SetPasswordHash
+// serves a password change. The interface is defined here, at the consumer of
 // the data, and a consumer satisfies it with an adapter over its own tables.
 // This package owns no schema.
 //
@@ -47,12 +57,25 @@ type Record struct {
 // identity, a connected account, a tenant, a role or a list of accounts. Code
 // in this package cannot reach what the interface does not offer, so a login
 // can never be matched against a provider account somebody connected for
-// another purpose, and never act outside the account it was asked about. That
-// guarantee is structural, not a check somebody could forget. Adding a method
-// here, whatever the intended use, removes it for every consumer at once.
+// another purpose. That guarantee is structural, not a check somebody could
+// forget. Adding a method here, whatever the intended use, removes it for
+// every consumer at once.
+//
+// The methods that take an id act on whatever account the adapter lets that
+// id reach. That a call never acts outside the account it was asked about is
+// structural only where the adapter enforces scope, through row level
+// security or a tenant. Without that, it rests on the caller passing the right
+// id.
 //
 // Scoping is the adapter's job. A consumer with row level security or tenants
-// reads its scope from ctx inside the adapter. Nothing here carries it.
+// reads its scope from ctx inside the adapter. Nothing here carries it. An
+// adapter that expects a scope and finds none in ctx fails closed: it returns
+// an error and never falls back to an unscoped query.
+//
+// The logic looks an account up by login, also where it already holds an
+// [Identity], for example to confirm TOTP or change a password. It must then
+// check that the record's ID equals the Identity's ID before it writes, so a
+// login that now names a different account is refused rather than followed.
 //
 // An implementation is safe for concurrent use. It returns [ErrNotFound],
 // wrapped or not, for a login or an id it does not hold, and for a conditional
@@ -60,30 +83,44 @@ type Record struct {
 type Store interface {
 	// FindByLogin returns the account with this login, or ErrNotFound. It runs
 	// before any account scope exists, so an adapter with row level security
-	// reaches the row through a narrow lookup, not a widened policy.
+	// reaches the row through a narrow lookup, not a widened policy. An
+	// account that must not log in answers ErrNotFound or comes back with an
+	// empty PasswordHash; see [Record].
 	FindByLogin(ctx context.Context, login string) (Record, error)
 
-	// Create stores a new account and returns it with ID filled. A login that
-	// is already taken returns ErrConflict. The other fields are stored as
-	// given, so a new account starts with an unconfirmed TOTP secret.
+	// Create stores a new account and returns it with ID filled. It ignores
+	// any ID the caller set and stores TOTPCounter as zero whatever the
+	// caller set, so a new account always starts with an unconfirmed TOTP
+	// secret. A login that is already taken returns ErrConflict. The other
+	// fields are stored as given.
 	Create(ctx context.Context, rec Record) (Record, error)
 
 	// AdvanceTOTPCounter sets the account's TOTPCounter to counter only when
-	// the stored value is lower, and returns ErrNotFound when no row changed.
-	// The comparison and the write are one statement, a conditional UPDATE in
-	// SQL. That is what refuses a replayed code: of two logins racing with
-	// the same code, exactly one advances the counter. Reading the counter
-	// and then writing the whole record cannot do that.
+	// the stored value is above zero and lower than counter, and returns
+	// ErrNotFound when no row changed. The comparison and the write are one
+	// statement, a conditional UPDATE in SQL. That is what refuses a replayed
+	// code: of two logins racing with the same code, exactly one advances the
+	// counter. Reading the counter and then writing the whole record cannot
+	// do that. The stored value has to be above zero, so a login can never
+	// confirm a secret by advancing it.
 	AdvanceTOTPCounter(ctx context.Context, id string, counter int64) error
 
-	// ConfirmTOTP marks the account's TOTP secret as confirmed and sets
-	// TOTPCounter to counter, the counter of the code that confirmed it, so
-	// that code cannot log in afterwards. It writes only when the account has
-	// a secret, is not yet confirmed and counter is above the stored value,
-	// and returns ErrNotFound when no row changed.
+	// ConfirmTOTP confirms the account's TOTP secret by setting TOTPCounter
+	// to counter, the counter of the code that confirmed it, so that code
+	// cannot log in afterwards. It writes only when the account has a
+	// secret, the stored counter is zero and counter is above zero, and
+	// returns ErrNotFound when no row changed.
 	ConfirmTOTP(ctx context.Context, id string, counter int64) error
 
+	// ReplaceTOTPSecret replaces an unconfirmed TOTP secret with secret. It
+	// writes only while the stored counter is zero, and returns ErrNotFound
+	// when no row changed. It exists for the person who lost the enrolment
+	// response before confirming: without it they could neither confirm nor
+	// log in, and Create would refuse their login as taken. Once a secret is
+	// confirmed it can no longer be replaced through this call.
+	ReplaceTOTPSecret(ctx context.Context, id, secret string) error
+
 	// SetPasswordHash replaces the account's password hash and nothing else,
-	// or returns ErrNotFound.
+	// or returns ErrNotFound for an account the store does not hold.
 	SetPasswordHash(ctx context.Context, id, hash string) error
 }

@@ -22,6 +22,7 @@ func TestStoreMethodSet(t *testing.T) {
 		"ConfirmTOTP",
 		"Create",
 		"FindByLogin",
+		"ReplaceTOTPSecret",
 		"SetPasswordHash",
 	}
 
@@ -46,14 +47,30 @@ func TestIdentityFields(t *testing.T) {
 
 	want := []string{"ID", "Login"}
 
-	identityType := reflect.TypeFor[account.Identity]()
-
-	got := make([]string, 0, identityType.NumField())
-	for i := range identityType.NumField() {
-		got = append(got, identityType.Field(i).Name)
-	}
-
-	if !slices.Equal(got, want) {
+	if got := fieldNames(reflect.TypeFor[account.Identity]()); !slices.Equal(got, want) {
 		t.Fatalf("account.Identity fields = %v, want %v", got, want)
 	}
+}
+
+// TestRecordFields pins Record to what the logic reads. A provider subject, a
+// tenant or a status field would let this package reach what the Store
+// interface keeps out, so adding one is a decision for review.
+func TestRecordFields(t *testing.T) {
+	t.Parallel()
+
+	want := []string{"ID", "Login", "PasswordHash", "TOTPSecret", "TOTPCounter"}
+
+	if got := fieldNames(reflect.TypeFor[account.Record]()); !slices.Equal(got, want) {
+		t.Fatalf("account.Record fields = %v, want %v", got, want)
+	}
+}
+
+// fieldNames lists the field names of a struct type in declaration order.
+func fieldNames(structType reflect.Type) []string {
+	names := make([]string, 0, structType.NumField())
+	for i := range structType.NumField() {
+		names = append(names, structType.Field(i).Name)
+	}
+
+	return names
 }
