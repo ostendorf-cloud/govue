@@ -166,6 +166,38 @@ root element, otherwise `sample`, and leaves `data-mode` off so the system decid
 the attribute names are exported on both sides, `themeboot.StorageKey` and `THEME_STORAGE_KEY`,
 and a test runs the shipped script against the composable.
 
+A landing page that needs real markup for crawlers and a fast first paint can be pre-rendered once
+at build time, with no Node process at runtime. The Go server serves the result like any other
+static file. Write a small SSR entry that renders the page through `@ostendorf-cloud/govue/server`:
+
+```ts
+// src/entry-prerender.ts
+import { createGovueI18n } from '@ostendorf-cloud/govue'
+import { render as renderPage } from '@ostendorf-cloud/govue/server'
+
+import Landing from './Landing.vue'
+
+export const render = () =>
+  renderPage(Landing, {
+    setup: (app) => {
+      app.use(createGovueI18n({ locale: 'en' }))
+    },
+  })
+```
+
+Put `<!--app-html-->` inside the mount element of `index.html`, then build the entry and run the
+script. It writes the markup into the template and fails when the placeholder is missing:
+
+```sh
+pnpm exec vite build --ssr src/entry-prerender.ts --outDir dist-ssr
+node node_modules/@ostendorf-cloud/govue/scripts/prerender.ts \
+  --entry dist-ssr/entry-prerender.js --template dist/index.html --out dist/index.html
+```
+
+This renders one page, not a site: no routing, no per-request data and no hydration beyond the
+normal client mount. A dialog or other teleported content is not part of the markup. See
+`docs/concepts/govue.md` for the boundary.
+
 ### Favicon
 
 Every site has a favicon, and a site without one fails instead of shipping the browser's default

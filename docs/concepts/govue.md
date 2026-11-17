@@ -401,7 +401,49 @@ The design of the library and the reasoning behind it.
   signed in areas that need no path prefix. A test compares the key sets and the named
   placeholders of all catalogues, so a missing key fails the build.
 - Path prefixes, `hreflang`, the redirect at `/`, the sitemap and prerendering are routing
-  and are not part of this layer.
+  and are not part of this layer. Prerendering is the render entry described below.
+
+### Build time pre-rendering of one page
+
+- A landing page needs real markup for crawlers and a fast first paint. Per-request SSR would
+  need a live Node process, hydration handling and per-route data fetching, which is the
+  framework shape this repository avoids. So the page is rendered once, at build time, into a
+  static HTML file the Go server serves like any other static asset. Nothing changes in the
+  backend and no Node process runs in production.
+- `@ostendorf-cloud/govue/server` (`web/src/entry-server.ts`) is the render entry. The package
+  only reaches `vue/server-renderer` through that separate export, so a browser bundle never
+  pulls it in. The contract is deliberately small:
+  - `render(root, { props, setup })` returns the HTML of one root component as a string. `setup`
+    receives the app before it renders, which is where a plugin such as `createGovueI18n` is
+    installed.
+  - `injectIntoTemplate(template, html, placeholder)` puts the markup into a template, and
+    throws when the placeholder (default `<!--app-html-->`) is missing or appears twice.
+  - It takes no route, no language and no template. Language routes, `<html lang>`, canonical and
+    `hreflang` are a caller concern: the caller renders once per language with its own `setup`
+    and its own template.
+  - It runs in Node with no DOM, keeps no state and swallows no error: a failing component
+    rejects the promise and so fails the build.
+  - It does not render teleported content, such as an open dialog. A prerendered page shows the
+    closed state.
+- `web/scripts/prerender.ts` is the build script: it loads the consumer's SSR bundle (built with
+  `vite build --ssr`, since plain Node cannot load a `.vue` file), calls its `render`, injects
+  the markup into the template and writes the file.
+- DOM audit of the exported components and composables: no component reads `window`, `document`
+  or `navigator` itself. `useTheme` guards `document`, `window` and `matchMedia`, and skips
+  storage altogether without a window, because newer Node versions define a global
+  `localStorage` that warns on access. The language layer guards `document` and `navigator`
+  and does no detection without a window, so the language is the one passed in, else German.
+  Reka UI primitives render without a DOM. A test renders the layout components, both switches
+  and a select in a Node environment, not jsdom.
+- One limit stays. `useTheme` keeps its state at module level, because one page has one theme.
+  Rendering several pages with different themes in one process shares that state. A build
+  renders one page per process run, so this is documented rather than changed.
+- What this does not solve: data that changes per request, personalised content, routing,
+  multi-page discovery, incremental rebuilds and hydration beyond what a normal client mount does
+  once the static HTML has loaded. A site that needs those is better served by a real
+  meta-framework.
+- The render entry is the base of the language routes, which render one page per language
+  through the same entry.
 
 ### Favicons are a build requirement
 

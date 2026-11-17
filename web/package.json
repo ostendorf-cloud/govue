@@ -9,10 +9,12 @@
     "*.css"
   ],
   "files": [
-    "src"
+    "src",
+    "scripts/prerender.ts"
   ],
   "exports": {
     ".": "./src/index.ts",
+    "./server": "./src/entry-server.ts",
     "./styles.css": "./src/styles/base.css",
     "./themes/*.css": "./src/styles/themes/*.css"
   },
@@ -24,7 +26,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "vite build",
-    "theme:generate": "node scripts/generate-theme.ts"
+    "theme:generate": "node scripts/generate-theme.ts",
+    "prerender": "node scripts/prerender.ts"
   },
   "peerDependencies": {
     "tailwindcss": "^4.1.0",
