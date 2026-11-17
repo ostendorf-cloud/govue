@@ -632,5 +632,7 @@ The design of the library and the reasoning behind it.
 
 ## Related ADRs
 
-- None. The decisions above are recorded here on purpose. One gets its own ADR when it turns out
+- [0001 Device token sessions for native apps](../adr/0001-device-token-sessions.md): the
+  bearer token a native app signs in with, and the CSRF boundary it draws.
+- The other decisions above are recorded here on purpose. One gets its own ADR when it turns out
   to be contested and expensive to reverse, not before.
