@@ -1,0 +1,4 @@
+overrides:
+  '@testing-library/dom': ^10
+allowBuilds:
+  esbuild: true
