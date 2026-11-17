@@ -168,9 +168,21 @@ describe('main', () => {
   })
 })
 
-/** An entry whose files function returns the given list as JSON. */
+/**
+ * An entry whose files function returns the given list. The list sits in `files.json` next to
+ * the entry, so no value is built into source code.
+ */
 function filesEntry(list: unknown): string {
-  return write('files.mjs', `export const files = async () => (${JSON.stringify(list)})\n`)
+  write('files.json', JSON.stringify(list))
+  return write(
+    'files.mjs',
+    [
+      "import { readFileSync } from 'node:fs'",
+      "const list = JSON.parse(readFileSync(new URL('./files.json', import.meta.url), 'utf8'))",
+      'export const files = async () => list',
+      '',
+    ].join('\n'),
+  )
 }
 
 /** Every file under a directory, relative and sorted. */
@@ -305,7 +317,7 @@ describe('prerenderFiles', () => {
       prerenderFiles({ entry, template: write('index.html', ''), outDir }),
     ).rejects.toThrow(message)
     expect(tree(outDir)).toEqual([])
-    expect(tree(dir)).toEqual(['files.mjs', 'index.html'])
+    expect(tree(dir)).toEqual(['files.json', 'files.mjs', 'index.html'])
   })
 
   it('refuses a symlinked directory inside the output and writes nothing', async () => {
