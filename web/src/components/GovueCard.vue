@@ -4,12 +4,16 @@
 
 import { computed, useId } from 'vue'
 
+import { type HeadingLevel, headingTag as tagFor } from './headingLevel'
+
 export type CardAs = 'div' | 'section' | 'article'
 
-/** The level of the card title. Level 1 is the page's own heading. */
-export type CardHeadingLevel = 2 | 3 | 4 | 5 | 6
-
-const headingLevels: readonly number[] = [2, 3, 4, 5, 6]
+/**
+ * The level of the card title. Level 1 is the page's own heading.
+ *
+ * @deprecated Use `HeadingLevel`, which the card, the empty state and the error state share.
+ */
+export type CardHeadingLevel = HeadingLevel
 
 const props = withDefaults(
   defineProps<{
@@ -28,10 +32,7 @@ const props = withDefaults(
 
 const titleId = useId()
 
-// A value the types would have refused still never becomes an invalid tag.
-const headingTag = computed(() =>
-  headingLevels.includes(props.headingLevel) ? `h${props.headingLevel}` : 'h2',
-)
+const headingTag = computed(() => tagFor(props.headingLevel))
 
 // A div is not a region, so naming it would say nothing. The two sectioning
 // elements are what a screen reader can list.
