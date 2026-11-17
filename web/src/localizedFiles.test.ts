@@ -157,6 +157,22 @@ describe('localizedFiles', () => {
     expect(page(files, 'de/über/index.html')).toContain('https://example.com/de/%C3%BCber')
   })
 
+  it('accepts placeholders after a comment and after tags with quoted ">" or "<!--"', async () => {
+    const template = TEMPLATE.replace(
+      '<!--app-head-->',
+      '<!-- note --><meta name="b" content="<!-- no comment"><meta name="a" content="1 > 0"><!--app-head-->',
+    )
+    const files = await localizedFiles([{ path: '/', public: true }], {
+      origin: ORIGIN,
+      template,
+      render: stubRender,
+    })
+
+    expect(page(files, 'de/index.html')).toContain(
+      '<meta name="a" content="1 > 0"><link rel="canonical"',
+    )
+  })
+
   it('leaves placeholders and tags inside the rendered markup alone', async () => {
     const files = await localizedFiles([{ path: '/', public: true }], {
       origin: ORIGIN,
@@ -205,6 +221,35 @@ describe('localizedFiles', () => {
       ],
       ['no html start tag', TEMPLATE.replace('<html lang="xx" class="page">', ''), /<html>/],
     ]
+
+    const misplaced: [string, string, RegExp][] = [
+      [
+        'the head placeholder inside a comment',
+        TEMPLATE.replace('<!--app-head-->', '<!-- put <!--app-head--> here -->'),
+        /"<!--app-head-->" sits inside a comment/,
+      ],
+      [
+        'the app placeholder inside a comment',
+        TEMPLATE.replace('<!--app-html-->', '<!-- <!--app-html-->'),
+        /"<!--app-html-->" sits inside a comment/,
+      ],
+      [
+        'the head placeholder inside an attribute value',
+        TEMPLATE.replace('<!--app-head-->', '<meta name="x" content="<!--app-head-->">'),
+        /"<!--app-head-->" sits inside a tag/,
+      ],
+      [
+        'the app placeholder inside a single quoted attribute value',
+        TEMPLATE.replace('<!--app-html-->', "<p title='a > <!--app-html-->'></p>"),
+        /"<!--app-html-->" sits inside a tag/,
+      ],
+      [
+        'the app placeholder inside an unclosed tag',
+        TEMPLATE.replace('<!--app-html-->', '<p <!--app-html-->').replace(/<\/div>[\s\S]*$/, ''),
+        /"<!--app-html-->" sits inside a tag/,
+      ],
+    ]
+    cases.push(...misplaced)
 
     it.each(cases)('with %s', async (_name, template, message) => {
       const render = vi.fn(stubRender)

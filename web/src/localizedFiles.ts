@@ -66,6 +66,8 @@ export async function localizedFiles(
   const sitemap = sitemapXml(routes, origin)
   // A dry run over the template, so a broken one fails before any render.
   fillTemplate(template, 'de', '', '')
+  checkPlaceholderPosition(template, HEAD_PLACEHOLDER)
+  checkPlaceholderPosition(template, DEFAULT_PLACEHOLDER)
 
   const files: PrerenderFile[] = []
   for (const variant of variants) {
@@ -89,6 +91,51 @@ export async function localizedFiles(
 function fillTemplate(template: string, lang: LocaleCode, head: string, html: string): string {
   const page = injectIntoTemplate(setHtmlLang(template, lang), head, HEAD_PLACEHOLDER)
   return injectIntoTemplate(page, html, DEFAULT_PLACEHOLDER)
+}
+
+/**
+ * A placeholder inside a comment or inside a tag would be replaced as text
+ * that no browser reads, so the canonical and hreflang links, or the page,
+ * would be lost without an error. The placeholder must start where markup
+ * starts. Raw text such as a script body is not tracked.
+ */
+function checkPlaceholderPosition(template: string, placeholder: string): void {
+  const at = template.indexOf(placeholder)
+  const name = JSON.stringify(placeholder)
+  let i = 0
+  while (i < at) {
+    if (template.startsWith('<!--', i)) {
+      const end = template.indexOf('-->', i + 4)
+      if (end === -1 || end + 3 > at) {
+        throw new Error(`govue prerender: the placeholder ${name} sits inside a comment`)
+      }
+      i = end + 3
+    } else if (template.charAt(i) === '<' && /[A-Za-z]/.test(template.charAt(i + 1))) {
+      const end = tagEnd(template, i)
+      if (end === -1 || end > at) {
+        throw new Error(`govue prerender: the placeholder ${name} sits inside a tag`)
+      }
+      i = end + 1
+    } else {
+      i++
+    }
+  }
+}
+
+/** The offset of the `>` that closes the tag starting at `start`, quotes respected, or -1. */
+function tagEnd(template: string, start: number): number {
+  let quote = ''
+  for (let i = start + 1; i < template.length; i++) {
+    const char = template.charAt(i)
+    if (quote !== '') {
+      if (char === quote) quote = ''
+    } else if (char === '"' || char === "'") {
+      quote = char
+    } else if (char === '>') {
+      return i
+    }
+  }
+  return -1
 }
 
 /** `/de/` is `de/index.html`, `/de/impressum` is `de/impressum/index.html`. */

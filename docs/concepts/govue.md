@@ -619,7 +619,10 @@ The design of the library and the reasoning behind it.
   text, so `/de/über` is written as `de/über/index.html`.
 - `localizedFiles` checks the origin, the route table, the sitemap limits and the template before
   the first render. Both placeholders must appear exactly once, through the same
-  `injectIntoTemplate`. A render that rejects or returns no string rejects the whole call.
+  `injectIntoTemplate`. A placeholder inside a comment or inside a tag, such as an attribute
+  value, is refused too: it would be replaced as text no browser reads, and the page would lose
+  its links without an error. Script and style bodies are not tracked. A render that rejects or
+  returns no string rejects the whole call.
 - No per language title or description, and no `robots.txt`. A site that needs them renders
   them itself.
 - `--out-dir` treats a path from the bundle as untrusted. It refuses an absolute path, a drive
@@ -627,9 +630,14 @@ The design of the library and the reasoning behind it.
   differs only in case or Unicode normalisation (macOS and Windows file systems would merge them)
   and a path that is also the directory of another path. It also refuses a symbolic link and a
   file in the way anywhere inside the directory, and a directory where a file belongs. All of
-  this is checked before the first write, so a bad bundle leaves the directory as it was. The
-  file itself is opened with `O_NOFOLLOW` as a second guard. A file of an earlier run is
-  overwritten, every other file is kept. The template is not changed, so a run can repeat.
+  this is checked before the first write, so a bundle that fails a check leaves the directory as
+  it was. An IO error halfway, such as a read only subdirectory, can leave part of the files
+  written, and the run exits 1. Each path and content is read once from the bundle's list, so a
+  getter cannot pass the check with one value and write another. The file itself is opened with
+  `O_NOFOLLOW` as a second guard against a link created after the check. A file of an earlier
+  run is overwritten, every other file is kept. The template is not changed, so a run can repeat.
+- Windows reserved names such as `CON` and alternate data streams such as `page.html:x` are not
+  refused. The CLI is tested on macOS and Linux only.
 - The exit code is 0 on success and 1 for a usage error and for any failure, in both modes.
 - DOM audit of the exported components and composables: no component reads `window`, `document`
   or `navigator` itself. `useTheme` guards `document`, `window` and `matchMedia`, and skips
@@ -652,7 +660,7 @@ The design of the library and the reasoning behind it.
   browser gets mismatches, which in production Vue does not patch for attributes: a wrong
   `aria-checked` would stay on screen. `createApp` gives no warning in those cases, and a test
   mounts over the markup with a stored choice to keep it that way. On a language page the client
-  passes `locale: localeFromPath(...)` of the decoded path to `createGovueI18n`, and a test
+  passes `locale: localeFromPath(location.pathname)` to `createGovueI18n`, and a test
   mounts over the German and the English page with a browser of the other language. The
   prerendered markup is for the first paint and for crawlers, and the client takes over from it.
 - The script ships as plain JavaScript, `govue-prerender`, because Node does not strip

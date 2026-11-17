@@ -186,16 +186,18 @@ function checkFiles(list, entry) {
   /** @type {{ path: string, content: string }[]} */
   const files = []
   for (const item of list) {
-    if (
-      typeof item !== 'object' ||
-      item === null ||
-      typeof item.path !== 'string' ||
-      typeof item.content !== 'string'
-    ) {
+    if (typeof item !== 'object' || item === null) {
       throw new Error(`the files function of ${entry} must return { path, content } strings`)
     }
-    checkPath(item.path)
-    files.push({ path: item.path, content: item.content })
+    // Each property is read once, so a getter cannot hand the check one
+    // value and the write another.
+    const path = item.path
+    const content = item.content
+    if (typeof path !== 'string' || typeof content !== 'string') {
+      throw new Error(`the files function of ${entry} must return { path, content } strings`)
+    }
+    checkPath(path)
+    files.push({ path, content })
   }
 
   /** @param {string} path */

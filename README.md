@@ -242,14 +242,16 @@ pnpm exec govue-prerender \
 
 It writes `dist/de/index.html`, `dist/en/index.html`, `dist/de/impressum/index.html`,
 `dist/en/impressum/index.html` and `dist/sitemap.xml`. Each page carries its `lang`, a canonical
-link and the `hreflang` alternates with `x-default` on the German page. App routes are left out.
+link and the `hreflang` alternates. Every page has an `x-default`, which points at the German
+variant. App routes are left out.
 The script refuses a path from the bundle that leaves the directory, a duplicate and a symbolic
 link, before it writes anything. It overwrites the files of an earlier run and keeps every other
 file. On a language page the client passes the language of the URL:
 
 ```ts
-const locale = localeFromPath(decodeURIComponent(location.pathname))
-createApp(Page).use(createGovueI18n({ locale })).mount('#app')
+createApp(Page)
+  .use(createGovueI18n({ locale: localeFromPath(location.pathname) }))
+  .mount('#app')
 ```
 
 The Go server must serve `/de/impressum` itself and not through a directory file server, which

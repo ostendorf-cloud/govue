@@ -277,6 +277,14 @@ describe('prerenderFiles', () => {
       /more than once/,
     ],
     [
+      'a duplicate that differs in Unicode normalisation only',
+      [
+        { path: 'de/é/index.html', content: 'a' },
+        { path: 'de/é/index.html', content: 'b' },
+      ],
+      /more than once/,
+    ],
+    [
       'a file where another needs a directory',
       [
         { path: 'de/index.html', content: 'a' },
@@ -330,6 +338,26 @@ describe('prerenderFiles', () => {
     ).rejects.toThrow(/symbolic link/)
     expect(readFileSync(target, 'utf8')).toBe('keep')
     expect(lstatSync(join(outDir, 'sitemap.xml')).isSymbolicLink()).toBe(true)
+  })
+
+  it('writes the path and content it checked, even when getters change them', async () => {
+    const entry = write(
+      'files.mjs',
+      `let p = 0
+let c = 0
+export const files = async () => [{
+  get path() { return p++ === 0 ? 'safe.html' : '../escape.html' },
+  get content() { return c++ === 0 ? 'checked' : 'swapped' },
+}]
+`,
+    )
+    const outDir = join(dir, 'dist')
+
+    await prerenderFiles({ entry, template: write('index.html', ''), outDir })
+
+    expect(tree(outDir)).toEqual(['safe.html'])
+    expect(readFileSync(join(outDir, 'safe.html'), 'utf8')).toBe('checked')
+    expect(existsSync(join(dir, 'escape.html'))).toBe(false)
   })
 
   it('refuses a path whose directory is a file in the output', async () => {
