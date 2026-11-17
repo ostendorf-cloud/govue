@@ -11,12 +11,14 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 
 	"github.com/ostendorf-cloud/govue/api"
 	"github.com/ostendorf-cloud/govue/clientip"
 	"github.com/ostendorf-cloud/govue/csrf"
 	"github.com/ostendorf-cloud/govue/favicon"
 	"github.com/ostendorf-cloud/govue/health"
+	"github.com/ostendorf-cloud/govue/language"
 	"github.com/ostendorf-cloud/govue/metrics"
 	"github.com/ostendorf-cloud/govue/middleware"
 	"github.com/ostendorf-cloud/govue/oidc"
@@ -64,6 +66,11 @@ type app struct {
 	notes *noteStore
 
 	icons favicon.Icons
+
+	// site and languageRedirect serve the prerendered language pages. Both
+	// are nil without SITE_DIR.
+	site             *site
+	languageRedirect http.Handler
 }
 
 // themeColor is the accent of the example theme, the colour browsers tint
@@ -149,6 +156,17 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 		a.icons = icons
 	}
 
+	// The language site is the output of the prerender step. The sitemap in
+	// it lists the pages, so Go needs no copy of the route table.
+	if cfg.siteDir != "" {
+		redirect, err := language.Redirect(language.Config{Languages: siteLanguages})
+		fail(err)
+		a.languageRedirect = redirect
+		site, err := loadSite(os.DirFS(cfg.siteDir), siteLanguages, a.icons)
+		fail(err)
+		a.site = site
+	}
+
 	a.health = health.New()
 	// A real dependency, a database or the identity provider, would be
 	// pinged here. The example has none: the in-memory notes store cannot
@@ -219,6 +237,17 @@ func (a *app) handler() http.Handler {
 	mux.Handle("GET /login", route(api.Handle(a.loginStart)))
 	mux.Handle("GET /login/callback", route(api.Handle(a.loginCallback)))
 	mux.Handle("POST /logout", route(api.Handle(a.logout)))
+	if a.site != nil {
+		// The public pages. "GET /{$}" matches the root alone, so a prefixed
+		// path never reaches the redirect and a crawler keeps the language
+		// it asked for. Every page is an exact pattern: ServeMux then never
+		// redirects between "/de/impressum" and "/de/impressum/", and a
+		// path outside the sitemap falls to the catch-all below. They sit
+		// in the route chain like every other handler, so the rate limiter
+		// sees them and the log carries their pattern.
+		mux.Handle("GET /{$}", route(a.languageRedirect))
+		a.site.mount(mux, route)
+	}
 	// The catch-all. Without it an unregistered canonical path never
 	// reaches a handler the route chain wraps, so it would skip the rate
 	// limiter entirely and be labelled "unmatched" rather than the bounded

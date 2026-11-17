@@ -68,8 +68,18 @@ func testEnv(t *testing.T, rateLimitBurst int) map[string]string {
 // needs set to exactly 1.
 func newTestApp(t *testing.T, burst int) (*app, *bytes.Buffer) {
 	t.Helper()
+	return newTestAppEnv(t, burst, nil)
+}
+
+// newTestAppEnv is newTestApp with extra environment variables on top of the
+// defaults, such as SITE_DIR.
+func newTestAppEnv(t *testing.T, burst int, extra map[string]string) (*app, *bytes.Buffer) {
+	t.Helper()
 
 	env := testEnv(t, burst)
+	for k, v := range extra {
+		env[k] = v
+	}
 	cfg, err := loadConfig(func(key string) string { return env[key] })
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)

@@ -522,12 +522,25 @@ The design of the library and the reasoning behind it.
 - Serving is a requirement on the Go side, because the build writes `de/impressum/index.html`
   while the canonical URL is `/de/impressum`. A directory file server such as
   `http.FileServerFS` answers `/de/impressum` with a redirect to `/de/impressum/`, so the
-  canonical URL would redirect. govue ships no directory handler. A site, and the example, serve
-  the exact path of every route (`GET /de/impressum` and `GET /de/{$}`) and answer the slash
-  form with 404 or a redirect. The example step adds a test that requests every `loc` of the
-  sitemap through the real mux and expects 200 with no `Location` header. The prerender step
-  writes files only and has no mux to test. A review run of the Go `ServeMux` answered `/de`
-  against a `GET /de/{$}` pattern with a 307, which that test pins too.
+  canonical URL would redirect. govue ships no directory handler. A site serves the exact path
+  of every route (`GET /de/impressum` and `GET /de/{$}`) and answers the slash form with 404.
+- The example (`example/site.go`) is the model. Go keeps no copy of the route table: at startup
+  it reads `sitemap.xml` from the prerender output, takes the path of every `loc` and registers
+  one exact pattern per page, each served through `themeboot.Shell`. A page is read into memory
+  once, so no request path is ever joined to a file name and a directory listing cannot exist.
+  A `loc` that is not a plain path under a configured language, such as a dot segment, a
+  backslash, `{`, `%` or an encoded `/` in its decoded form, a duplicate, or a page file that
+  is missing or has no `<head>`, fails startup. `SITE_DIR` points at the directory. Without it
+  the example mounts neither the redirect nor the pages.
+- `GET /{$}` carries the `language` redirect and sits in the same route chain as every app
+  route, so CORS, the rate limiter and the CSRF check see it. The middleware order does not
+  change. The example's tests build a directory like the prerender output, request every `loc`
+  of its sitemap through the real handler and expect 200, the HTML content type and no
+  `Location` header. They also check the redirect order, the crawler case, 404 for the slash
+  form, an unknown prefix and a file the sitemap does not list, and path traversal attempts.
+  `ServeMux` answers a bare `/de` with a 307 to `/de/` before any handler runs, which a test
+  pins. A path it has to clean, such as `/de/../x`, is redirected the same way and the target
+  is refused.
 - An unprefixed public path such as `/impressum` is not redirected and answers 404. The
   cookie storage of the language layer stays an option and is not the default.
 
