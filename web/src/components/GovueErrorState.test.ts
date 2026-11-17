@@ -26,6 +26,33 @@ describe('GovueErrorState', () => {
     expect(screen.getByText(props.message)).toBeVisible()
   })
 
+  it('renders the title as a second level heading by default', () => {
+    render(GovueErrorState, { props })
+
+    expect(
+      screen.getByRole('heading', { level: 2, name: 'The deployment did not load' }),
+    ).toBeVisible()
+  })
+
+  it.each([3, 4, 5, 6] as const)('renders the title at level %i when asked to', (level) => {
+    render(GovueErrorState, { props: { ...props, headingLevel: level } })
+
+    expect(
+      screen.getByRole('heading', { level, name: 'The deployment did not load' }),
+    ).toBeVisible()
+  })
+
+  it.each([1, 7, 0, 2.5, '3', null])(
+    'falls back to a second level heading for %j, which is not a heading level',
+    (level) => {
+      render(GovueErrorState, { props: { ...props, headingLevel: level as never } })
+
+      expect(
+        screen.getByRole('heading', { level: 2, name: 'The deployment did not load' }),
+      ).toBeVisible()
+    },
+  )
+
   it('offers a retry and reports it', async () => {
     const view = render(GovueErrorState, { props })
 

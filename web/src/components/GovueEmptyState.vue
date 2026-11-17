@@ -2,19 +2,28 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { useGovueText } from '../i18n/plugin'
+import { computed } from 'vue'
 
-withDefaults(
+import { useGovueText } from '../i18n/plugin'
+import { type HeadingLevel, headingTag as tagFor } from './headingLevel'
+
+const props = withDefaults(
   defineProps<{
     /** What this place is, not "No data". Defaults to a generic line. */
     title?: string
     /** Why it is empty and what will fill it. Defaults to a generic line. */
     description?: string
+    /** The heading level of the title, 2 to 6. Pick the level below the
+     *  nearest heading above this state: 2 under the page's h1, 3 inside a
+     *  section headed by an h2. An invalid value renders h2. */
+    headingLevel?: HeadingLevel
   }>(),
-  { title: undefined, description: undefined },
+  { title: undefined, description: undefined, headingLevel: 2 },
 )
 
 const { t } = useGovueText()
+
+const headingTag = computed(() => tagFor(props.headingLevel))
 </script>
 
 <template>
@@ -27,7 +36,9 @@ const { t } = useGovueText()
       <slot name="icon" />
     </div>
 
-    <h2 class="text-lg font-semibold text-text">{{ title ?? t('govue.empty.title') }}</h2>
+    <component :is="headingTag" class="text-lg font-semibold text-text">
+      {{ title ?? t('govue.empty.title') }}
+    </component>
     <p class="text-base text-text-muted">
       {{ description ?? t('govue.empty.description') }}
     </p>

@@ -21,6 +21,27 @@ describe('GovueEmptyState', () => {
     expect(screen.getByText(props.description)).toBeVisible()
   })
 
+  it('renders the title as a second level heading by default', () => {
+    render(GovueEmptyState, { props })
+
+    expect(screen.getByRole('heading', { level: 2, name: 'No deployments yet' })).toBeVisible()
+  })
+
+  it.each([3, 4, 5, 6] as const)('renders the title at level %i when asked to', (level) => {
+    render(GovueEmptyState, { props: { ...props, headingLevel: level } })
+
+    expect(screen.getByRole('heading', { level, name: 'No deployments yet' })).toBeVisible()
+  })
+
+  it.each([1, 7, 0, 2.5, '3', null])(
+    'falls back to a second level heading for %j, which is not a heading level',
+    (level) => {
+      render(GovueEmptyState, { props: { ...props, headingLevel: level as never } })
+
+      expect(screen.getByRole('heading', { level: 2, name: 'No deployments yet' })).toBeVisible()
+    },
+  )
+
   it('offers the action that fills it', async () => {
     const onClick = vi.fn()
     render(GovueEmptyState, {

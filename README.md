@@ -270,8 +270,18 @@ and the styling is the same for every level. An invalid value falls back to leve
 <GovueCard title="Sessions" :heading-level="3">...</GovueCard>
 ```
 
-`GovueEmptyState` and `GovueErrorState` render an `h2`, `GovueDialog` renders its title through a
-dialog title (also an `h2`, in its own portal, outside the page outline).
+`GovueEmptyState` and `GovueErrorState` take the same `heading-level` prop, with the same type
+(`HeadingLevel`), the same default of 2 and the same fallback to 2. Pass `:heading-level="3"` when
+the state sits in a card or section headed by an `h2`.
+
+```vue
+<GovueCard title="Sessions" :heading-level="2">
+  <GovueEmptyState :heading-level="3" />
+</GovueCard>
+```
+
+`GovueDialog` renders its title through a dialog title (an `h2`, in its own portal, outside the
+page outline) and keeps its level.
 
 ## Language
 
