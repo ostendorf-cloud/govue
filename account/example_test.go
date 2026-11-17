@@ -70,9 +70,9 @@ func (s *mapStore) AdvanceTOTPCounter(_ context.Context, id string, counter int6
 	})
 }
 
-func (s *mapStore) ConfirmTOTP(_ context.Context, id string, counter int64) error {
+func (s *mapStore) ConfirmTOTP(_ context.Context, id, secret string, counter int64) error {
 	return s.update(id, func(rec *account.Record) bool {
-		if rec.TOTPSecret == "" || rec.TOTPCounter != 0 || counter <= 0 {
+		if rec.TOTPSecret == "" || rec.TOTPSecret != secret || rec.TOTPCounter != 0 || counter <= 0 {
 			return false
 		}
 
@@ -127,7 +127,8 @@ func (s *mapStore) update(id string, change func(*account.Record) bool) error {
 
 // ExampleStore walks the store contract: a login is unique, an unconfirmed
 // secret can be replaced, a secret is confirmed once by the counter of its
-// first code, and a counter only moves forward, so a replayed code fails in
+// first code and only if it is still the stored secret, and a counter only
+// moves forward, so a replayed code fails in
 // the store rather than in a check before it.
 func ExampleStore() {
 	ctx := context.Background()
@@ -150,14 +151,20 @@ func ExampleStore() {
 	err = store.AdvanceTOTPCounter(ctx, rec.ID, 100)
 	fmt.Println("advance before confirm, refused:", errors.Is(err, account.ErrNotFound))
 
-	fmt.Println("replace unconfirmed secret:", store.ReplaceTOTPSecret(ctx, rec.ID, "FAKEREPLACEDFAKEREPLACEDFAKEREPL"))
+	const replaced = "FAKEREPLACEDFAKEREPLACEDFAKEREPL"
 
-	fmt.Println("confirm:", store.ConfirmTOTP(ctx, rec.ID, 100))
+	fmt.Println("replace unconfirmed secret:", store.ReplaceTOTPSecret(ctx, rec.ID, replaced))
+
+	// A code verified against the old secret must not confirm the new one.
+	err = store.ConfirmTOTP(ctx, rec.ID, rec.TOTPSecret, 100)
+	fmt.Println("confirm of the replaced secret, refused:", errors.Is(err, account.ErrNotFound))
+
+	fmt.Println("confirm:", store.ConfirmTOTP(ctx, rec.ID, replaced, 100))
 
 	err = store.ReplaceTOTPSecret(ctx, rec.ID, "FAKEAGAINFAKEAGAINFAKEAGAINFAKEA")
 	fmt.Println("replace confirmed secret, refused:", errors.Is(err, account.ErrNotFound))
 
-	err = store.ConfirmTOTP(ctx, rec.ID, 101)
+	err = store.ConfirmTOTP(ctx, rec.ID, replaced, 101)
 	fmt.Println("confirm again, refused:", errors.Is(err, account.ErrNotFound))
 
 	err = store.AdvanceTOTPCounter(ctx, rec.ID, 100)
@@ -176,6 +183,7 @@ func ExampleStore() {
 	// create again, conflict: true
 	// advance before confirm, refused: true
 	// replace unconfirmed secret: <nil>
+	// confirm of the replaced secret, refused: true
 	// confirm: <nil>
 	// replace confirmed secret, refused: true
 	// confirm again, refused: true

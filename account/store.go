@@ -40,8 +40,17 @@ type Record struct {
 	// unconfirmed TOTP secret looks like: [Store.ConfirmTOTP] writes the
 	// counter of the confirming code, so a secret counts as confirmed exactly
 	// when TOTPCounter is above zero. Counter zero is the first thirty
-	// seconds of 1970, so no live code ever has it. A nullable counter
-	// column maps NULL to zero, and no separate confirmed column is needed.
+	// seconds of 1970, so no live code ever has it, and no separate
+	// confirmed column is needed.
+	//
+	// Zero means unconfirmed only for an account created through
+	// [Store.Create]. An adapter over a table that existed before adoption
+	// maps a NULL counter on such a row to 1, for example with
+	// COALESCE(totp_last_counter, 1) in its reads and conditional writes,
+	// or backfills 1 once. Counter 1 is 1970 as well, so no live code is
+	// refused. Without that, an adopted account that never logged in reads
+	// as unconfirmed, and its login is refused with the right password and
+	// code. Create writes an explicit 0, never NULL.
 	TOTPCounter int64
 }
 
@@ -107,10 +116,14 @@ type Store interface {
 
 	// ConfirmTOTP confirms the account's TOTP secret by setting TOTPCounter
 	// to counter, the counter of the code that confirmed it, so that code
-	// cannot log in afterwards. It writes only when the account has a
-	// secret, the stored counter is zero and counter is above zero, and
-	// returns ErrNotFound when no row changed.
-	ConfirmTOTP(ctx context.Context, id string, counter int64) error
+	// cannot log in afterwards. secret is the secret the code was verified
+	// against. It writes only when the stored secret is exactly secret, the
+	// stored counter is zero and counter is above zero, in one statement,
+	// and returns ErrNotFound when no row changed. Binding the write to the
+	// secret means a ReplaceTOTPSecret landing between verify and confirm
+	// makes the confirm fail, instead of confirming a secret the person
+	// never saw.
+	ConfirmTOTP(ctx context.Context, id, secret string, counter int64) error
 
 	// ReplaceTOTPSecret replaces an unconfirmed TOTP secret with secret. It
 	// writes only while the stored counter is zero, and returns ErrNotFound
@@ -118,6 +131,13 @@ type Store interface {
 	// response before confirming: without it they could neither confirm nor
 	// log in, and Create would refuse their login as taken. Once a secret is
 	// confirmed it can no longer be replaced through this call.
+	//
+	// No session exists before the first login, so the logic gates this call
+	// on the password. An unconfirmed account is therefore password only:
+	// the password alone can replace the secret, confirm it and own the
+	// account. For a fresh signup that is the accepted window between
+	// signup and confirm. An adopted account avoids it through the counter
+	// mapping described on [Record.TOTPCounter].
 	ReplaceTOTPSecret(ctx context.Context, id, secret string) error
 
 	// SetPasswordHash replaces the account's password hash and nothing else,
