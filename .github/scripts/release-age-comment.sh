@@ -32,11 +32,12 @@ fi
 # not found is left out.
 text=$(sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g' "$log" | sed -n "/$code/,\$p" | tr '\n' ' ' | tr -s ' ')
 
+# The awk filter below drops a name longer than 214 characters, the npm limit.
 name_re='(@[A-Za-z0-9._~-]+/)?[A-Za-z0-9._~-]+@[0-9][A-Za-z0-9.+-]*'
 time_re='[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z'
 
 all=$({ printf '%s\n' "$text" | grep -oE "$name_re was published at $time_re" || true; } |
-  awk '!seen[$0]++' |
+  awk '{ n = $1; sub(/@[^@]*$/, "", n) } length(n) <= 214 && !seen[$0]++' |
   while read -r name _ _ _ time; do
     printf '%s\n' "- \`$name\`, published at \`$time\`"
   done)

@@ -212,6 +212,34 @@ assert test "$(grep -c "^- \`pkg" "$STUB_DIR/body")" -eq 50
 assert body_has 'and 1950 more'
 assert test "$(wc -c <"$STUB_DIR/body")" -lt 60000
 
+# gen_log N: a log with N refused entries.
+gen_log() {
+  local out='Error: ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION\n' i
+  for ((i = 1; i <= $1; i++)); do
+    out+="  pkg$i@1.0.0 was published at 2026-11-17T05:56:55.170Z, within the\n"
+  done
+  printf '%s' "$out"
+}
+
+# 15b. Exactly at the limit nothing is said about more, one above it the rest is counted.
+run_case "$(gen_log 50)"
+assert test "$(grep -c "^- \`pkg" "$STUB_DIR/body")" -eq 50
+assert body_lacks ' more'
+run_case "$(gen_log 51)"
+assert test "$(grep -c "^- \`pkg" "$STUB_DIR/body")" -eq 50
+assert body_has '- and 1 more'
+
+# 15c. A package name is at most 214 characters long, the npm limit. A longer run of name
+# characters is not a package and is not listed.
+rep() { head -c "$1" /dev/zero | tr '\0' "$2"; }
+run_case "Error: ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION\n  $(rep 214 b)@1.0.0 was published at 2026-11-17T05:56:55.170Z, within the\n"
+assert body_has "$(rep 214 b)@1.0.0"
+run_case "Error: ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION\n  $(rep 215 b)@1.0.0 was published at 2026-11-17T05:56:55.170Z, within the\n"
+assert body_lacks "$(rep 20 b)"
+run_case "Error: ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION\n  $(rep 20000 a)@1.0.0 was published at 2026-11-17T05:56:55.170Z, within the\n"
+assert body_lacks "$(rep 20 a)"
+assert test "$(wc -c <"$STUB_DIR/body")" -lt 2000
+
 # 16. The exit code of the install is preserved and its output is logged.
 bash "$here/install-with-log.sh" "$work/install.log" sh -c 'echo installing; exit 7' >/dev/null
 assert test "$?" -eq 7

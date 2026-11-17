@@ -244,15 +244,15 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: web-deps-log
+          name: web-deps-log-${{ github.run_attempt }}
           path: ${{ runner.temp }}/web-deps.log
           if-no-files-found: ignore
           retention-days: 1
 
   # The only job with a write token. It runs on a fresh runner after the install job, so
   # nothing the install did is here: no tool, no changed file, no stored credential. It
-  # checks out the scripts only, from the pull request branch, which is the same workflow
-  # run that may use the token anyway. The downloaded log is data, the script reads only
+  # checks out the scripts only, from the merge ref of the pull request, which is the same
+  # ref the workflow file itself comes from, so it adds no trust the token did not need. The downloaded log is data, the script reads only
   # strictly matched text from it. A fork pull request has no write token and is skipped.
   web-deps-comment:
     needs: web-deps
@@ -277,7 +277,7 @@ jobs:
         # No log, for example after a failed setup step, means no comment.
         continue-on-error: true
         with:
-          name: web-deps-log
+          name: web-deps-log-${{ github.run_attempt }}
           path: ${{ runner.temp }}/web-deps-log
       - name: Explain a minimum release age failure on the pull request
         env:
