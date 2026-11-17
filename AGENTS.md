@@ -54,7 +54,8 @@ task example:build   # compile the example application
 - `lint:vet`, `lint:golangci` and `test:go` run `go vet`, `golangci-lint run` and
   `go test -race` across every package at the module root, each its own CI job.
 - `lint:license` checks the Apache-2.0 header on every Go file at the module root and every
-  `.ts`/`.vue` file under `web/src/` and `web/scripts/`, with `addlicense`.
+  `.ts`/`.vue`/`.mjs`/`.d.mts` file under `web/src/` and `web/scripts/`, with `addlicense`.
+  `addlicense` skips `.mts` files, so the check runs on a `.ts` copy of each.
 
 ## Constraints
 
@@ -117,13 +118,13 @@ task example:build   # compile the example application
 
 ## Deviations
 
-- `themeboot/boot.js` carries no license header. The license check covers `.go`, `.ts` and
-  `.vue` only, and the file is sent inline in every page, so a header would cost bytes on each
-  response. The Go package that embeds it carries the header.
+- `themeboot/boot.js` carries no license header. The license check covers `.go`, `.ts`,
+  `.vue`, `.mjs` and `.d.mts` only, and the file is sent inline in every page, so a header would
+  cost bytes on each response. The Go package that embeds it carries the header.
 
 - `example/web/public/favicon.svg` and the generated PNG files carry no license header. The
-  license check covers `.go`, `.ts` and `.vue` only, and an image or a PNG cannot hold a comment
-  header without changing what it is.
+  license check covers `.go`, `.ts`, `.vue`, `.mjs` and `.d.mts` only, and an image or a PNG
+  cannot hold a comment header without changing what it is.
 
 - The license-header file set is written twice. CI calls the organisation's shared
   `reusable-license.yaml`, which pins `addlicense` itself and takes the `find` invocations as an

@@ -85,7 +85,8 @@ export function injectIntoTemplate(template, html, placeholder = DEFAULT_PLACEHO
       `govue prerender: the template has no placeholder ${JSON.stringify(placeholder)}`,
     )
   }
-  if (template.indexOf(placeholder, first + placeholder.length) !== -1) {
+  // From first + 1, so two overlapping matches count as two.
+  if (template.indexOf(placeholder, first + 1) !== -1) {
     throw new Error(
       `govue prerender: the placeholder ${JSON.stringify(placeholder)} appears more than once`,
     )
