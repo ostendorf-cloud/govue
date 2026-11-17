@@ -204,9 +204,63 @@ the browser language. Hydrating it would keep a wrong `aria-checked` or language
 a stored dark mode or a German browser, because Vue does not patch attribute mismatches in
 production. The prerendered markup serves the first paint and crawlers.
 
-This renders one page, not a site: no routing, no per-request data and no hydration. A dialog or
-other teleported content is not part of the markup. `useTheme` and `useToasts` keep module level
-state, so a prerendered page raises no toast. See `docs/concepts/govue.md` for the boundary.
+A site with language routes prerenders one page per public route and language instead. The SSR
+entry exports `files`, built by `localizedFiles` from the route table:
+
+```ts
+// src/entry-prerender.ts
+import { createGovueI18n } from '@ostendorf-cloud/govue'
+import { localizedFiles, render } from '@ostendorf-cloud/govue/server'
+
+import Page from './Page.vue'
+// [{ path: '/', public: true }, { path: '/impressum', public: true }]
+import { routes } from './routes'
+
+export const files = (template: string) =>
+  localizedFiles(routes, {
+    origin: 'https://example.com',
+    template,
+    render: (variant) =>
+      render(Page, {
+        props: { source: variant.source },
+        setup: (app) => {
+          app.use(createGovueI18n({ locale: variant.locale }))
+        },
+      }),
+  })
+```
+
+`index.html` holds one `<html>` start tag, `<!--app-head-->` in the head and `<!--app-html-->` in
+the mount element. Run the script with `--out-dir`:
+
+```sh
+pnpm exec vite build
+pnpm exec vite build --ssr src/entry-prerender.ts --outDir dist-ssr
+pnpm exec govue-prerender \
+  --entry dist-ssr/entry-prerender.js --template dist/index.html --out-dir dist
+```
+
+It writes `dist/de/index.html`, `dist/en/index.html`, `dist/de/impressum/index.html`,
+`dist/en/impressum/index.html` and `dist/sitemap.xml`. Each page carries its `lang`, a canonical
+link and the `hreflang` alternates. Every page has an `x-default`, which points at the German
+variant. App routes are left out.
+The script refuses a path from the bundle that leaves the directory, a duplicate and a symbolic
+link, before it writes anything. It overwrites the files of an earlier run and keeps every other
+file. On a language page the client passes the language of the URL:
+
+```ts
+createApp(Page)
+  .use(createGovueI18n({ locale: localeFromPath(location.pathname) }))
+  .mount('#app')
+```
+
+The Go server must serve `/de/impressum` itself and not through a directory file server, which
+redirects it to `/de/impressum/`. govue ships no directory handler.
+
+Neither mode adds routing, per-request data or hydration. A dialog or other teleported content is
+not part of the markup. `useTheme` and `useToasts` keep module level state, so a prerendered page
+raises no toast and all pages of one build share one theme. See `docs/concepts/govue.md` for the
+boundary.
 
 ### Favicon
 

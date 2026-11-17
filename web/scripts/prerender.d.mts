@@ -11,6 +11,7 @@ export interface Args {
   entry?: string
   template?: string
   out?: string
+  outDir?: string
   placeholder?: string
   help: boolean
 }
@@ -22,5 +23,10 @@ export function prerender(options: {
   template: string
   out: string
   placeholder?: string
+}): Promise<void>
+export function prerenderFiles(options: {
+  entry: string
+  template: string
+  outDir: string
 }): Promise<void>
 export function main(argv: string[]): Promise<number>

@@ -519,15 +519,15 @@ The design of the library and the reasoning behind it.
   default port, no port 0, no trailing dot and no path, query, fragment or userinfo. `http` is
   accepted for `localhost` only. The generators validate it themselves, so the check is not
   exported. Path segments are percent encoded, then escaped for markup.
-- Serving is a requirement for the later steps, because the build writes `de/impressum/index.html`
+- Serving is a requirement on the Go side, because the build writes `de/impressum/index.html`
   while the canonical URL is `/de/impressum`. A directory file server such as
   `http.FileServerFS` answers `/de/impressum` with a redirect to `/de/impressum/`, so the
-  canonical URL would redirect. The handler added with the prerender and example steps must serve
-  the exact path of every route (`GET /de/impressum` and `GET /de/{$}`) and must answer the slash
-  form with 404 or a redirect. Step 2 and step 4 each need a test that requests every `loc` of
-  the sitemap through the real mux and expects 200 with no `Location` header. A review run of the
-  Go `ServeMux` answered `/de` against a `GET /de/{$}` pattern with a 307, which that test pins
-  too.
+  canonical URL would redirect. govue ships no directory handler. A site, and the example, serve
+  the exact path of every route (`GET /de/impressum` and `GET /de/{$}`) and answer the slash
+  form with 404 or a redirect. The example step adds a test that requests every `loc` of the
+  sitemap through the real mux and expects 200 with no `Location` header. The prerender step
+  writes files only and has no mux to test. A review run of the Go `ServeMux` answered `/de`
+  against a `GET /de/{$}` pattern with a 307, which that test pins too.
 - An unprefixed public path such as `/impressum` is not redirected and answers 404. The
   cookie storage of the language layer stays an option and is not the default.
 
@@ -571,7 +571,7 @@ The design of the library and the reasoning behind it.
   need the route table in Go.
 - `ServeMux` answers `/de` with a 307 to `/de/` and keeps the query. A test pins it.
 
-### Build time pre-rendering of one page
+### Build time pre-rendering
 
 - A landing page needs real markup for crawlers and a fast first paint. Per-request SSR would
   need a live Node process, hydration handling and per-route data fetching, which is the
@@ -586,17 +586,59 @@ The design of the library and the reasoning behind it.
     installed.
   - `injectIntoTemplate(template, html, placeholder)` puts the markup into a template, and
     throws when the placeholder (default `<!--app-html-->`) is missing or appears twice.
-  - It takes no route, no language and no template. Language routes, `<html lang>`, canonical and
-    `hreflang` are a caller concern: the caller renders once per language with its own `setup`
-    and its own template.
+  - `render` takes no route, no language and no template. The caller installs the language in
+    its own `setup`. `localizedFiles` below adds the routes, `<html lang>`, canonical and
+    `hreflang`.
   - It runs in Node with no DOM, keeps no state of its own and swallows no error: a failing
     component rejects the promise and so fails the build. The composables it renders may keep
     state, see the limits below.
   - It does not render teleported content, such as an open dialog. A prerendered page shows the
     closed state.
-- `web/scripts/prerender.mjs`, installed as the `govue-prerender` bin, is the build script: it
-  loads the consumer's SSR bundle (built with `vite build --ssr`, since plain Node cannot load a
-  `.vue` file), calls its `render`, injects the markup into the template and writes the file.
+- `web/scripts/prerender.mjs`, installed as the `govue-prerender` bin, is the build script. It
+  loads the consumer's SSR bundle, built with `vite build --ssr` since plain Node cannot load a
+  `.vue` file. It has two modes:
+  - `--out <file>` calls the bundle's `render`, injects the markup into the template and writes
+    one file. This mode is unchanged.
+  - `--out-dir <dir>` reads the template, calls the bundle's `files(template)` and writes every
+    `{ path, content }` it returns inside the directory. It knows no language and no
+    placeholder, so all language logic stays in TypeScript, compiled into the bundle by Vite,
+    and nothing is copied into the script.
+- `localizedFiles(routes, { origin, template, render })` builds that list. It renders every
+  public route of `localizeRoutes` once per language, one after another, through the site's
+  `render(variant)` callback. The callback installs `createGovueI18n({ locale: variant.locale })`
+  in `setup`, so the render entry stays generic. Each page gets:
+  - `lang` on the `<html>` start tag. The tag is rewritten with `lang` first and every other
+    attribute kept. The template must hold exactly one such tag outside comments. A placeholder
+    inside the attribute would leak into Vite dev mode.
+  - The output of `hreflangLinks` at a required `<!--app-head-->` placeholder: the self
+    referential canonical, one alternate per language and `x-default` on the German variant.
+  - The markup at `<!--app-html-->`, injected last, so a placeholder or an `<html>` tag inside
+    the markup is never taken for the template's own.
+- `/de/` is written as `de/index.html`, `/de/impressum` as `de/impressum/index.html`, and
+  `sitemapXml` of the same table as `sitemap.xml`. App routes appear in neither. A path is decoded
+  text, so `/de/über` is written as `de/über/index.html`.
+- `localizedFiles` checks the origin, the route table, the sitemap limits and the template before
+  the first render. Both placeholders must appear exactly once, through the same
+  `injectIntoTemplate`. A placeholder inside a comment or inside a tag, such as an attribute
+  value, is refused too: it would be replaced as text no browser reads, and the page would lose
+  its links without an error. Script and style bodies are not tracked. A render that rejects or
+  returns no string rejects the whole call.
+- No per language title or description, and no `robots.txt`. A site that needs them renders
+  them itself.
+- `--out-dir` treats a path from the bundle as untrusted. It refuses an absolute path, a drive
+  letter, a `..`, `.` or empty segment, a backslash, a NUL byte, a duplicate, a duplicate that
+  differs only in case or Unicode normalisation (macOS and Windows file systems would merge them)
+  and a path that is also the directory of another path. It also refuses a symbolic link and a
+  file in the way anywhere inside the directory, and a directory where a file belongs. All of
+  this is checked before the first write, so a bundle that fails a check leaves the directory as
+  it was. An IO error halfway, such as a read only subdirectory, can leave part of the files
+  written, and the run exits 1. Each path and content is read once from the bundle's list, so a
+  getter cannot pass the check with one value and write another. The file itself is opened with
+  `O_NOFOLLOW` as a second guard against a link created after the check. A file of an earlier
+  run is overwritten, every other file is kept. The template is not changed, so a run can repeat.
+- Windows reserved names such as `CON` and alternate data streams such as `page.html:x` are not
+  refused. The CLI is tested on macOS and Linux only.
+- The exit code is 0 on success and 1 for a usage error and for any failure, in both modes.
 - DOM audit of the exported components and composables: no component reads `window`, `document`
   or `navigator` itself. `useTheme` guards `document`, `window` and `matchMedia`, and skips
   storage altogether without a window, because newer Node versions define a global
@@ -608,28 +650,29 @@ The design of the library and the reasoning behind it.
   has one theme and one toast host. Rendering several pages with different themes in one
   process shares the theme. A `notify` call during render would leak a toast into the next
   render, and its pending timer would keep the build process alive, so a prerendered page never
-  raises a toast. A build renders one page per process run, so this is documented rather than
-  changed.
+  raises a toast. `localizedFiles` renders every page of a site in one process, so a site renders
+  all its pages with one theme, and a test renders two languages in one process to show the
+  language does not leak. This is documented rather than changed.
 - The client mounts with `createApp`, which replaces the prerendered markup, never with
   `createSSRApp`. The markup is rendered with no visitor: system mode and the language passed to
   `setup`. The client then reads the stored choice and the browser language. With `createSSRApp`
   Vue would hydrate instead of replace, and a visitor with a stored dark mode or a German
   browser gets mismatches, which in production Vue does not patch for attributes: a wrong
   `aria-checked` would stay on screen. `createApp` gives no warning in those cases, and a test
-  mounts over the markup with a stored choice to keep it that way. The prerendered markup is
-  for the first paint and for crawlers, and the client takes over from it.
+  mounts over the markup with a stored choice to keep it that way. On a language page the client
+  passes `locale: localeFromPath(location.pathname)` to `createGovueI18n`, and a test
+  mounts over the German and the English page with a browser of the other language. The
+  prerendered markup is for the first paint and for crawlers, and the client takes over from it.
 - The script ships as plain JavaScript, `govue-prerender`, because Node does not strip
   TypeScript types under `node_modules`. It holds its own small copy of `injectIntoTemplate`,
   and a test runs the same cases through both copies. The package requires Node 24 or later,
   the lowest the repository's `@tsconfig/node24` targets. Only Node 26 is exercised.
 - With `--out` equal to `--template`, the marker is consumed, so a second run fails with no
   placeholder. Run it after a fresh `vite build`.
-- What this does not solve: data that changes per request, personalised content, routing,
-  multi-page discovery, incremental rebuilds and hydration beyond what a normal client mount does
-  once the static HTML has loaded. A site that needs those is better served by a real
-  meta-framework.
-- The render entry is the base of the language routes, which render one page per language
-  through the same entry.
+- What this does not solve: data that changes per request, personalised content, client side
+  routing, page discovery beyond the route table, incremental rebuilds and hydration beyond what
+  a normal client mount does once the static HTML has loaded. A site that needs those is better
+  served by a real meta-framework.
 
 ### Favicons are a build requirement
 
