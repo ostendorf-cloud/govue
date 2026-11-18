@@ -252,11 +252,17 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
-  # The only job with a write token. It runs on a fresh runner after the install job, so
-  # nothing the install did is here: no tool, no changed file, no stored credential. It
-  # checks out nothing. The shared action downloads the log and hands the token to its own
-  # script step alone. The log is data, the script reads only strictly matched text from
-  # it. A fork pull request has no write token and is skipped.
+  # The only job with a write token or a secret. It runs on a fresh runner after the install
+  # job, so nothing the install did is here: no tool, no changed file, no stored credential.
+  # It checks out nothing. It mints a token as the dependencies app, so the comment comes
+  # from the app. This adds no new reader of the key. Any writer of any repository the org
+  # secret is visible to can already read it, this repository included through
+  # renovate.yaml. The condition is org wide: the owner alone has write access to every
+  # repository in the secret's visibility. The lever is limiting that visibility to the
+  # repositories that need the key, which belongs in the infrastructure repository. The
+  # shared action downloads the log and hands the token to its own script step alone. The
+  # log is data, the script reads only strictly matched text from it. A fork pull request
+  # has no secret and is skipped.
   web-deps-comment:
     needs: web-deps
     if: >-
@@ -272,9 +278,17 @@ jobs:
       group: release-age-comment-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     steps:
+      # No owner and no repositories: the token is scoped to this repository only.
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
+        id: app-token
+        with:
+          app-id: ${{ vars.GH_APP_DEPENDENCIES_APP_ID }}
+          private-key: ${{ secrets.GH_APP_DEPENDENCIES_PRIVATE_KEY }}
+          permission-pull-requests: write
       - uses: ostendorf-cloud/workflows/.github/actions/pnpm-release-age-comment@v0
         with:
-          github-token: ${{ github.token }}
+          github-token: ${{ steps.app-token.outputs.token }}
+          comment-author: ostendorf-cloud-dependencies[bot]
           artifact-name: install-log-${{ github.run_attempt }}
 
   web-lint:
