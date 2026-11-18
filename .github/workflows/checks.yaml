@@ -135,6 +135,7 @@ jobs:
         find . -name "*.go" -not -path "./.claude/worktrees/*" -not -path "*/node_modules/*"
         find web/src -type f \( -name "*.ts" -o -name "*.vue" -o -name "*.mjs" \) -not -path "*/node_modules/*" -not -path "*/dist/*"
         find web/scripts -type f \( -name "*.ts" -o -name "*.vue" -o -name "*.mjs" \) -not -path "*/node_modules/*" -not -path "*/dist/*"
+        find web/example -type f \( -name "*.ts" -o -name "*.vue" -o -name "*.mjs" \) -not -path "*/node_modules/*" -not -path "*/dist/*"
         find web/src web/scripts -name "*.mts" | while read -r f; do o=/tmp/mts/$f.ts; mkdir -p "${o%/*}"; cp "$f" "$o"; echo "$o"; done
 
   renovate-config:

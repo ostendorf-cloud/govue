@@ -296,6 +296,22 @@ not part of the markup. `useTheme` and `useToasts` keep module level state, so a
 raises no toast and all pages of one build share one theme. See `docs/concepts/govue.md` for the
 boundary.
 
+### Legal pages
+
+govue gives the structure of the imprint, privacy and terms pages, never their text. A site adds
+`legalRouteDefs(pages)` to its route table, renders each page in `GovueLegalPage` with its own
+text, passes `legal` to `GovueFooter` and mounts the redirects in Go:
+
+```go
+err := language.HandleLegal(mux, language.LegalConfig{}, nil) // Terms: true for a site that sells
+```
+
+Register the catch-all without a method, `mux.Handle("/", ...)`. A `GET /` catch-all panics.
+
+After the prerender, `govue-check-legal --dir dist` fails the build when the imprint or privacy page
+is missing in a language. The route table and the rules are in the section "Legal pages" of
+`docs/concepts/govue.md`.
+
 ### Favicon
 
 Every site has a favicon, and a site without one fails instead of shipping the browser's default
