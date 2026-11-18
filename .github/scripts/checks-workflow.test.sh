@@ -25,7 +25,9 @@ assert() {
 q() { yq -r "$1" "$wf"; }
 eq() { [[ $(q "$1") == "$2" ]]; }
 has() { [[ $(q "$1") == *"$2"* ]]; }
-lacks() { [[ $(q "$1") != *"$2"* ]]; }
+# GitHub expression context names are case insensitive, so lacks compares in lower case.
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+lacks() { [[ $(lower "$(q "$1")") != *"$(lower "$2")"* ]]; }
 hex40() { [[ $(q "$1") =~ @[0-9a-f]{40}$ ]]; }
 
 deps='.jobs["web-deps"]'
@@ -82,6 +84,22 @@ assert lacks "$deps | tojson" 'create-github-app-token'
 assert lacks "$deps | tojson" 'pnpm-release-age-comment'
 assert eq "$deps.secrets" null
 assert eq "$deps.env" null
+
+# The install job has exactly these four steps in this order, and no other. Any further
+# action, such as actions/github-script, would run next to the code of the pull request
+# with a default token. Each step has exactly the keys it needs, so none gains an env.
+assert eq "$deps | keys | sort | join(\",\")" permissions,runs-on,steps
+assert eq "$deps.steps | length" 4
+assert eq "$deps.steps[0].uses" 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
+assert eq "$deps.steps[1].uses" 'jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db'
+assert eq "$deps.steps[2].uses" null
+assert eq "$deps.steps[3].uses" 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9'
+assert eq "$deps.steps[0] | keys | sort | join(\",\")" uses,with
+assert eq "$deps.steps[0].with | keys | sort | join(\",\")" persist-credentials
+assert eq "$deps.steps[1] | keys | sort | join(\",\")" uses
+assert eq "$deps.steps[2] | keys | sort | join(\",\")" name,run
+assert eq "$deps.steps[3] | keys | sort | join(\",\")" if,name,uses,with
+assert eq "$deps.steps[3].with | keys | sort | join(\",\")" if-no-files-found,name,path,retention-days
 
 # The install step keeps the exit code of the install, not the one of tee, and writes the
 # log the upload step picks up.
@@ -142,14 +160,14 @@ assert eq "$post | keys | sort | join(\",\")" uses,with
 
 # The secret and the variable appear once in the whole workflow, in the token step of the
 # comment job and nowhere else. No job passes secrets on, and no step prints one.
-assert eq '[.. | select(tag == "!!str" and test("secrets\\."))] | length' 1
-# Any use of the secrets context counts, with or without the dot: toJSON(secrets), a
-# secrets["x"] index. Only the private key reference may remain. The task name
-# lint:secrets is no use of the context.
-assert eq '[.. | select(tag == "!!str" and test("secrets") and (test("lint:secrets") | not))] | length' 1
-assert eq '[.. | select(tag == "!!str" and test("vars\\."))] | length' 1
-assert eq '[.. | select(tag == "!!str" and test("GH_APP_DEPENDENCIES"))] | length' 2
-assert eq '[.jobs | to_entries | .[] | select(.value | tojson | test("secrets\\.")) | .key] | join(",")' web-deps-comment
+assert eq '[.. | select(tag == "!!str" and test("(?i)secrets\\."))] | length' 1
+# Any use of the secrets context counts, with or without the dot and in any case:
+# toJSON(secrets), Secrets.X, a secrets["x"] index. Only the private key reference may
+# remain. The task name lint:secrets is no use of the context.
+assert eq '[.. | select(tag == "!!str" and test("(?i)secrets") and (test("(?i)lint:secrets") | not))] | length' 1
+assert eq '[.. | select(tag == "!!str" and test("(?i)vars\\."))] | length' 1
+assert eq '[.. | select(tag == "!!str" and test("(?i)GH_APP_DEPENDENCIES"))] | length' 2
+assert eq '[.jobs | to_entries | .[] | select(.value | tojson | test("(?i)secrets\\.")) | .key] | join(",")' web-deps-comment
 assert eq '[.jobs[] | select(has("secrets"))] | length' 0
 assert lacks '. | tojson' 'inherit'
 assert lacks "$comment | tojson" 'ACTIONS_STEP_DEBUG'
@@ -161,6 +179,7 @@ assert lacks '. | tojson' 'github.token'
 assert lacks '. | tojson' 'GITHUB_TOKEN'
 assert eq '[.jobs[] | select(tojson | test("steps\\.app-token\\.outputs\\.token"))] | length' 1
 assert eq '[.jobs[] | select(.steps != null) | .steps[] | select(.env.GH_TOKEN != null)] | length' 0
-
+assert eq '[.. | select(tag == "!!map") | keys | .[] | select(test("(?i)^(gh_token|github_token)$"))] | length' 0
+assert eq '[.. | select(tag == "!!str" and test("(?i)github\\.token"))] | length' 0
 printf '%d checks, %d failed\n' "$checks" "$fails"
 [[ $fails -eq 0 ]]
