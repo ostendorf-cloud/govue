@@ -5,6 +5,7 @@ package language_test
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,7 +28,7 @@ func legalMux(t *testing.T, cfg language.LegalConfig) *http.ServeMux {
 
 func TestHandleLegal_table(t *testing.T) {
 	t.Parallel()
-	mux := legalMux(t, language.LegalConfig{})
+	mux := legalMux(t, language.LegalConfig{Terms: true})
 
 	// The whole table, without cookie and header, so the visitor dependent
 	// paths go to the default.
@@ -77,7 +78,7 @@ func TestHandleLegal_table(t *testing.T) {
 
 func TestHandleLegal_germanAliasesIgnoreTheVisitor(t *testing.T) {
 	t.Parallel()
-	mux := legalMux(t, language.LegalConfig{})
+	mux := legalMux(t, language.LegalConfig{Terms: true})
 	hdr := map[string]string{"Cookie": "govue-language=en", "Accept-Language": "en"}
 	for path, want := range map[string]string{
 		"/impressum":             "/de/imprint",
@@ -146,7 +147,7 @@ func TestHandleLegal_defaultAndLanguages(t *testing.T) {
 		t.Fatalf("German alias with default en: Location = %q", got)
 	}
 
-	custom := legalMux(t, language.LegalConfig{Config: language.Config{Cookie: "lang"}})
+	custom := legalMux(t, language.LegalConfig{Config: language.Config{Cookie: "lang"}, Terms: true})
 	rec := serve(custom, http.MethodGet, "/terms", map[string]string{"Cookie": "lang=en; govue-language=de"})
 	if got := rec.Header().Get("Location"); got != "/en/terms" {
 		t.Fatalf("custom cookie: Location = %q", got)
@@ -155,7 +156,7 @@ func TestHandleLegal_defaultAndLanguages(t *testing.T) {
 
 func TestHandleLegal_methods(t *testing.T) {
 	t.Parallel()
-	mux := legalMux(t, language.LegalConfig{})
+	mux := legalMux(t, language.LegalConfig{Terms: true})
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodOptions, "BREW"} {
 		for _, path := range []string{"/imprint", "/impressum/", "/agb"} {
 			rec := serve(mux, method, path, nil)
@@ -172,9 +173,11 @@ func TestHandleLegal_methods(t *testing.T) {
 	}
 }
 
-func TestHandleLegal_withoutTerms(t *testing.T) {
+// TestHandleLegal_termsAreOptIn pins the zero value: no terms paths, so a
+// site without a terms page never redirects to a missing page.
+func TestHandleLegal_termsAreOptIn(t *testing.T) {
 	t.Parallel()
-	mux := legalMux(t, language.LegalConfig{WithoutTerms: true})
+	mux := legalMux(t, language.LegalConfig{})
 	for _, path := range []string{"/terms", "/terms/", "/agb", "/agb/"} {
 		rec := serve(mux, http.MethodGet, path, nil)
 		if rec.Code != http.StatusNotFound || rec.Header().Get("Location") != "" {
@@ -288,7 +291,7 @@ func TestHandleLegal_wrap(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
 	wrapped := 0
-	err := language.HandleLegal(mux, language.LegalConfig{WithoutTerms: true}, func(next http.Handler) http.Handler {
+	err := language.HandleLegal(mux, language.LegalConfig{}, func(next http.Handler) http.Handler {
 		wrapped++
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Wrapped", "yes")
@@ -343,4 +346,50 @@ func TestHandleLegal_duplicatePanics(t *testing.T) {
 		}
 	}()
 	_ = language.HandleLegal(mux, language.LegalConfig{}, nil)
+}
+
+func TestHandleLegal_termsRegisterTwoMorePaths(t *testing.T) {
+	t.Parallel()
+	wrapped := 0
+	err := language.HandleLegal(http.NewServeMux(), language.LegalConfig{Terms: true}, func(next http.Handler) http.Handler {
+		wrapped++
+		return next
+	})
+	if err != nil {
+		t.Fatalf("HandleLegal: %v", err)
+	}
+	// The five of TestHandleLegal_wrap plus terms and agb.
+	if wrapped != 7 {
+		t.Fatalf("wrap called %d times, want 7", wrapped)
+	}
+}
+
+// TestHandleLegal_methodBoundCatchAllPanics documents a limit. HandleLegal
+// registers each path without a method too, which conflicts with a catch-all
+// bound to a method. ServeMux panics with the message below. The fix is a
+// catch-all without a method, which the second half shows working.
+func TestHandleLegal_methodBoundCatchAllPanics(t *testing.T) {
+	t.Parallel()
+	for _, catchAll := range []string{"GET /", "GET /{path...}", "GET /{page}"} {
+		t.Run(catchAll, func(t *testing.T) {
+			t.Parallel()
+			mux := http.NewServeMux()
+			mux.Handle(catchAll, http.NotFoundHandler())
+			msg := func() (msg string) {
+				defer func() { msg = fmt.Sprint(recover()) }()
+				_ = language.HandleLegal(mux, language.LegalConfig{}, nil)
+				return ""
+			}()
+			want := "/imprint matches more methods than " + catchAll + ", but has a more specific path pattern"
+			if !strings.Contains(msg, want) {
+				t.Fatalf("panic = %q, want it to contain %q", msg, want)
+			}
+		})
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/", http.NotFoundHandler())
+	if err := language.HandleLegal(mux, language.LegalConfig{Terms: true}, nil); err != nil {
+		t.Fatalf("HandleLegal behind a method-less catch-all: %v", err)
+	}
 }

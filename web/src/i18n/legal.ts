@@ -25,7 +25,8 @@ export type LegalPage = (typeof LEGAL_PAGES)[number]
 
 /**
  * The pages of a site. Imprint and privacy are required, terms is optional:
- * a site without terms leaves it out, and passes WithoutTerms to the Go side.
+ * only a site that sells something has terms. It passes terms here and sets
+ * Terms on the Go side.
  */
 export interface LegalPages<C = unknown> {
   imprint: C

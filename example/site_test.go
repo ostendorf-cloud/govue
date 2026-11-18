@@ -28,8 +28,10 @@ const fixtureOrigin = "https://example.test"
 
 // fixtureRoutes are the decoded public routes of the fixture site. They cover
 // the root, a plain path, a non ASCII path and a path with an ampersand, the
-// two shapes a percent encoded loc differs from the file name in.
-var fixtureRoutes = []string{"/", "/impressum", "/über", "/a&b"}
+// two shapes a percent encoded loc differs from the file name in, plus the
+// imprint and privacy pages the legal redirects lead to. The site has no
+// terms page, like a site that sells nothing.
+var fixtureRoutes = []string{"/", "/impressum", "/über", "/a&b", "/imprint", "/privacy"}
 
 // escapedSegments mirrors what sitemapXml does to a path: encodeURIComponent
 // on every segment. The fixtures need only these two cases.
@@ -109,6 +111,12 @@ const (
 // symbolic link out of the directory and a file outside it.
 func writeTestSite(t *testing.T) testSite {
 	t.Helper()
+	return writeTestSiteWith(t, fixtureRoutes)
+}
+
+// writeTestSiteWith is writeTestSite with another route table.
+func writeTestSiteWith(t *testing.T, routes []string) testSite {
+	t.Helper()
 	parent := t.TempDir()
 	dir := filepath.Join(parent, "site")
 	write := func(name, content string) {
@@ -124,7 +132,7 @@ func writeTestSite(t *testing.T) testSite {
 
 	var locs []string
 	for _, code := range []string{"de", "en"} {
-		for _, route := range fixtureRoutes {
+		for _, route := range routes {
 			vp := "/" + code + route
 			if route == "/" {
 				vp = "/" + code + "/"
@@ -133,7 +141,7 @@ func writeTestSite(t *testing.T) testSite {
 			locs = append(locs, fixtureOrigin+escapedSegments(vp))
 		}
 	}
-	write("sitemap.xml", fixtureSitemap(fixtureRoutes))
+	write("sitemap.xml", fixtureSitemap(routes))
 	write("de/draft/index.html", privateText)
 	write("private.html", privateText)
 	write("assets/app-abc123.js", scriptText)
@@ -206,8 +214,8 @@ func TestEverySitemapLocAnswers200WithoutARedirect(t *testing.T) {
 	s := writeTestSite(t)
 	h := newSiteApp(t, s.dir).handler()
 
-	if len(s.locs) != 8 {
-		t.Fatalf("fixture has %d locs, want 8", len(s.locs))
+	if len(s.locs) != 12 {
+		t.Fatalf("fixture has %d locs, want 12", len(s.locs))
 	}
 	for _, loc := range s.locs {
 		target := requestTarget(t, loc)

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -41,7 +41,7 @@ function site(
     writeFileSync(file, page(options.lang?.(path) ?? lang))
   }
   const locs = (options.sitemap ?? paths)
-    .map((p) => `<url><loc>https://example.com${p}</loc></url>`)
+    .map((p) => `<url><loc>${p.startsWith('/') ? `https://example.com${p}` : p}</loc></url>`)
     .join('')
   writeFileSync(
     join(dir, 'sitemap.xml'),
@@ -57,7 +57,50 @@ describe('checkLegal', () => {
     site(['/de/', '/en/', ...BOTH])
     const { errors, notes } = checkLegal({ dir })
     expect(errors).toEqual([])
-    expect(notes.join('\n')).toMatch(/terms page: none, which is allowed/)
+    expect(notes.join('\n')).toMatch(
+      /terms page: none, which is right for a site that sells nothing/,
+    )
+  })
+
+  it('ignores a loc inside a sitemap comment', () => {
+    site(BOTH, { sitemap: BOTH.filter((p) => p !== '/en/imprint') })
+    const xml = join(dir, 'sitemap.xml')
+    writeFileSync(
+      xml,
+      readFileSync(xml, 'utf8').replace(
+        '</urlset>',
+        '<!-- <url><loc>https://example.com/en/imprint</loc></url> --></urlset>',
+      ),
+    )
+    expect(checkLegal({ dir }).errors).toEqual([
+      'imprint page /en/imprint is not listed in sitemap.xml',
+    ])
+  })
+
+  it('ignores an html tag inside a comment', () => {
+    site(BOTH, { lang: (p) => (p === '/de/privacy' ? 'en' : p.split('/')[1]) })
+    const file = join(dir, 'de', 'privacy', 'index.html')
+    writeFileSync(file, `<!-- <html lang="de"> -->${readFileSync(file, 'utf8')}`)
+    expect(checkLegal({ dir }).errors).toEqual([
+      'privacy page de/privacy/index.html has lang "en", want "de"',
+    ])
+  })
+
+  it('fails a page whose only html tag sits in a comment', () => {
+    site(BOTH)
+    writeFileSync(join(dir, 'de', 'imprint', 'index.html'), '<!-- <html lang="de"> --><p>x</p>')
+    expect(checkLegal({ dir }).errors).toEqual([
+      'imprint page de/imprint/index.html has lang "", want "de"',
+    ])
+  })
+
+  it('fails a sitemap with more than one origin', () => {
+    site(BOTH, {
+      sitemap: [...BOTH.filter((p) => p !== '/en/privacy'), 'https://evil.example/en/privacy'],
+    })
+    expect(checkLegal({ dir }).errors).toEqual([
+      'sitemap.xml lists more than one origin: https://evil.example, https://example.com',
+    ])
   })
 
   it('passes with terms in both languages', () => {
@@ -157,6 +200,20 @@ describe('parseArgs', () => {
     })
   })
 
+  it('reads --dir=d and --languages=a,b', () => {
+    expect(parseArgs(['--dir=out/site', '--languages=de,en'])).toEqual({
+      dir: 'out/site',
+      languages: ['de', 'en'],
+      requireTerms: false,
+      help: false,
+    })
+    expect(parseArgs(['--dir=a=b']).dir).toBe('a=b')
+  })
+
+  it('refuses a value on a flag that takes none', () => {
+    expect(() => parseArgs(['--require-terms=yes'])).toThrow(/unknown argument/)
+  })
+
   it('rejects an unknown flag', () => {
     expect(() => parseArgs(['--nope'])).toThrow(/unknown argument/)
   })
@@ -187,6 +244,9 @@ describe('main', () => {
     site(BOTH)
     const ok = spawnSync(process.execPath, [script, '--dir', dir], { encoding: 'utf8' })
     expect(ok.status).toBe(0)
-    expect(ok.stdout).toContain('terms page: none, which is allowed')
+    expect(ok.stdout).toContain('terms page: none, which is right for a site that sells nothing')
+
+    const eq = spawnSync(process.execPath, [script, `--dir=${dir}`], { encoding: 'utf8' })
+    expect(eq.status).toBe(0)
   })
 })

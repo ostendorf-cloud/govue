@@ -302,8 +302,10 @@ govue gives the structure of the imprint, privacy and terms pages, never their t
 text, passes `legal` to `GovueFooter` and mounts the redirects in Go:
 
 ```go
-err := language.HandleLegal(mux, language.LegalConfig{}, nil) // WithoutTerms: true for no terms
+err := language.HandleLegal(mux, language.LegalConfig{}, nil) // Terms: true for a site that sells
 ```
+
+Register the catch-all without a method, `mux.Handle("/", ...)`. A `GET /` catch-all panics.
 
 After the prerender, `govue-check-legal --dir dist` fails the build when the imprint or privacy page
 is missing in a language. The route table and the rules are in the section "Legal pages" of

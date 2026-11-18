@@ -215,7 +215,9 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 		a.languageRedirect = redirect
 		// The legal redirects are checked here, on a mux of their own, so a
 		// bad configuration fails startup with the other errors. handler
-		// registers them again on the real mux.
+		// registers them again on the real mux. The example sells nothing,
+		// so it has no terms page and leaves Terms off: /terms and /agb then
+		// answer 404 instead of redirecting to a missing page.
 		a.legal = &language.LegalConfig{Config: language.Config{Languages: siteLanguages}}
 		fail(language.HandleLegal(http.NewServeMux(), *a.legal, nil))
 		// OpenRoot, not DirFS: the root refuses a symbolic link that leaves

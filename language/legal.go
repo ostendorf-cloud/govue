@@ -34,22 +34,23 @@ var legalRoutes = []legalRoute{
 }
 
 // LegalConfig configures HandleLegal. The zero value serves German and
-// English with German as the default, CookieName as the cookie and the terms
-// paths included.
+// English with German as the default, CookieName as the cookie and no terms
+// paths.
 type LegalConfig struct {
 	// Config holds the languages, the default and the cookie, with the
 	// rules of Redirect. Languages must contain de, the target of the German
 	// aliases.
 	Config
-	// WithoutTerms leaves /terms and /agb unregistered, for a site that has
-	// no terms page.
-	WithoutTerms bool
+	// Terms registers /terms and /agb as well. Only a site that sells
+	// something has terms, so the zero value leaves them out and a site
+	// without a terms page never redirects to a missing page.
+	Terms bool
 }
 
-// HandleLegal registers the redirects of the legal pages on mux: /imprint,
-// /privacy and /terms to the page in the visitor's language, and the German
-// aliases /impressum, /datenschutz, /datenschutzerklaerung and /agb to the
-// German page. A canonical page is /<code>/<page>, such as /en/imprint, the
+// HandleLegal registers the redirects of the legal pages on mux: /imprint and
+// /privacy to the page in the visitor's language, and the German aliases
+// /impressum, /datenschutz and /datenschutzerklaerung to the German page. With
+// Terms set, /terms and /agb follow the same rules. A canonical page is /<code>/<page>, such as /en/imprint, the
 // path the route table of the Vue package gives.
 //
 // Each path is registered as an exact pattern and with one trailing slash,
@@ -64,9 +65,21 @@ type LegalConfig struct {
 // wrap is applied to each handler, nil for none. The redirects need no
 // session and no CSRF check, so a site mounts them outside that chain.
 //
+// The pattern without a method keeps the 405 behind a method-less catch-all
+// such as mux.Handle("/", notFound). It conflicts with a catch-all bound to a
+// method, such as "GET /", "GET /{path...}" or "GET /{page}": ServeMux then
+// panics at registration. The message ends in one of these lines, depending
+// on which pattern was registered first:
+//
+//	/imprint matches more methods than GET /, but has a more specific path pattern
+//	GET / matches fewer methods than /imprint, but has a more general path pattern
+//
+// The fix is a catch-all without a method, mux.Handle("/", ...), which
+// answers other methods itself.
+//
 // HandleLegal returns an error wrapping ErrConfig and registers nothing when
 // cfg is invalid. It panics like ServeMux.Handle when a path is registered
-// already.
+// already or conflicts as above.
 func HandleLegal(mux *http.ServeMux, cfg LegalConfig, wrap func(http.Handler) http.Handler) error {
 	rd, err := newRedirector(cfg.Config)
 	if err != nil {
@@ -79,7 +92,7 @@ func HandleLegal(mux *http.ServeMux, cfg LegalConfig, wrap func(http.Handler) ht
 		wrap = func(next http.Handler) http.Handler { return next }
 	}
 	for _, route := range legalRoutes {
-		if route.terms && cfg.WithoutTerms {
+		if route.terms && !cfg.Terms {
 			continue
 		}
 		h := wrap(&legalRedirect{rd: rd, page: route.page, lang: route.lang})

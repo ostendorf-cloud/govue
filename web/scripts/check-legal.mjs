@@ -5,8 +5,10 @@
 // The build check of the legal pages. It reads the output directory of
 // govue-prerender --out-dir and fails when the imprint or the privacy page is
 // missing in a language, carries another language on its html element, or is
-// not listed in sitemap.xml. The terms page is optional: when it exists in one
-// language it must exist in all, and --require-terms makes it required.
+// not listed in sitemap.xml. The terms page is optional, since only a site
+// that sells something has one: when it exists in one language it must exist
+// in all, and --require-terms makes it required. Comments are ignored, and
+// the sitemap must name one origin.
 //
 // Plain ESM JavaScript like prerender.mjs, so it runs from a consumer's
 // node_modules. It reads files only and writes nothing.
@@ -28,13 +30,15 @@ export const USAGE = `Usage: govue-check-legal --dir <out-dir> [--languages de,e
 
 Checks the legal pages in the output of govue-prerender --out-dir. Fails when
 the imprint or the privacy page is missing in a language, has another lang on
-its html element, or is not in sitemap.xml. The terms page is optional, but
-when it exists in one language it must exist in all.
+its html element, or is not in sitemap.xml, and when sitemap.xml lists more
+than one origin. Comments are ignored. Terms are only for a site that sells
+something, so the page is optional, but when it exists in one language it
+must exist in all.
 
 Options:
-  --dir <path>          The prerender output directory (required).
+  --dir <path>          The prerender output directory (required). Also --dir=<path>.
   --languages <codes>   Comma separated language codes. Default: de,en.
-  --require-terms       Fail when the terms page is missing.
+  --require-terms       Fail when the terms page is missing, for a site that sells.
   -h, --help            Show this help.`
 
 /**
@@ -53,15 +57,21 @@ export function parseArgs(argv) {
   /** @type {Args} */
   const args = { languages: DEFAULT_LANGUAGES, requireTerms: false, help: false }
   for (let i = 0; i < argv.length; i++) {
-    const flag = argv[i]
+    // --dir=d is the same as --dir d.
+    const eq = argv[i].startsWith('--') ? argv[i].indexOf('=') : -1
+    const flag = eq < 0 ? argv[i] : argv[i].slice(0, eq)
+    const value = () => (eq < 0 ? argv[++i] : argv[i].slice(eq + 1))
+    if (eq >= 0 && flag !== '--dir' && flag !== '--languages') {
+      throw new Error(`unknown argument: ${argv[i]}`)
+    }
     if (flag === '--') {
       continue
     } else if (flag === '--help' || flag === '-h') {
       args.help = true
     } else if (flag === '--dir') {
-      args.dir = argv[++i]
+      args.dir = value()
     } else if (flag === '--languages') {
-      args.languages = (argv[++i] ?? '').split(',').map((code) => code.trim())
+      args.languages = (value() ?? '').split(',').map((code) => code.trim())
     } else if (flag === '--require-terms') {
       args.requireTerms = true
     } else {
@@ -72,14 +82,26 @@ export function parseArgs(argv) {
 }
 
 /**
- * The decoded paths of every loc in a sitemap.
+ * The text without its comments. A loc or an html tag inside a comment is
+ * read by no crawler and no browser, so it must not satisfy the check.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function stripComments(text) {
+  return text.replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+}
+
+/**
+ * The decoded paths and the origins of every loc in a sitemap.
  *
  * @param {string} xml
- * @returns {Set<string>}
+ * @returns {{ paths: Set<string>, origins: Set<string> }}
  */
-function sitemapPaths(xml) {
+function sitemapLocs(xml) {
   const paths = new Set()
-  for (const match of xml.matchAll(/<loc>\s*([^<]*?)\s*<\/loc>/g)) {
+  const origins = new Set()
+  for (const match of stripComments(xml).matchAll(/<loc>\s*([^<]*?)\s*<\/loc>/g)) {
     const text = match[1]
       .replaceAll('&lt;', '<')
       .replaceAll('&gt;', '>')
@@ -87,22 +109,24 @@ function sitemapPaths(xml) {
       .replaceAll('&apos;', "'")
       .replaceAll('&amp;', '&')
     try {
-      paths.add(decodeURIComponent(new URL(text).pathname))
+      const url = new URL(text)
+      origins.add(url.origin)
+      paths.add(decodeURIComponent(url.pathname))
     } catch {
       // A loc that is no URL lists no legal page.
     }
   }
-  return paths
+  return { paths, origins }
 }
 
 /**
- * The lang attribute of the html start tag, or undefined.
+ * The lang attribute of the html start tag outside comments, or undefined.
  *
  * @param {string} html
  * @returns {string | undefined}
  */
 function htmlLang(html) {
-  const tag = /<html\b[^>]*>/i.exec(html)
+  const tag = /<html\b[^>]*>/i.exec(stripComments(html))
   if (!tag) return undefined
   const lang = /\slang\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag[0])
   return lang ? (lang[1] ?? lang[2] ?? lang[3]) : undefined
@@ -179,7 +203,12 @@ export function checkLegal({ dir, languages = DEFAULT_LANGUAGES, requireTerms = 
   if (sitemap === undefined) {
     errors.push('sitemap.xml missing: run govue-prerender --out-dir first')
   }
-  const listed = sitemapPaths(sitemap ?? '')
+  const { paths: listed, origins } = sitemapLocs(sitemap ?? '')
+  // The sitemap of one site has one origin. A loc of another origin is a
+  // build mistake, and its path would count for a page of this site.
+  if (origins.size > 1) {
+    errors.push(`sitemap.xml lists more than one origin: ${[...origins].sort().join(', ')}`)
+  }
 
   for (const page of REQUIRED_PAGES) {
     errors.push(...checkPage(dir, page, languages, listed).problems)
@@ -191,7 +220,9 @@ export function checkLegal({ dir, languages = DEFAULT_LANGUAGES, requireTerms = 
     errors.push(...terms.problems)
     if (terms.problems.length === 0) notes.push('terms page: present in every language')
   } else {
-    notes.push('terms page: none, which is allowed. Pass --require-terms to require one.')
+    notes.push(
+      'terms page: none, which is right for a site that sells nothing. Pass --require-terms when the site sells something.',
+    )
   }
   return { errors, notes }
 }

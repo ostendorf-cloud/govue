@@ -1446,7 +1446,8 @@ The design of the library and the reasoning behind it.
 
 ### Legal pages
 
-- Every site has an imprint and a privacy statement, and some have terms. Each site writes its
+- Every site has an imprint and a privacy statement. Only a site that sells something has terms.
+  Each site writes its
   own texts, and the owner reviews them. govue ships no legal text, no provider data and no shared
   sections: the rights to some existing texts are not the owner's, and nothing here is legal
   advice. govue carries the structure only, so no site writes the paths, the redirects, the shell
@@ -1460,15 +1461,22 @@ The design of the library and the reasoning behind it.
   | --- | --- | --- |
   | `/imprint` | `/<code>/imprint` | the visitor's |
   | `/privacy` | `/<code>/privacy` | the visitor's |
-  | `/terms` | `/<code>/terms` | the visitor's |
+  | `/terms` (with `Terms`) | `/<code>/terms` | the visitor's |
   | `/impressum` | `/de/imprint` | German |
   | `/datenschutz` | `/de/privacy` | German |
   | `/datenschutzerklaerung` | `/de/privacy` | German |
-  | `/agb` | `/de/terms` | German |
+  | `/agb` (with `Terms`) | `/de/terms` | German |
 
+- Terms are opt in. The zero value of `LegalConfig` leaves `/terms` and `/agb` unregistered, so
+  they fall to the site's 404. A site that sells something sets `Terms: true` and builds a terms
+  page. With terms on by default, a site that forgot the switch would redirect to a missing page.
 - The visitor's language is picked like the redirect at the root: the cookie, then
   `Accept-Language`, then the default. `LegalConfig` embeds `Config`, and `Languages` must hold
-  `de`. `WithoutTerms` leaves `/terms` and `/agb` unregistered, so they fall to the site's 404.
+  `de`. The server sees the visitor's choice only through the cookie. The Vue language layer
+  keeps the choice in `localStorage` by default, which the server cannot read, so a site that
+  wants `/imprint` to follow the stored choice passes `storage: { kind: 'cookie' }` to
+  `createGovueI18n`. Without it the redirect follows `Accept-Language`. The footer links go
+  straight to `/<code>/imprint` in the active language and need no redirect at all.
 - Every answer is a 302 with `Cache-Control: no-store` and no body. The visitor dependent ones add
   `Vary: Accept-Language, Cookie`. A browser may cache a 301 or 308 for a long time, and a
   cached redirect cannot be withdrawn when a visitor changes the language or the scheme changes.
@@ -1480,6 +1488,12 @@ The design of the library and the reasoning behind it.
   (`<path>/{$}`), like `appassoc`. Other methods get 405 with `Allow: GET, HEAD`. The paths are
   case sensitive: `/Impressum` falls to the catch-all. A double slash is cleaned by `ServeMux`
   with its own 307 before any handler runs.
+- The pattern without a method needs a catch-all without a method. A catch-all bound to a method,
+  such as `GET /`, `GET /{path...}` or `GET /{page}`, makes `ServeMux` panic at startup. The
+  message ends in `/imprint matches more methods than GET /, but has a more specific path
+  pattern`, or in `GET / matches fewer methods than /imprint, but has a more general path
+  pattern` when the catch-all comes second. The fix is `mux.Handle("/", notFound)`, which every
+  current site and `example/` already use. A test pins the message.
 - The redirects need no session and no CSRF check, so a site mounts them outside the route chain,
   as `example/` does. The outer chain still applies.
 - The Vue package gives `legalRouteDefs(pages)` for the route table, `legalRoutes(pages)` with
@@ -1491,10 +1505,13 @@ The design of the library and the reasoning behind it.
   under `govue.legal` in both catalogues.
 - `govue-check-legal --dir <out-dir>` runs after the prerender. It fails when the imprint or the
   privacy page is missing in a language, carries another `lang`, or is not in `sitemap.xml`,
-  which the server serves from. Terms are optional: a terms page in one language must exist in
-  all, and `--require-terms` makes it required.
+  which the server serves from, or when the sitemap names more than one origin. Comments in the
+  sitemap and the pages are ignored. Terms are optional: a terms page in one language must exist
+  in all, and `--require-terms` makes it required for a site that sells. The check does not
+  look at the footer links.
 - `web/example/` is a placeholder site with the three pages. Its text says that it is a
-  placeholder. A test prerenders it and runs the check on the output.
+  placeholder. A test prerenders it and runs the check on the output. The Go example leaves
+  `Terms` off, and its tests follow each redirect to a page that answers 200.
 
 ### Build time pre-rendering
 
