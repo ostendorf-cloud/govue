@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { BearerAuthOptions } from './client'
+import type { BearerAuthOptions, BearerStorageAuthOptions } from './client'
 import { createClient } from './client'
 import { ErrorCode, isApiError } from './errors'
 import type { TokenStorage } from './tokenStorage'
@@ -116,7 +116,7 @@ interface Server {
 function setup(
   options: {
     initial?: string
-    auth?: Partial<BearerAuthOptions>
+    auth?: Partial<Pick<BearerStorageAuthOptions, 'rotateAfterMs' | 'deviceName' | 'rotation'>>
     onUnauthenticated?: () => void
   } = {},
 ) {
@@ -148,7 +148,7 @@ function setup(
   const client = createClient({
     fetch: fetchFake,
     onUnauthenticated: options.onUnauthenticated,
-    auth: { mode: 'bearer', storage, ...options.auth },
+    auth: { mode: 'bearer', storage, rotation: 'owner', ...options.auth },
   })
   const rotations = () => calls.filter((c) => c.url.endsWith('/auth/token/rotate'))
   const requests = () =>
@@ -838,6 +838,225 @@ describe('signIn', () => {
 
     expect(calls[1].headers.Authorization).toBe(`Bearer ${SIGNED}`)
     expect(calls[2].headers.Authorization).toBeUndefined()
+  })
+})
+
+describe('the rotation option with a custom storage', () => {
+  // A cast, as a JavaScript caller or a loose type would reach createClient.
+  const build = (auth: unknown) => createClient({ fetch: vi.fn() as never, auth: auth as never })
+
+  it('throws a TypeError that names the option and both values when rotation is missing', () => {
+    const storage = fakeStorage(record(OLD))
+
+    const act = () => build({ mode: 'bearer', storage })
+
+    expect(act).toThrow(TypeError)
+    expect(act).toThrow(/auth\.rotation/)
+    expect(act).toThrow(/'owner'/)
+    expect(act).toThrow(/'none'/)
+  })
+
+  it.each([
+    ['an invalid string', 'both'],
+    ['undefined given explicitly', undefined],
+    ['null', null],
+    ['an empty string', ''],
+    ['a wrong case', 'Owner'],
+    ['a boolean', true],
+  ])('refuses %s as the rotation of a custom storage', (_name, rotation) => {
+    const storage = fakeStorage(record(OLD))
+
+    expect(() => build({ mode: 'bearer', storage, rotation })).toThrow(TypeError)
+  })
+
+  it('touches the storage and the network not at all when it refuses', () => {
+    const storage = fakeStorage(record(OLD))
+    const get = vi.spyOn(storage, 'get')
+    const set = vi.spyOn(storage, 'set')
+    const clear = vi.spyOn(storage, 'clear')
+    const fetchFake = vi.fn()
+
+    expect(() =>
+      createClient({ fetch: fetchFake as never, auth: { mode: 'bearer', storage } as never }),
+    ).toThrow(TypeError)
+
+    expect(get).not.toHaveBeenCalled()
+    expect(set).not.toHaveBeenCalled()
+    expect(clear).not.toHaveBeenCalled()
+    expect(fetchFake).not.toHaveBeenCalled()
+  })
+
+  it('carries no token or storage content in the message', () => {
+    const storage = fakeStorage(record(OLD))
+    let message = ''
+    try {
+      build({ mode: 'bearer', storage, rotation: 'both' })
+    } catch (error) {
+      message = String(error)
+    }
+
+    expect(message).not.toBe('')
+    expect(message).not.toContain(OLD)
+    expect(message).not.toContain('govue-test-token')
+    expect(message).not.toContain('both')
+  })
+
+  it.each(['owner', 'none'] as const)(
+    'works with a custom storage and rotation %s',
+    async (rotation) => {
+      const storage = fakeStorage(record(OLD))
+      const client = createClient({
+        fetch: vi.fn(() => Promise.resolve(answer(200, { ok: true }))),
+        auth: { mode: 'bearer', storage, rotation },
+      })
+
+      await expect(client.get('/x')).resolves.toStrictEqual({ ok: true })
+    },
+  )
+
+  it('keeps the memory default: no storage, rotation omitted, owner', async () => {
+    const calls: string[] = []
+    const client = createClient({
+      fetch: ((input: string) => {
+        calls.push(input)
+        return Promise.resolve(
+          input.endsWith('/auth/token') ? answer(200, issued(SIGNED)) : answer(200, {}),
+        )
+      }) as never,
+      auth: { mode: 'bearer' },
+    })
+
+    await client.signIn({ login: 'a', password: 'b' })
+
+    expect(calls).toHaveLength(1)
+  })
+
+  it('treats a null storage as the memory default', async () => {
+    const calls: string[] = []
+    const client = createClient({
+      fetch: ((input: string) => {
+        calls.push(input)
+        return Promise.resolve(
+          input.endsWith('/auth/token') ? answer(200, issued(SIGNED)) : answer(200, {}),
+        )
+      }) as never,
+      auth: { mode: 'bearer', storage: null } as never,
+    })
+
+    await client.signIn({ login: 'a', password: 'b' })
+
+    expect(calls).toHaveLength(1)
+    expect(() => build({ mode: 'bearer', storage: null, rotation: 'owner' })).not.toThrow()
+  })
+
+  it('refuses rotation none with a null storage', () => {
+    expect(() => build({ mode: 'bearer', storage: null, rotation: 'none' })).toThrow(TypeError)
+  })
+
+  it('reads storage and rotation once and builds what it checked: a rotation getter', async () => {
+    const reads = { storage: 0, rotation: 0 }
+    const storage = fakeStorage(record(OLD))
+    const fetchFake = vi.fn()
+    const auth = {
+      mode: 'bearer',
+      get storage() {
+        reads.storage++
+        return storage
+      },
+      get rotation() {
+        // 'none' passes the check, a second read would build an owner.
+        return ++reads.rotation === 1 ? 'none' : 'owner'
+      },
+    }
+
+    const client = createClient({ fetch: fetchFake as never, auth: auth as never })
+    const error = await client.signIn({ login: 'a', password: 'b' }).catch((e) => e)
+
+    expect(reads).toStrictEqual({ storage: 1, rotation: 1 })
+    expect(isApiError(error)).toBe(true)
+    expect(fetchFake).not.toHaveBeenCalled()
+  })
+
+  it('reads storage and rotation once and builds what it checked: a storage getter', async () => {
+    const reads = { storage: 0, rotation: 0 }
+    const custom = fakeStorage(record(OLD))
+    const fetchFake = vi.fn(() => Promise.resolve(answer(200, {})))
+    const auth = {
+      mode: 'bearer',
+      get storage() {
+        // No storage passes the no storage check, a second read would build an owner on custom.
+        return ++reads.storage === 1 ? undefined : custom
+      },
+      get rotation() {
+        reads.rotation++
+        return undefined
+      },
+    }
+
+    const client = createClient({ fetch: fetchFake, auth: auth as never })
+    await client.get('/x')
+
+    expect(reads).toStrictEqual({ storage: 1, rotation: 1 })
+    expect(custom.value).toBe(record(OLD))
+    expect(fetchFake.mock.calls).toHaveLength(1)
+    const init = (fetchFake.mock.calls[0] as unknown as [string, RequestInit])[1]
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
+  })
+
+  it('accepts rotation owner without a storage, and an explicit undefined storage', () => {
+    expect(() => build({ mode: 'bearer', rotation: 'owner' })).not.toThrow()
+    expect(() => build({ mode: 'bearer', storage: undefined })).not.toThrow()
+    expect(() => build({ mode: 'bearer', storage: undefined, rotation: 'owner' })).not.toThrow()
+  })
+
+  it('refuses rotation none without a storage, since there is no owner to read', () => {
+    const act = () => build({ mode: 'bearer', rotation: 'none' })
+
+    expect(act).toThrow(TypeError)
+    expect(act).toThrow(/auth\.rotation/)
+    expect(() => build({ mode: 'bearer', storage: undefined, rotation: 'none' })).toThrow(TypeError)
+  })
+
+  it.each([
+    ['an invalid string', 'both'],
+    ['null', null],
+  ])('refuses %s as the rotation without a storage', (_name, rotation) => {
+    expect(() => build({ mode: 'bearer', rotation })).toThrow(TypeError)
+  })
+
+  it('is a compile error to leave rotation out of a custom storage, or to mix it up', () => {
+    const storage = fakeStorage(record(OLD))
+    // One short line per case, so that a directive sits on the line of its error.
+    const c = (auth: BearerAuthOptions) => createClient({ fetch: vi.fn() as never, auth })
+    const thrown = (run: () => unknown) => {
+      try {
+        run()
+      } catch {
+        return true
+      }
+      return false
+    }
+
+    // @ts-expect-error a custom storage needs rotation
+    const missing = () => c({ mode: 'bearer', storage })
+    // @ts-expect-error rotation must be owner or none
+    const invalid = () => c({ mode: 'bearer', storage, rotation: 'both' })
+    // @ts-expect-error rotation none needs a storage
+    const noStorage = () => c({ mode: 'bearer', rotation: 'none' })
+    // @ts-expect-error rotation undefined is not a choice
+    const undef = () => c({ mode: 'bearer', storage, rotation: undefined })
+    // @ts-expect-error null is not a choice
+    const nul = () => c({ mode: 'bearer', storage, rotation: null })
+    // The valid forms compile without a directive.
+    const ok = [
+      () => c({ mode: 'bearer', storage, rotation: 'owner' }),
+      () => c({ mode: 'bearer', storage, rotation: 'none' }),
+      () => c({ mode: 'bearer' }),
+      () => c({ mode: 'bearer', rotation: 'owner' }),
+    ]
+
+    expect([missing, invalid, noStorage, undef, nul].every(thrown)).toBe(true)
+    expect(ok.some(thrown)).toBe(false)
   })
 })
 
