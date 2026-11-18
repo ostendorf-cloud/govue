@@ -24,6 +24,8 @@ import (
 	"github.com/ostendorf-cloud/govue/metrics"
 	"github.com/ostendorf-cloud/govue/middleware"
 	"github.com/ostendorf-cloud/govue/oidc"
+	"github.com/ostendorf-cloud/govue/passkey"
+	"github.com/ostendorf-cloud/govue/passkey/passkeytest"
 	"github.com/ostendorf-cloud/govue/ratelimit"
 	"github.com/ostendorf-cloud/govue/session"
 	"github.com/ostendorf-cloud/govue/session/devicehttp"
@@ -59,6 +61,11 @@ type app struct {
 	accounts      *account.Handlers
 	authLimiter   *ratelimit.Limiter
 	authRateLimit *middleware.RateLimit
+
+	// passkeys are the passkey handlers and passkeyStore their memory store.
+	// Both are nil unless PASSKEY_RP_ID is set. See buildPasskeys.
+	passkeys     *passkey.Handlers
+	passkeyStore *passkeytest.MemoryStore
 
 	// devices are the token handlers of a native app, over the same accounts.
 	// See buildDevices.
@@ -314,6 +321,7 @@ func (a *app) handler() http.Handler {
 			a.protector.Middleware, a.sessions.Middleware)
 	}
 	a.mountAccounts(mux, route, checked)
+	a.mountPasskeys(mux, route, checked)
 	a.mountDevices(mux, route, checked)
 
 	mux.Handle("GET /app", route(api.Handle(a.home)))

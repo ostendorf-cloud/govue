@@ -61,8 +61,10 @@ repeated here.
   method `Store`, the single use `ChallengeStore` with a bounded in memory default, and the JSON
   handlers. It imports `account` for `Identity` only and never `session`. Its `StartSession` has
   the signature of the account one. The RP id and the origins are required configuration and
-  never come from a request. `passkey/passkeytest` holds the conformance suite and an in memory
-  store.
+  never come from a request. A finish clears the challenge cookie and uses the challenge up,
+  whatever the outcome, and every refused login has one answer. Passkeys work with the cookie
+  client only. `passkey/passkeytest` holds the conformance suite, an in memory store and
+  `Authenticator`, a software passkey for tests.
 - `session/devicehttp` holds the JSON handlers of the device token sessions of native apps:
   issue, rotate, list, revoke and sign out of the calling device. It is a sub package so that
   `session` alone does not pull `api` in. It imports `session` and never `account`, and the
@@ -103,8 +105,11 @@ task example:build   # compile the example application
 - The standard library only, with three exceptions. `prometheus/client_golang` stays confined to
   the `metrics` package. `golang.org/x/crypto` stays confined to the `account` package, for
   Argon2id, which the standard library lacks. The owner accepted it for local accounts.
-  `github.com/go-webauthn/webauthn` stays confined to the `passkey` package, for the WebAuthn
-  ceremonies. The owner accepted it for passkeys. Another dependency needs a reason in the pull
+  `github.com/go-webauthn/webauthn` v0.18.2 is imported by the `passkey` package only, for the
+  WebAuthn ceremonies, and no exported name carries one of its types. The owner accepted it for
+  passkeys. Its own modules, CBOR, msgpack, JWT, `go-tpm` and `golang.org/x/crypto/ocsp` among
+  them, reach the build of `passkey` and nothing else. `passkey/passkeytest` writes its CBOR by
+  hand and imports no library package itself. Another dependency needs a reason in the pull
   request.
 - A package stays usable on its own. An application that wants `clientip` must not pull in
   `session` with it.

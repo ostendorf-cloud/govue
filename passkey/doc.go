@@ -27,6 +27,24 @@
 // finishes the other ceremony. [MemoryChallengeStore] is the bounded default
 // for one process.
 //
+// A new begin replaces the cookie, so a browser runs one ceremony at a time.
+// The finish of an older, overlapping ceremony takes the newer challenge,
+// fails and clears the cookie, so both get the one refusal.
+//
+// # Handlers
+//
+// [Handlers.RegisterBegin], [Handlers.RegisterFinish], [Handlers.LoginBegin]
+// and [Handlers.LoginFinish] run the ceremonies, [Handlers.List] and
+// [Handlers.Delete] manage the passkeys of the logged in account. They answer
+// JSON in the shape of the api package and check the method and the origin
+// themselves, like the account handlers. Every refused login answers 401
+// with account.CodeInvalidCredentials and one body. Rate limiting is the
+// product's job: the begin and finish routes need a per client limit.
+//
+// Passkeys work with the cookie client only. The challenge cookie is host
+// only and SameSite=Strict, and a login finish starts the application's
+// session through StartSession.
+//
 // # Accounts
 //
 // The package imports account for [account.Identity] only. A passkey login

@@ -1063,8 +1063,15 @@ The design of the library and the reasoning behind it.
 
 - The `passkey` package adds WebAuthn passkeys next to the password and TOTP login, never
   instead of it. A person registers a passkey while logged in and then logs in with it. It is
-  the one importer of `github.com/go-webauthn/webauthn`, so an application without passkeys does
-  not pull the library in.
+  the one importer of `github.com/go-webauthn/webauthn` v0.18.2, so an application without
+  passkeys does not pull the library in. No exported name of `passkey` carries a type of the
+  library: credentials and challenges travel as opaque bytes, so a library upgrade does not
+  change the public API.
+- The library brings its own dependencies into the build of `passkey`: a CBOR codec, msgpack, a
+  JWT parser and `go-tpm` for the TPM attestation format, among others, and
+  `golang.org/x/crypto/ocsp` through its revocation checks. `passkey` asks for attestation `none`
+  and never uses the TPM or the metadata service, but the library's `protocol` package imports
+  them, so they are compiled in.
 - `passkey` imports `account` for `account.Identity` only. `StartSession` has the signature of
   `account.HandlerConfig.StartSession`, so an application passes the same function to both and a
   passkey login starts the session a password and TOTP login starts. `account` does not import
@@ -1090,9 +1097,18 @@ The design of the library and the reasoning behind it.
 #### Challenges
 
 - A challenge is single use. The begin handler stores the ceremony state in a `ChallengeStore`
-  under 32 random bytes and sends that id in an HttpOnly, `SameSite=Strict` cookie with the
-  `__Host-` prefix. The finish handler takes it, which deletes it in the same step, whatever the
-  outcome. A second finish with the same cookie finds nothing.
+  under 32 random bytes and sends that id in an HttpOnly, `SameSite=Strict` cookie,
+  `__Host-govue-passkey`. Without TLS, `AllowPlainHTTP` drops the prefix and the Secure attribute,
+  as for the session cookie. The finish handler clears the cookie and takes the challenge, which
+  deletes it in the same step, before it checks anything else. A success, every refusal, a missing
+  session and a stale login all use it up. A second finish with the same cookie finds nothing.
+- Only the method and the origin check run before that. A cross site request is refused without
+  reading the cookie, so it cannot burn a person's pending challenge. A test pins it.
+- A new begin replaces the cookie, so a browser runs one ceremony at a time. Two overlapping
+  ceremonies fail in a fixed way: the finish of the first one carries the second cookie, takes the
+  second challenge, fails the signature and gets the single refusal. The cookie is cleared with it,
+  so the finish of the second one gets the same refusal, and the person starts again. A test pins
+  that order.
 - The id travels in a cookie and not in the response body. A script cannot read it, the client
   carries no state between the two calls, and the challenge stays bound to the browser that began
   the login.
@@ -1131,16 +1147,58 @@ The design of the library and the reasoning behind it.
   handlers. Each checks the method, then the origin with `net/http.CrossOriginProtection`, then a
   strict body, for the reason the account handlers give: a passkey login has no session to bind a
   CSRF token to, and a forgotten middleware must not leave it open.
-- Registration and delete need a session whose login is at most `ReauthWindow` old, ten minutes by
-  default, through `CurrentAccount`, which returns the identity and the time of the login. A
-  stolen, long lived session cannot add its own passkey. Listing needs a session only.
-- Every refused login answers 401 `invalid_credentials` with one body: a missing, expired or used
-  challenge, an unknown credential or handle, a wrong origin or RP id hash, a bad signature, no
-  user verification and a sign count going backwards, a cloned authenticator.
+- Registration, at begin and at finish, and delete need a session whose login is at most
+  `ReauthWindow` old, ten minutes by default, through `CurrentAccount`, which returns the
+  identity and the time of the login. A stolen, long lived session cannot add its own passkey.
+  Listing needs a session only.
+- Registration asks for a discoverable credential, user verification and attestation `none`, and
+  lists the account's passkeys in `excludeCredentials`. Login is discoverable: no login name, an
+  empty `allowCredentials` and user verification required.
+- Every refused login answers 401 `invalid_credentials` with one answer, status, headers and body:
+  a missing, unknown, expired or used challenge, a registration challenge, an overlapping
+  ceremony, an unknown credential or handle, a credential under another account's handle, a
+  disabled account, a wrong origin or RP id hash, a bad signature, no user verification or
+  presence and a sign count that did not move forward, a cloned authenticator. A table test
+  compares the whole answer across all of them. The code is the account login's, so a client that
+  handles a refused password login handles this one.
+- A sign count of zero on both sides is allowed, since most synced passkeys keep none. Any other
+  count at or below the stored one is refused. Two logins racing with one counter value both read
+  the stored count, and the compare and set of `UpdateCredential` lets exactly one through. A test
+  holds both at a barrier after the read.
+- Every refused registration answers 400 `invalid_passkey` with one body: the same challenge
+  failures, a challenge of another account, a wrong origin or RP id hash, no user verification
+  and a credential id already stored. A name over 64 characters or with a character that is not
+  printable is 400 `invalid_argument` with `name` in the details.
+- A store or session failure is a 500, not a refusal: it says nothing about the passkey, and
+  answering 401 would tell the person a right passkey is wrong.
 - Deleting the last passkey is refused with 409 `last_factor` when `OtherFactors` reports no other
   way to log in, such as a confirmed TOTP secret.
-- The begin and finish routes need a per client rate limit, as `example/` wires it with the account
-  limiter.
+- Rate limiting is the product's job. The begin and finish routes need a per client limit: a begin
+  stores a challenge in a bounded store and a finish verifies a signature. Any of them may then
+  answer 429 before the handler runs, which leaves the challenge and the cookie as they were.
+  `example/` puts them behind the stricter limiter of the account routes.
+- Passkeys work with the cookie client only. The challenge cookie is host only and
+  `SameSite=Strict`, and a login finish starts a cookie session through `StartSession`. A
+  frontend on another site does not get the cookie back. In `example/`, `CurrentAccount` answers
+  no session for a device session, so a native app cannot register a passkey with its token.
+- `passkeytest.Authenticator` is a software passkey for tests: one ES256 key, attestation `none`
+  and fields for the origin, the RP id hash, the counter and the flags. Its CBOR is written by
+  hand, so `passkeytest` does not import the library. The tests of `passkey` and `example/` run
+  every ceremony through it.
+
+#### In `example/`
+
+- `PASSKEY_RP_ID` turns passkeys on, `PASSKEY_RP_NAME` names the relying party. The origins are
+  `ALLOWED_ORIGINS`, and `PASSKEY_RP_ID` without them refuses to start, as does an origin that is
+  not https or not below the RP id. Without `PASSKEY_RP_ID` no passkey route exists.
+- The routes live under `/api/v1/account/passkeys`. The two begin and the two finish routes sit
+  behind the account limiter. Listing and delete have the general limit.
+- The store is `passkeytest.MemoryStore`, and the challenge store is the default
+  `MemoryChallengeStore`, so every passkey and challenge is gone on a restart. The session's
+  `IssuedAt` is the login time the reauth window counts from. `OtherFactors` is 1 for an account
+  with a password and a confirmed TOTP secret.
+- The account login and the passkey login share one `startSession` function. A test signs up,
+  logs in with TOTP, registers a passkey and logs in with it, and compares the two sessions.
 
 #### Native apps and recovery
 

@@ -63,6 +63,13 @@ type config struct {
 	// decision.
 	allowSignup bool
 
+	// passkeyRPID and passkeyRPName turn passkeys on. Both are empty by
+	// default, which mounts no passkey route. The relying party id is never
+	// derived from a request's Host header, and the origins a ceremony may
+	// come from are allowedOrigins, so PASSKEY_RP_ID needs ALLOWED_ORIGINS.
+	passkeyRPID   string
+	passkeyRPName string
+
 	allowPlainHTTP bool
 
 	// siteDir is the output directory of the prerender step. Empty means the
@@ -138,6 +145,15 @@ func loadConfig(getenv func(string) string) (config, error) {
 	cfg.authRateLimitBurst = l.Int("AUTH_RATE_LIMIT_BURST", 5, 0, 1000)
 	cfg.authRateLimitPer = l.Duration("AUTH_RATE_LIMIT_PER", time.Minute, time.Second, time.Hour)
 	cfg.allowSignup = l.Bool("ALLOW_SIGNUP", false)
+
+	// Off by default. PASSKEY_RP_ID is the application's own host, such as
+	// app.example.com, and cannot change later without losing every passkey.
+	// The origins are ALLOWED_ORIGINS. passkey.New checks both in newApp.
+	cfg.passkeyRPID = l.String("PASSKEY_RP_ID", "")
+	cfg.passkeyRPName = l.String("PASSKEY_RP_NAME", "govue example")
+	if cfg.passkeyRPID != "" && len(cfg.allowedOrigins) == 0 {
+		fail(errors.New("PASSKEY_RP_ID: needs ALLOWED_ORIGINS, the origins a passkey ceremony may come from"))
+	}
 
 	cfg.allowPlainHTTP = l.Bool("ALLOW_PLAIN_HTTP", false)
 

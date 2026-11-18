@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/ostendorf-cloud/govue/account"
 	"github.com/ostendorf-cloud/govue/api"
 )
@@ -80,6 +82,7 @@ type Handlers struct {
 	cfg        Config
 	challenges ChallengeStore
 	cross      *http.CrossOriginProtection
+	wa         *webauthn.WebAuthn
 }
 
 // New validates cfg and returns the handlers. It names every problem at once.
@@ -102,6 +105,13 @@ func New(cfg Config) (*Handlers, error) {
 		return nil, fmt.Errorf("passkey: %w", err)
 	}
 
+	// The library checks the RP id and the origins once more, with its own
+	// rules. A refusal there is a startup error as well.
+	wa, err := newWebAuthn(valid)
+	if err != nil {
+		return nil, fmt.Errorf("passkey: relying party: %w", err)
+	}
+
 	challenges := valid.Challenges
 	if challenges == nil {
 		mem, err := NewMemoryChallengeStore(MemoryChallengeConfig{Now: valid.Now})
@@ -111,7 +121,7 @@ func New(cfg Config) (*Handlers, error) {
 		challenges = mem
 	}
 
-	return &Handlers{cfg: valid, challenges: challenges, cross: cross}, nil
+	return &Handlers{cfg: valid, challenges: challenges, cross: cross, wa: wa}, nil
 }
 
 // List answers 200 with the passkeys of the logged in account as a

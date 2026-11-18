@@ -37,8 +37,9 @@ func (a *app) buildAccounts() error {
 		return fmt.Errorf("example: password hasher: %w", err)
 	}
 
+	accounts := accounttest.NewMemoryStore(accounttest.MemoryConfig{})
 	service, err := account.NewService(account.ServiceConfig{
-		Store:  accounttest.NewMemoryStore(accounttest.MemoryConfig{}),
+		Store:  accounts,
 		Hasher: hasher,
 		Issuer: accountIssuer,
 		// A password change ends every session of the account, device
@@ -60,27 +61,7 @@ func (a *app) buildAccounts() error {
 		// runs no OIDC account next to them. A product that does prefixes one
 		// of the two, for example "local:", because both share the subject
 		// namespace that EndAll keys on.
-		StartSession: func(ctx context.Context, w http.ResponseWriter, r *http.Request, id account.Identity) error {
-			// A login does not end the session the request already carries,
-			// so logging in as B while logged in as A would leave A alive.
-			// A request the session layer classifies as bearer is left alone:
-			// it gets no cookie session anyway, and End would sign its
-			// device out. That is the classification Manager.End and Start
-			// use. Any other Authorization header, a Basic one from a proxy
-			// for instance, is an ordinary cookie request.
-			//
-			// If ending the old session fails, no new one is started and
-			// the login answers an opaque 500: failing closed beats a second
-			// live session. The code is consumed by then, so the person logs
-			// in again with the next one.
-			if kind, _ := bearer.Classify(r.Header); kind == bearer.None {
-				if err := a.sessions.End(ctx, w, r); err != nil {
-					return err
-				}
-			}
-			_, err := a.sessions.Start(ctx, w, session.Session{Subject: id.ID, Username: id.Login})
-			return err
-		},
+		StartSession: a.startSession,
 		EndSession: func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
 			return a.sessions.End(ctx, w, r)
 		},
@@ -105,6 +86,9 @@ func (a *app) buildAccounts() error {
 	if err := a.buildDevices(service); err != nil {
 		return err
 	}
+	if err := a.buildPasskeys(accounts); err != nil {
+		return err
+	}
 
 	a.authLimiter = ratelimit.New(a.cfg.authRateLimitBurst, a.cfg.authRateLimitPer, maxRateLimitKeys)
 	authRateLimit, err := middleware.NewRateLimit(middleware.RateLimitConfig{Limiter: a.authLimiter, ClientIP: a.clientIPs})
@@ -114,6 +98,37 @@ func (a *app) buildAccounts() error {
 	a.authRateLimit = authRateLimit
 
 	return nil
+}
+
+// startSession turns a verified identity into a cookie session. The account
+// handlers and the passkey handlers share it, so a password and TOTP login and
+// a passkey login start the same session.
+func (a *app) startSession(ctx context.Context, w http.ResponseWriter, r *http.Request, id account.Identity) error {
+	// A login does not end the session the request already carries, so
+	// logging in as B while logged in as A would leave A alive. A request the
+	// session layer classifies as bearer is left alone: it gets no cookie
+	// session anyway, and End would sign its device out. That is the
+	// classification Manager.End and Start use. Any other Authorization
+	// header, a Basic one from a proxy for instance, is an ordinary cookie
+	// request.
+	//
+	// If ending the old session fails, no new one is started and the login
+	// answers an opaque 500: failing closed beats a second live session. The
+	// code is consumed by then, so the person logs in again with the next
+	// one.
+	if kind, _ := bearer.Classify(r.Header); kind == bearer.None {
+		if err := a.sessions.End(ctx, w, r); err != nil {
+			return err
+		}
+	}
+	if a.passkeyStore != nil {
+		// The memory store learns the account's login here, the way a SQL
+		// adapter joins the account table. Every passkey registration needs
+		// a session, so the account passed through this function before.
+		a.passkeyStore.PutAccount(id)
+	}
+	_, err := a.sessions.Start(ctx, w, session.Session{Subject: id.ID, Username: id.Login})
+	return err
 }
 
 // mountAccounts registers the account routes. route is the chain every
