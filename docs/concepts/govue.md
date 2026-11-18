@@ -532,10 +532,17 @@ The design of the library and the reasoning behind it.
 - With `GOMAXPROCS` 1 the racers take turns on one processor and a narrow race is never hit: at
   `go test -cpu=1` a read then write store passed every one of 200 runs. The race checks raise
   `GOMAXPROCS` to at least four while they run and restore it afterwards. The checks of one
-  `Run` are not parallel tests, and other tests running at that time only get more processors.
+  `Run` are not parallel tests. `GOMAXPROCS` is process wide, so other tests running at that
+  time get more processors, which changes nothing they can observe. A test that changes
+  `GOMAXPROCS` itself in that time is overwritten: the value the first race check saw comes back
+  when the last one ends. Such a test does not run in parallel with a suite run.
 - More processors than CPUs do not help on a machine with one CPU, where the threads take turns
   as well. There a race check fails with a message instead of passing, since a green suite that
   cannot see a race proves nothing. A product runs the suite on at least two CPUs.
+- The check reads `runtime.NumCPU()`, which does not see a container CPU quota. A pod limited to
+  one CPU on a node with many passes the check and gets `GOMAXPROCS` 4, but the quota throttles
+  the threads, so a narrow race is hit as rarely as on one CPU. A green run there proves less.
+  The job gets a quota of two CPUs or more, or the product raises `Harness.Rounds`.
 - A test runs the suite in a child process against 39 stores that each break one guard, and
   expects the matching check to fail. Four of them run with `-test.cpu=1`. The read then write
   stores in it have no sleep, so the races they show are as narrow as in a real adapter.

@@ -8,10 +8,15 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ostendorf-cloud/govue/account"
 )
 
 // TestRace_startBarrier holds the last racer of every round before it
@@ -80,6 +85,154 @@ func TestRace_raisesProcessors(t *testing.T) {
 	}
 	if got := runtime.GOMAXPROCS(0); got != 1 {
 		t.Errorf("GOMAXPROCS after the race = %d, want the 1 it had before", got)
+	}
+}
+
+// procChange is one call that changed GOMAXPROCS.
+type procChange struct{ to int }
+
+// TestRun_parallelRunsRestoreProcessorsOnce runs two Run calls in parallel,
+// starting from GOMAXPROCS 1, 2 and 3. The shorter one finishes while the
+// longer one still races. The race checks must run with at least
+// minRaceProcs all the time, and the original value must come back only when
+// the last user of the raise is done, never while another run still races.
+// Each race check of one Run raises and restores on its own, so "once"
+// holds per stretch of overlapping checks, not per Run. It changes a process wide setting, so it does
+// not run in parallel itself.
+func TestRun_parallelRunsRestoreProcessorsOnce(t *testing.T) {
+	if n := runtime.NumCPU(); n < 2 {
+		t.Skipf("runtime.NumCPU() = %d: Run refuses to pass on fewer than two CPUs", n)
+	}
+
+	for _, start := range []int{1, 2, 3} {
+		t.Run("from "+strconv.Itoa(start), func(t *testing.T) {
+			outer := runtime.GOMAXPROCS(start)
+			t.Cleanup(func() { runtime.GOMAXPROCS(outer) })
+
+			var (
+				mu      sync.Mutex
+				changes []procChange
+				overlap []procChange // changes up to the end of the short run
+			)
+
+			realSet := setProcs
+			setProcs = func(n int) int {
+				prev := realSet(n)
+				if n > 0 {
+					mu.Lock()
+					changes = append(changes, procChange{n})
+					mu.Unlock()
+				}
+
+				return prev
+			}
+			t.Cleanup(func() { setProcs = realSet })
+
+			var (
+				minSeen   atomic.Int64
+				longReady = make(chan struct{})
+				shortDone = make(chan struct{})
+				holdOnce  sync.Once
+				waitOnce  sync.Once
+			)
+			minSeen.Store(1 << 30)
+
+			observe := func() {
+				got := int64(runtime.GOMAXPROCS(0))
+				for {
+					cur := minSeen.Load()
+					if got >= cur || minSeen.CompareAndSwap(cur, got) {
+						return
+					}
+				}
+			}
+			wait := func(c <-chan struct{}, what string) {
+				select {
+				case <-c:
+				case <-time.After(time.Minute):
+					t.Errorf("timed out waiting for %s", what)
+				}
+			}
+
+			// The long run holds one racer until the short run is over, so
+			// the short run is certain to finish while it still races.
+			long := Harness{Racers: 4, Rounds: 3}
+			long.beforeArrive = func(int) {
+				holdOnce.Do(func() {
+					close(longReady)
+					wait(shortDone, "the short run")
+				})
+				observe()
+			}
+			// The short run starts after the long one raised the value.
+			short := Harness{Racers: 2, Rounds: 1}
+			short.beforeArrive = func(int) {
+				waitOnce.Do(func() { wait(longReady, "the long run") })
+				observe()
+			}
+
+			for _, h := range []*Harness{&long, &short} {
+				h.NewStore = func(*testing.T) account.Store { return NewMemoryStore(MemoryConfig{}) }
+				h.Disable = func(t *testing.T, s account.Store, id string) {
+					t.Helper()
+
+					if m, ok := s.(*MemoryStore); !ok || !m.Disable(id) {
+						t.Fatalf("Disable(%q): no such account", id)
+					}
+				}
+			}
+
+			t.Run("runs", func(t *testing.T) {
+				t.Run("long", func(t *testing.T) {
+					t.Parallel()
+					Run(t, long)
+				})
+				t.Run("short", func(t *testing.T) {
+					t.Parallel()
+					defer close(shortDone)
+					defer func() {
+						mu.Lock()
+						overlap = slices.Clone(changes)
+						mu.Unlock()
+					}()
+					Run(t, short)
+				})
+			})
+
+			if got := minSeen.Load(); got < minRaceProcs {
+				t.Errorf("GOMAXPROCS fell to %d during the race checks, want at least %d", got, minRaceProcs)
+			}
+			if got := runtime.GOMAXPROCS(0); got != start {
+				t.Errorf("GOMAXPROCS after both runs = %d, want the %d it started with", got, start)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			// While both runs raced, the first one raised once and nobody
+			// restored: the restore comes from the last user only.
+			if len(overlap) != 1 || overlap[0].to != minRaceProcs {
+				t.Errorf("GOMAXPROCS changes while both runs raced = %v, want one raise to %d and no restore", overlap, minRaceProcs)
+			}
+
+			// Afterwards the checks of the long run raise and restore one
+			// after the other. Every raise is restored exactly once, always
+			// to the original value, never to a value another run set.
+			raises, restores := 0, 0
+			for _, c := range changes {
+				switch c.to {
+				case minRaceProcs:
+					raises++
+				case start:
+					restores++
+				default:
+					t.Errorf("GOMAXPROCS set to %d, want %d or %d", c.to, minRaceProcs, start)
+				}
+			}
+			if raises != restores || changes[len(changes)-1].to != start {
+				t.Errorf("GOMAXPROCS changes = %v, want every raise restored once to %d, the last change a restore", changes, start)
+			}
+		})
 	}
 }
 

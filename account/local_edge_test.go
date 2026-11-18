@@ -6,6 +6,7 @@ package account_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -90,6 +91,104 @@ func TestLogin_neverTrims(t *testing.T) {
 
 		_, err := f.svc.Login(t.Context(), login, fakePassword, f.code(t, secret, 0))
 		wantRefused(t, err)
+	}
+}
+
+// paddedPasswords pairs a stored password with its other spelling. In every
+// pair one side differs from the other only by a leading or trailing space.
+var paddedPasswords = []struct {
+	name, stored, given string
+}{
+	{"stored trimmed, leading space given", fakePassword, " " + fakePassword},
+	{"stored trimmed, trailing space given", fakePassword, fakePassword + " "},
+	{"stored leading space, trimmed given", " " + fakePassword, fakePassword},
+	{"stored trailing space, trimmed given", fakePassword + " ", fakePassword},
+}
+
+// confirmedWith creates an account for fakeLogin with password and confirms
+// it, so the code of the current step logs in.
+func confirmedWith(t *testing.T, f *fixture, password string) (account.Identity, string) {
+	t.Helper()
+
+	id, enrolment, err := f.svc.SignUp(t.Context(), fakeLogin, password)
+	if err != nil {
+		t.Fatalf("SignUp: %v", err)
+	}
+	if _, err := f.svc.ConfirmTOTP(t.Context(), fakeLogin, password, f.code(t, enrolment.Secret, -1)); err != nil {
+		t.Fatalf("ConfirmTOTP with the exact password: %v", err)
+	}
+
+	return id, enrolment.Secret
+}
+
+// TestLogin_neverTrimsThePassword pins that a password with a leading or
+// trailing space does not match the trimmed one, and the other way round.
+// The exact stored spelling still logs in.
+func TestLogin_neverTrimsThePassword(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range paddedPasswords {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(t)
+			_, secret := confirmedWith(t, f, tc.stored)
+
+			_, err := f.svc.Login(t.Context(), fakeLogin, tc.given, f.code(t, secret, 0))
+			wantRefused(t, err)
+
+			if _, err := f.svc.Login(t.Context(), fakeLogin, tc.stored, f.code(t, secret, 0)); err != nil {
+				t.Errorf("Login with the exact stored password: %v", err)
+			}
+		})
+	}
+}
+
+// TestChangePassword_neverTrimsThePasswords pins the same for the current
+// password, which must match exactly, and for the new one, which is stored
+// exactly as given.
+func TestChangePassword_neverTrimsThePasswords(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range paddedPasswords {
+		t.Run("current, "+tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(t)
+			id, _ := confirmedWith(t, f, tc.stored)
+			hash := f.record(t, fakeLogin).PasswordHash
+
+			err := f.svc.ChangePassword(t.Context(), id, tc.given, fakeNewPassword)
+			wantRefused(t, err)
+
+			if got := f.record(t, fakeLogin).PasswordHash; got != hash {
+				t.Errorf("a refused change replaced the stored hash")
+			}
+
+			if err := f.svc.ChangePassword(t.Context(), id, tc.stored, fakeNewPassword); err != nil {
+				t.Errorf("ChangePassword with the exact stored password: %v", err)
+			}
+		})
+	}
+
+	for _, next := range []string{" " + fakeNewPassword, fakeNewPassword + " "} {
+		t.Run("next, "+strconv.Quote(next), func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(t)
+			id, secret := f.confirmed(t)
+
+			if err := f.svc.ChangePassword(t.Context(), id, fakePassword, next); err != nil {
+				t.Fatalf("ChangePassword: %v", err)
+			}
+
+			_, err := f.svc.Login(t.Context(), fakeLogin, strings.TrimSpace(next), f.code(t, secret, 0))
+			wantRefused(t, err)
+
+			if _, err := f.svc.Login(t.Context(), fakeLogin, next, f.code(t, secret, 0)); err != nil {
+				t.Errorf("Login with the new password as given: %v", err)
+			}
+		})
 	}
 }
 
