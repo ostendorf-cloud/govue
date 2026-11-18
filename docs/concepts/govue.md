@@ -1238,6 +1238,18 @@ The design of the library and the reasoning behind it.
   Without that, an adapter that keeps the handle in an account column would never find the second
   passkey, while a delete still counted it as live and could remove the working one. The
   conformance suite checks the guard and racing first registrations.
+- A handle also belongs to one account: `AddCredential` refuses a handle another account holds.
+  Handlers never send one, since every handle is 32 random bytes made on the server, but the
+  rule makes `FindByUserHandle` answer one account by contract, not by chance.
+- The first registration of an account has no credential row to lock. `SELECT ... FOR UPDATE`
+  over that empty set locks nothing at READ COMMITTED, and both racing inserts go through. A SQL
+  adapter locks the account row, runs the check and the insert SERIALIZABLE, or keeps the handle
+  in an account column set with a conditional `UPDATE`.
+- An account without credentials has no handle. After its last passkey is deleted, the next
+  registration brings a new random handle, and it is accepted. An adapter with a handle column
+  writes it only while the account has no credential, or clears it when the last credential is
+  deleted. A column written once and never cleared would refuse every later registration. The
+  suite and a ceremony test cover registering again after the last delete.
 - The user handle is 32 random bytes per account, made with the first passkey and copied onto
   every further one. It is not the account id. The authenticator stores it and a synced passkey
   copies it to every device of the person, so an id built from an email address or a sequence

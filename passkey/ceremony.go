@@ -188,8 +188,9 @@ func (h *Handlers) RegisterBegin() http.Handler {
 // [Handlers.RegisterBegin], stores it and answers 201 with a
 // [RegisterResult]. Of two first registrations racing from two browsers,
 // each with its own new user handle, exactly one succeeds. The other gets the
-// one refusal and begins again with the handle the account now has. The challenge is taken, and the cookie cleared, before
-// anything else is checked, so it is gone whatever the outcome.
+// one refusal and begins again with the handle the account now has. The
+// challenge is taken, and the cookie cleared, before anything else is
+// checked, so it is gone whatever the outcome.
 //
 // It needs the same account that began and a login within
 // [Config.ReauthWindow]. Every refused ceremony answers 400 with

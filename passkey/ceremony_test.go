@@ -809,6 +809,34 @@ func TestRegistrationRefusesASecondHandleOverAStoreWithoutTheGuard(t *testing.T)
 	}
 }
 
+// TestRegisterAgainAfterTheLastPasskeyWasDeleted: an account that deleted its
+// last passkey gets a new handle on the next registration, and that
+// registration and its login work.
+func TestRegisterAgainAfterTheLastPasskeyWasDeleted(t *testing.T) {
+	p := newRP(t)
+	first := newAuthenticator(t)
+	p.mustRegister(first)
+	oldHandle := first.UserHandle
+
+	if w := p.post(p.h.Delete(), nil, map[string]any{"id": b64.EncodeToString(first.CredentialID)}); w.Code != http.StatusNoContent {
+		t.Fatalf("delete the last passkey: %d %s", w.Code, w.Body)
+	}
+
+	second := newAuthenticator(t)
+	if w := p.register(second, "phone"); w.Code != http.StatusCreated {
+		t.Fatalf("register after the last delete: %d %s", w.Code, w.Body)
+	}
+	if bytes.Equal(second.UserHandle, oldHandle) {
+		t.Fatal("the new registration reused the handle of the deleted passkey")
+	}
+	if w := p.login(second); w.Code != http.StatusOK {
+		t.Fatalf("login with the new passkey: %d %s", w.Code, w.Body)
+	}
+	if w := p.login(first); w.Code != http.StatusUnauthorized {
+		t.Fatalf("login with the deleted passkey: %d, want 401", w.Code)
+	}
+}
+
 // expiryBlindChallenges is a ChallengeStore that never checks ExpiresAt, so
 // only the handler's own recheck stands between an old challenge and a login.
 type expiryBlindChallenges struct {

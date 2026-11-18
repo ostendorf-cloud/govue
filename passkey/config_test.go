@@ -84,6 +84,11 @@ func TestConfigValidation(t *testing.T) {
 		{"origin port out of range", func(c *Config) { c.Origins = []string{"https://app.example.com:99999"} }, "1 to 65535"},
 		{"origin port zero", func(c *Config) { c.Origins = []string{"https://app.example.com:0"} }, "1 to 65535"},
 		{"origin port leading zero", func(c *Config) { c.Origins = []string{"https://app.example.com:0443"} }, "1 to 65535"},
+		{"origin port leading zero only", func(c *Config) { c.Origins = []string{"https://app.example.com:08443"} }, "1 to 65535"},
+		{"origin upper case localhost", func(c *Config) {
+			c.RPID = "localhost"
+			c.Origins = []string{"http://LOCALHOST:5173"}
+		}, "lower case host"},
 		{"origin colon without port", func(c *Config) { c.Origins = []string{"https://app.example.com:"} }, "colon without a port"},
 		{"origin wildcard", func(c *Config) {
 			c.RPID = "example.com"

@@ -69,8 +69,12 @@ func (s *MemoryStore) AddCredential(_ context.Context, cred passkey.Credential) 
 		if bytes.Equal(c.ID, cred.ID) {
 			return passkey.ErrConflict
 		}
-		// One handle per account, checked under the same lock as the insert.
+		// One handle per account and one account per handle, checked under
+		// the same lock as the insert.
 		if c.AccountID == cred.AccountID && !bytes.Equal(c.UserHandle, cred.UserHandle) {
+			return passkey.ErrConflict
+		}
+		if c.AccountID != cred.AccountID && bytes.Equal(c.UserHandle, cred.UserHandle) {
 			return passkey.ErrConflict
 		}
 	}

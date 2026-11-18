@@ -85,6 +85,8 @@ func Run(t *testing.T, h Harness) {
 		{"AddRefusesTakenID", checkAddRefusesTakenID},
 		{"AddRefusesSecondHandle", checkAddRefusesSecondHandle},
 		{"AddConcurrentFirstHandleOnce", checkAddConcurrentFirstHandle},
+		{"AddRefusesHandleOfAnotherAccount", checkAddRefusesForeignHandle},
+		{"NewHandleAfterLastDelete", checkNewHandleAfterLastDelete},
 		{"CredentialsOfUnknownAccount", checkCredentialsUnknown},
 		{"FindByUserHandleExact", checkFindExact},
 		{"FindByUserHandleDisabled", checkFindDisabled},
@@ -203,6 +205,57 @@ func checkAddRefusesSecondHandle(t *testing.T, h Harness) {
 
 	// The same handle is still accepted.
 	add(t, store, newCredential(id.ID, first))
+}
+
+// checkAddRefusesForeignHandle: a handle belongs to one account. Another
+// account cannot add a credential under it, and the handle keeps answering
+// the first account only.
+func checkAddRefusesForeignHandle(t *testing.T, h Harness) {
+	store := h.NewStore(t)
+	ctx := context.Background()
+	a, b := h.NewAccount(t, store), h.NewAccount(t, store)
+	handle := newHandle()
+	add(t, store, newCredential(a.ID, handle))
+
+	if err := store.AddCredential(ctx, newCredential(b.ID, handle)); !errors.Is(err, passkey.ErrConflict) {
+		t.Fatalf("AddCredential under another account's handle: got %v, want passkey.ErrConflict", err)
+	}
+	if got := credentials(t, store, b.ID); len(got) != 0 {
+		t.Fatalf("the refused credential was stored: %+v", got)
+	}
+	id, creds, err := store.FindByUserHandle(ctx, handle)
+	if err != nil || id != a || len(creds) != 1 {
+		t.Fatalf("FindByUserHandle after the refusal: %+v, %d credentials, %v, want %+v with 1", id, len(creds), err, a)
+	}
+}
+
+// checkNewHandleAfterLastDelete: an account without credentials has no
+// handle. After its last credential is deleted, a credential with a new
+// handle is accepted and found, and the old handle finds nothing.
+func checkNewHandleAfterLastDelete(t *testing.T, h Harness) {
+	store := h.NewStore(t)
+	ctx := context.Background()
+	id := h.NewAccount(t, store)
+	old := newHandle()
+	first, second := newCredential(id.ID, old), newCredential(id.ID, old)
+	add(t, store, first)
+	add(t, store, second)
+	for _, c := range []passkey.Credential{first, second} {
+		if err := store.DeleteCredential(ctx, id.ID, c.ID, false); err != nil {
+			t.Fatalf("DeleteCredential: %v", err)
+		}
+	}
+
+	fresh := newHandle()
+	if err := store.AddCredential(ctx, newCredential(id.ID, fresh)); err != nil {
+		t.Fatalf("AddCredential with a new handle after the last delete: %v", err)
+	}
+	got, creds, err := store.FindByUserHandle(ctx, fresh)
+	if err != nil || got != id || len(creds) != 1 {
+		t.Fatalf("FindByUserHandle of the new handle: %+v, %d credentials, %v", got, len(creds), err)
+	}
+	_, _, err = store.FindByUserHandle(ctx, old)
+	wantNotFound(t, "FindByUserHandle of the handle the account gave up", err)
 }
 
 // checkAddConcurrentFirstHandle: first registrations racing from several

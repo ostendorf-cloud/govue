@@ -91,16 +91,32 @@ type Store interface {
 	// stored, for this or any other account, returns ErrConflict and changes
 	// nothing.
 	//
-	// An account has exactly one user handle. When the account already holds
-	// a credential, cred.UserHandle has to equal its handle, or the call
-	// returns ErrConflict and changes nothing. The check and the insert are
-	// one step: two first registrations racing from two browsers each bring
-	// a new random handle, and exactly one of them may win. In SQL that is a
-	// lock on the account's credential rows, or the handle kept in an account
-	// column and written once with a conditional UPDATE. Without it an
-	// account ends up with two handles. An adapter that answers
-	// FindByUserHandle from an account column then never finds the second
-	// passkey, while a delete still counts it as a live one.
+	// An account has exactly one user handle while it holds credentials, and
+	// a handle belongs to one account. When the account already holds a
+	// credential, cred.UserHandle has to equal its handle. When another
+	// account holds a credential with cred.UserHandle, the handle is taken.
+	// Both return ErrConflict and change nothing.
+	//
+	// The check and the insert are one step: two first registrations racing
+	// from two browsers each bring a new random handle, and exactly one of
+	// them may win. The first registration of an account has no credential
+	// row yet, so locking the account's credential rows, a SELECT ... FOR
+	// UPDATE over an empty set, locks nothing at READ COMMITTED and lets both
+	// through. In SQL the adapter locks the account row itself, runs the
+	// check and the insert SERIALIZABLE, or keeps the handle in an account
+	// column set with a conditional UPDATE.
+	//
+	// An account without credentials has no handle. Once its last credential
+	// is deleted, the next registration brings a new random handle, and
+	// AddCredential accepts it. An adapter with a handle column therefore
+	// writes the column only while the account has no credential, or clears
+	// it in DeleteCredential when the last credential goes. A column written
+	// once and never cleared would refuse every later registration of the
+	// account.
+	//
+	// Without these rules an account ends up with two handles. An adapter
+	// that answers FindByUserHandle from an account column then never finds
+	// the second passkey, while a delete still counts it as a live one.
 	AddCredential(ctx context.Context, cred Credential) error
 
 	// Credentials returns every credential of the account, oldest first. An
@@ -115,9 +131,10 @@ type Store interface {
 	// or held back, answers ErrNotFound, as [account.Store.FindByLogin] does.
 	//
 	// The handle belongs to one account and the account has no other, which
-	// AddCredential guarantees. The answer holds every credential of that
-	// account, so the handle can be kept on each credential row or once in
-	// an account column, and both answer the same.
+	// AddCredential guarantees by refusing a second handle for an account and
+	// a handle another account holds. The answer holds every credential of
+	// that account, so the handle can be kept on each credential row or once
+	// in an account column, and both answer the same.
 	FindByUserHandle(ctx context.Context, handle []byte) (account.Identity, []Credential, error)
 
 	// UpdateCredential writes SignCount, LastUsedAt and Data of the credential
@@ -138,5 +155,10 @@ type Store interface {
 	// with SELECT ... FOR UPDATE, or runs the statement serialisable: a
 	// DELETE with an EXISTS in its WHERE clause alone lets two concurrent
 	// deletes each see the other row.
+	//
+	// When the last credential of an account goes, the account has no handle
+	// any more: FindByUserHandle answers ErrNotFound for the old one, and the
+	// next AddCredential accepts a new one. An adapter with a handle column
+	// clears it here, in the same step.
 	DeleteCredential(ctx context.Context, accountID string, id []byte, keepOne bool) error
 }

@@ -206,6 +206,22 @@ func TestPasskeyRoutesNeedThePasskeyRateLimit(t *testing.T) {
 	}
 }
 
+func TestPasskeyDefaults(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t, 1000)
+	cfg, err := loadConfig(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.passkeyRateLimitBurst != 10 || cfg.passkeyRateLimitPer != time.Minute {
+		t.Fatalf("passkey rate limit = %d per %v, want 10 per 1m", cfg.passkeyRateLimitBurst, cfg.passkeyRateLimitPer)
+	}
+	if cfg.passkeyRPID != "" || cfg.passkeyRPName != "govue example" {
+		t.Fatalf("passkeys are on by default or the name changed: %q %q", cfg.passkeyRPID, cfg.passkeyRPName)
+	}
+}
+
 // TestPasskeyAndPasswordLoginHaveSeparateBuckets: an autofill login begun on
 // every page view must not use up the password login of the same client, and
 // a password guesser must not block passkey logins.

@@ -269,6 +269,8 @@ func checkOrigin(origin, rpID string) error {
 		return fmt.Errorf("origin %q needs a lower case scheme", origin)
 	case scheme == "https":
 	case scheme == "http" && host == "localhost":
+	case scheme == "http" && strings.ToLower(host) == "localhost":
+		return fmt.Errorf("origin %q needs a lower case host", origin)
 	default:
 		return fmt.Errorf("origin %q is not https, plain http is allowed on localhost only", origin)
 	}

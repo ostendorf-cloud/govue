@@ -74,7 +74,7 @@ func newFixture(t *testing.T) *fixture {
 func (f *fixture) add(t *testing.T, owner account.Identity, id string) {
 	t.Helper()
 	err := f.store.AddCredential(context.Background(), passkey.Credential{
-		ID: []byte(id), AccountID: owner.ID, UserHandle: handle, Name: "key " + id, CreatedAt: now.Add(-time.Hour),
+		ID: []byte(id), AccountID: owner.ID, UserHandle: append([]byte(owner.ID+"-"), handle...), Name: "key " + id, CreatedAt: now.Add(-time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
