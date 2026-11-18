@@ -1185,6 +1185,85 @@ The design of the library and the reasoning behind it.
   check on the built pages remains the guarantee.
 - Not covered here: `og:image` (govue#69) and the Vue components, which write no head markup.
 
+### App association files
+
+- A native app only opens a domain's links, and only shares its credentials, when the domain
+  says so. iOS reads `/.well-known/apple-app-site-association`, Android reads
+  `/.well-known/assetlinks.json`. The package `appassoc` serves both from one typed `Config`.
+- The name is `appassoc`, not `wellknown`. The package serves these two files and nothing else.
+  A name that says `wellknown` invites `security.txt` and `change-password` into it, and each of
+  those has its own rules.
+- What a product sets:
+  - Apple: per app the team id, the bundle id and the path patterns it opens. Excluded patterns
+    come first in the file, because the first match decides. A `WebCredentials` list names the
+    apps that share credentials.
+  - Android: per app the package name, the SHA-256 fingerprints of the signing certificates and
+    the relations. The default is `handle_all_urls`. `get_login_creds` is explicit.
+- The documents are built with `encoding/json` from typed structs at construction, never by
+  joining strings. `Config` is validated in the same step and every problem is returned at once:
+  a ten character uppercase team id, a bundle id, an Android package name with at least two
+  segments, a fingerprint of 32 hex bytes with colons, a path from a safe character set, and
+  caps on the number of apps, paths and fingerprints and on the size of the document. A
+  fingerprint is normalised to uppercase. The files carry public identifiers only. They never
+  hold a secret, a token, an account name or any value from a request.
+- A file with no entries is not mounted and answers like any unknown path. It is never served as
+  an empty document, which would tell a phone that the domain trusts no app. `New` refuses a
+  `Config` that configures neither file.
+- Both platforms refuse a redirect, so the paths are exact patterns. `Handle` registers
+  `GET <path>`, which also matches HEAD, and `<path>` without a method. The second one matters
+  behind the catch-all `"/"`. Without it a POST matches the catch-all, which answers 404, and
+  ServeMux's own 405 never happens. The handler answers 405 with `Allow: GET, HEAD` for it.
+  A path with a trailing slash matches no pattern, so it goes to the catch-all and ServeMux
+  never redirects it. What the catch-all answers is the application's choice: in `example/` a
+  bad `Authorization` header gets 401 from the route chain there. A path with a double slash is
+  cleaned by ServeMux with a 307 before any handler runs, like every other path, and no platform
+  fetches such a path.
+- The response is `application/json`, `Cache-Control: public, max-age=3600`, `nosniff`, no
+  cookie and no redirect. The handlers read neither a cookie nor an `Authorization` header.
+- The origin `max-age` is not the lever for a correction. Apple's CDN fetches the file within
+  about 24 hours and devices check about weekly. Android 15 and later re-verify in the
+  background, and a change takes up to seven days to reach every device. A wrong path list or
+  certificate therefore stays live for days whatever the header says. The hour only spares the
+  origin a poll.
+- A passkey only product sets `APPLE_APP_ID` and `APPLE_WEBCREDENTIALS=true` in the example
+  with no path. The file then holds `webcredentials` and no `applinks`. In `Config` that is an
+  empty `AppLinks` with a `WebCredentials` list.
+- `example/` mounts the files only when `APPLE_APP_ID` or `ANDROID_PACKAGE` is set, and outside
+  the route chain. The rate limiter would count a platform fetcher that shares a few addresses.
+  The session middleware answers a malformed `Authorization` header with 401. CORS and CSRF
+  protect nothing on a public GET. The outer chain still runs, so the access log and the
+  security headers apply. A test sends the files through the whole example chain with a session
+  cookie, a bad bearer token and a foreign origin, and pins that the catch-all never answers,
+  nothing redirects and no cookie is set.
+- Passkeys in a native app need the `webcredentials` entry here and the app origin in the relying
+  party's allowed origins. The first exists now. The second comes with the passkey step of
+  #104, where the origin format is decided.
+- Sources checked against Apple and Google documentation:
+  - The Apple shape, `applinks.details[].appIDs` with `components` entries (`/` and `exclude`)
+    and `webcredentials.apps`, is in
+    <https://developer.apple.com/tutorials/data/documentation/xcode/supporting-associated-domains.json>.
+    `components` needs iOS 13 or later, the first matching entry wins, and the file is served
+    over HTTPS without a redirect and without a file extension. The wildcard rules (`*`, `?`,
+    `?*`) are in
+    <https://developer.apple.com/tutorials/data/documentation/bundleresources/applinks/details-swift.dictionary/components-swift.dictionary.json>.
+    The older `paths` format and `apps: []` are not written.
+  - The Android relations `handle_all_urls` and `get_login_creds`, and the statement that
+    Digital Asset Links is required for passkeys, are in
+    <https://developer.android.com/identity/credential-manager/prerequisites>. The file must
+    answer 200 with `application/json`, and a 301 or 302 fails verification:
+    <https://developer.android.com/training/app-links/configure-assetlinks>. The uppercase colon
+    separated fingerprint example is on that page too. The re-verification on Android 15 and
+    later and the seven day delay are in
+    <https://developer.android.com/training/app-links/verify-android-applinks>. Package name
+    rules are in <https://developer.android.com/build/configure-app-module>.
+- Not verified from a primary source:
+  - Apple's 128 KB size limit. Only an archived 2016 page and third party guides name it. The
+    64 KiB cap is this package's own.
+  - The 155 character bundle id cap and the ten uppercase alphanumeric team id. Both are local
+    checks.
+  - How Apple's CDN treats `Cache-Control`. Apple publishes nothing on it.
+  - Behaviour on a real device. No iOS or Android device was used.
+
 ### Component behaviour
 
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a

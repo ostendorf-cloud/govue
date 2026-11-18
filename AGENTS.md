@@ -34,9 +34,14 @@ repeated here.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
-- Sixteen Go packages live at the module root: `account`, `api`, `clientip`, `csrf`, `envconf`,
-  `favicon`, `health`, `httpserver`, `language`, `logging`, `metrics`, `middleware`, `oidc`,
-  `ratelimit`, `session`, `themeboot`.
+- Seventeen Go packages live at the module root: `account`, `api`, `appassoc`, `clientip`,
+  `csrf`, `envconf`, `favicon`, `health`, `httpserver`, `language`, `logging`, `metrics`,
+  `middleware`, `oidc`, `ratelimit`, `session`, `themeboot`.
+- `appassoc` serves the Apple App Site Association and Android `assetlinks.json` files from a
+  typed `Config`. The files hold public identifiers only, never a secret, a token or a value
+  from a request. They are exact patterns, never redirect, never set a cookie and never need a
+  session, so a product mounts them outside any middleware that does. A file with no entries is
+  not mounted, never served empty.
 - `account` holds local accounts against the consumer's own tables: the contract, Argon2id
   password hashing, TOTP and `Service` with signup, TOTP confirmation, login and password
   change, and `Handlers`, the JSON handlers over it. The handlers take callbacks, check the

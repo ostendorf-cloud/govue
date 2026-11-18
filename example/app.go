@@ -15,6 +15,7 @@ import (
 
 	"github.com/ostendorf-cloud/govue/account"
 	"github.com/ostendorf-cloud/govue/api"
+	"github.com/ostendorf-cloud/govue/appassoc"
 	"github.com/ostendorf-cloud/govue/clientip"
 	"github.com/ostendorf-cloud/govue/csrf"
 	"github.com/ostendorf-cloud/govue/favicon"
@@ -73,6 +74,10 @@ type app struct {
 	notes *noteStore
 
 	icons favicon.Icons
+
+	// assoc serves the app association files. It is nil unless the
+	// configuration names an app.
+	assoc *appassoc.Handlers
 
 	// site and languageRedirect serve the prerendered language pages. Both
 	// are nil without SITE_DIR.
@@ -208,6 +213,12 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 		}
 	}
 
+	if !cfg.assoc.IsEmpty() {
+		assoc, err := appassoc.New(cfg.assoc)
+		fail(err)
+		a.assoc = assoc
+	}
+
 	a.health = health.New()
 	// A real dependency, a database or the identity provider, would be
 	// pinged here. The example has none: the in-memory notes store cannot
@@ -308,6 +319,18 @@ func (a *app) handler() http.Handler {
 		// sees them and the log carries their pattern.
 		mux.Handle("GET /{$}", route(a.languageRedirect))
 		a.site.mount(mux, route)
+	}
+	if a.assoc != nil {
+		// The app association files sit outside the route chain on purpose.
+		// iOS and Android fetch them without a cookie and without redirects,
+		// and a platform fetcher shares a few addresses, so the rate limiter
+		// would refuse it. The session middleware would answer a malformed
+		// Authorization header with 401, and CORS and CSRF have nothing to
+		// protect on a public GET. The outer chain still applies: the
+		// access log and the security headers. Both patterns are exact, so
+		// the catch-all below never wins over them and ServeMux never
+		// redirects a trailing slash.
+		a.assoc.Handle(mux, nil)
 	}
 	// The catch-all. Without it an unregistered canonical path never
 	// reaches a handler the route chain wraps, so it would skip the rate
