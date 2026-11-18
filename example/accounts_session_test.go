@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,7 +30,7 @@ func signupSecret(t *testing.T, body []byte) string {
 
 // enrol signs login up, confirms the secret with the cookie the request
 // already carries, and returns the secret and the cookie the confirmation set.
-func enrol(t *testing.T, a *app, clock *testClock, login string, carrying *http.Cookie) *http.Cookie {
+func enrol(t *testing.T, a *app, clock *testClock, login string, carrying *http.Cookie, authorization string) *http.Cookie {
 	t.Helper()
 
 	w := a.serve(t, accountCall{
@@ -48,7 +50,8 @@ func enrol(t *testing.T, a *app, clock *testClock, login string, carrying *http.
 	}
 	w = a.serve(t, accountCall{
 		method: http.MethodPost, path: accountPrefix + "/confirm", cookie: carrying, token: token,
-		body: creds(login, acctPassword, totpNow(t, secret, clock)),
+		authorization: authorization,
+		body:          creds(login, acctPassword, totpNow(t, secret, clock)),
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("confirm %s = %d %s, want 200", login, w.Code, w.Body.String())
@@ -63,17 +66,99 @@ func TestAccountsALoginEndsTheSessionTheRequestCarried(t *testing.T) {
 	t.Parallel()
 	a, clock := newAccountApp(t, true, 100)
 
-	cookieA := enrol(t, a, clock, "alice@example.com", nil)
+	cookieA := enrol(t, a, clock, "alice@example.com", nil, "")
 	if cookieA == nil || notesStatus(t, a, cookieA) != http.StatusOK {
 		t.Fatal("the first account has no working session")
 	}
 
-	cookieB := enrol(t, a, clock, "bob@example.com", cookieA)
+	cookieB := enrol(t, a, clock, "bob@example.com", cookieA, "")
 	if cookieB == nil || notesStatus(t, a, cookieB) != http.StatusOK {
 		t.Fatal("the second account has no working session")
 	}
 	if got := notesStatus(t, a, cookieA); got != http.StatusUnauthorized {
 		t.Fatalf("the first session after a login as another account = %d, want 401", got)
+	}
+}
+
+// A browser behind an HTTP Basic auth proxy sends Authorization on every
+// request. That is no bearer request, so the old session still ends.
+func TestAccountsABasicAuthorizationHeaderStillEndsTheOldSession(t *testing.T) {
+	t.Parallel()
+	a, clock := newAccountApp(t, true, 100)
+
+	cookieA := enrol(t, a, clock, "alice@example.com", nil, "")
+	cookieB := enrol(t, a, clock, "bob@example.com", cookieA, "Basic dXNlcjpwYXNz")
+	if cookieB == nil || notesStatus(t, a, cookieB) != http.StatusOK {
+		t.Fatal("the second account has no working session")
+	}
+	if got := notesStatus(t, a, cookieA); got != http.StatusUnauthorized {
+		t.Fatalf("the first session behind a Basic header = %d, want 401", got)
+	}
+}
+
+// deleteFails is a session store whose Delete fails on demand.
+type deleteFails struct {
+	session.Store
+	fail atomic.Bool
+}
+
+func (s *deleteFails) Delete(ctx context.Context, id string) error {
+	if s.fail.Load() {
+		return errors.New("connection to db-secret-host refused")
+	}
+
+	return s.Store.Delete(ctx, id)
+}
+
+// When the old session cannot be ended, no new one is started: the login
+// answers an opaque 500 and the person is never left with two live sessions.
+func TestAccountsALoginStartsNoSessionWhenTheOldOneCannotBeEnded(t *testing.T) {
+	t.Parallel()
+	a, clock := newAccountApp(t, true, 100)
+
+	store := &deleteFails{Store: session.NewMemoryStore(a.cfg.now, 10)}
+	manager, err := session.New(session.Config{Store: store, AllowPlainHTTP: a.cfg.allowPlainHTTP, Now: a.cfg.now})
+	if err != nil {
+		t.Fatalf("session.New: %v", err)
+	}
+	a.sessions = manager
+
+	cookieA := enrol(t, a, clock, "alice@example.com", nil, "")
+	store.fail.Store(true)
+
+	w := a.serve(t, accountCall{
+		method: http.MethodPost, path: accountPrefix + "/signup",
+		body: map[string]string{"login": "bob@example.com", "password": acctPassword},
+	})
+	secret := signupSecret(t, w.Body.Bytes())
+	clock.Add(time.Minute)
+	w = a.serve(t, accountCall{
+		method: http.MethodPost, path: accountPrefix + "/confirm", cookie: cookieA, token: tokenOf(t, a, cookieA),
+		body: creds("bob@example.com", acctPassword, totpNow(t, secret, clock)),
+	})
+	if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "db-secret-host") {
+		t.Fatalf("confirm = %d %s, want an opaque 500", w.Code, w.Body.String())
+	}
+	if sessionCookie(a, w) != nil {
+		t.Fatal("a failed end of the old session still started a new one")
+	}
+}
+
+// The default limit of the routes that check a password is a burst of five a
+// minute, and the concept doc says so.
+func TestAccountsDefaultAuthRateLimit(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t, 1000)
+	cfg, err := loadConfig(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.authRateLimitBurst != 5 || cfg.authRateLimitPer != time.Minute {
+		t.Fatalf("auth rate limit = %d per %v, want 5 per 1m", cfg.authRateLimitBurst, cfg.authRateLimitPer)
+	}
+	if cfg.allowSignup {
+		t.Fatal("signup is open by default")
 	}
 }
 

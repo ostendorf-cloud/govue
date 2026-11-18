@@ -62,6 +62,8 @@ type accountCall struct {
 	site string
 	// origin is the Origin header, left out when empty.
 	origin string
+	// authorization is the Authorization header, left out when empty.
+	authorization string
 }
 
 func (a *app) serve(t *testing.T, c accountCall) *httptest.ResponseRecorder {
@@ -86,6 +88,9 @@ func (a *app) serve(t *testing.T, c accountCall) *httptest.ResponseRecorder {
 	if site != "-" {
 		r.Header.Set("Sec-Fetch-Site", site)
 	}
+	if c.authorization != "" {
+		r.Header.Set("Authorization", c.authorization)
+	}
 	if c.origin != "" {
 		r.Header.Set("Origin", c.origin)
 	}
@@ -104,13 +109,19 @@ func (a *app) serve(t *testing.T, c accountCall) *httptest.ResponseRecorder {
 
 // sessionCookie returns the session cookie an answer set, or nil.
 func sessionCookie(a *app, w *httptest.ResponseRecorder) *http.Cookie {
+	// The last Set-Cookie of the name is the one a browser keeps. A clearing
+	// cookie after the live one would delete the new session.
+	var last *http.Cookie
 	for _, c := range w.Result().Cookies() {
-		if c.Name == a.sessions.CookieName() && c.Value != "" {
-			return c
+		if c.Name == a.sessions.CookieName() {
+			last = c
 		}
 	}
+	if last == nil || last.Value == "" {
+		return nil
+	}
 
-	return nil
+	return last
 }
 
 // tokenOf is the CSRF token of the session a cookie carries.

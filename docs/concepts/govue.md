@@ -826,13 +826,17 @@ The design of the library and the reasoning behind it.
   stolen session can test passwords as fast as the hasher allows. The package doc and the doc
   comment of each handler say so, and tests in `example/` pin the 429 of all four.
 - A login does not end a session the request already carries, because `account` does not know
-  sessions. In `example/`, `StartSession` ends the old session first, unless the request carries
-  an `Authorization` header: a bearer request gets no cookie session, and ending the device
-  session of a failed attempt would sign the app out.
+  sessions. In `example/`, `StartSession` ends the old session first, unless the session layer
+  classifies the request as bearer (`bearer.Classify`, the rule `Manager.End` and `Start` use):
+  a bearer request gets no cookie session, and ending its device session would sign the app
+  out. Any other `Authorization` header, such as a Basic one from a proxy, is an ordinary cookie
+  request. If ending the old session fails, no new session is started and the login answers an
+  opaque 500, so a failure never leaves two live sessions. The code is consumed by then. The
+  clearing cookie of `End` is written before the new one, since a browser keeps the last.
 - The ids of local accounts and the subjects of an OIDC login share the namespace of the
   session's subject, which `EndAll` keys on. A product that runs both prefixes one of them, for
   example `local:` before the account id, or an OIDC subject could equal a local id and share
-  its sessions. The memory store of `example/` keeps its plain `acct-1` ids, and the example says
+  its sessions. The memory store of `example/` keeps its plain `memory-1` ids, and the example says
   so in a comment, since it runs no OIDC account next to them.
 - Bodies are decoded by Go's `encoding/json` with unknown fields refused. Field names match case
   insensitively, of two equal keys the last wins and invalid UTF-8 becomes U+FFFD. A proxy or a
