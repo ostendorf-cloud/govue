@@ -211,7 +211,12 @@ func TestRun_catchesBrokenStores(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run="+childPattern(b.mustFail), "-test.v", "-test.count=1")
+			args := []string{"-test.run=" + childPattern(b.mustFail), "-test.v", "-test.count=1"}
+			if b.oneProcessor {
+				args = append(args, "-test.cpu=1")
+			}
+
+			cmd := exec.CommandContext(t.Context(), os.Args[0], args...)
 			cmd.Env = append(os.Environ(), brokenEnv+"="+b.name)
 
 			out, err := cmd.CombinedOutput()
@@ -220,7 +225,8 @@ func TestRun_catchesBrokenStores(t *testing.T) {
 			}
 
 			for _, check := range b.mustFail {
-				if !strings.Contains(string(out), "--- FAIL: TestBrokenStoreChild/"+check+" ") {
+				failed := regexp.MustCompile(`--- FAIL: TestBrokenStoreChild(-\d+)?/` + regexp.QuoteMeta(check) + ` `)
+				if !failed.Match(out) {
 					t.Errorf("check %s did not fail for the broken store %q:\n%s", check, b.name, out)
 				}
 			}

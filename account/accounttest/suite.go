@@ -50,6 +50,21 @@
 // checked by reading it. Run the suite with the race detector as well, go
 // test -race, which also reports unsynchronised memory access in an adapter
 // that caches in Go.
+//
+// # Processors
+//
+// With GOMAXPROCS 1 the racers take turns on one processor, and a narrow
+// race is never hit: measured, a read then write store passed every one of
+// 200 runs at go test -cpu=1. The race checks therefore raise GOMAXPROCS to
+// at least four while they run and restore it afterwards. The checks of one
+// Run are not parallel tests. Other tests running in parallel at that time
+// get more processors, which changes nothing they can observe.
+//
+// More processors than CPUs do not help on a machine with one CPU: the
+// threads then take turns as well. A race check there fails with a message
+// instead of passing, since a green suite that cannot see a race proves
+// nothing. Run the suite on at least two CPUs, for example a CI runner with
+// two cores or more.
 package accounttest
 
 import (
@@ -101,7 +116,18 @@ type Harness struct {
 	// that compares and writes in one statement: fewer rounds catch a read
 	// then write store less often.
 	Rounds int
+
+	// beforeArrive, when set, runs in each racer before it arrives at the
+	// start barrier. Only this package's own tests set it.
+	beforeArrive func(racer int)
 }
+
+// minRaceProcs is the GOMAXPROCS the race checks run with at least.
+const minRaceProcs = 4
+
+// numCPU is runtime.NumCPU. This package's own tests replace it to fake a
+// machine with one CPU.
+var numCPU = runtime.NumCPU
 
 // DefaultRacers is how many calls each concurrency check starts at once when
 // [Harness.Racers] is zero, and DefaultRounds how often it repeats the race
@@ -274,6 +300,12 @@ func wantNotFound(t *testing.T, what string, err error) {
 func race[T any](t *testing.T, h Harness, setup func(round int) T, call func(ctx context.Context, v T, i int) error, check func(round int, v T, errs []error)) {
 	t.Helper()
 
+	if n := numCPU(); n < 2 {
+		t.Fatalf("accounttest: this machine has one CPU (runtime.NumCPU() = %d). A race check here cannot see a store that reads and then writes, so it fails instead of passing. Run the suite on at least two CPUs.", n)
+	}
+
+	defer raiseProcs()()
+
 	racers, rounds := h.racers(), h.rounds()
 
 	for round := range rounds {
@@ -287,6 +319,10 @@ func race[T any](t *testing.T, h Harness, setup func(round int) T, call func(ctx
 		)
 		for i := range racers {
 			wg.Go(func() {
+				if h.beforeArrive != nil {
+					h.beforeArrive(i)
+				}
+
 				arrived.Add(1)
 				for arrived.Load() < int64(racers) {
 					runtime.Gosched()
@@ -304,6 +340,44 @@ func race[T any](t *testing.T, h Harness, setup func(round int) T, call func(ctx
 		}
 
 		runtime.Gosched()
+	}
+}
+
+// procs counts the race checks running at once, so that the first raises
+// GOMAXPROCS and the last one restores it, also when several Run calls race
+// in parallel tests.
+var procs struct {
+	sync.Mutex
+	users int
+	prev  int
+}
+
+// raiseProcs raises GOMAXPROCS to at least minRaceProcs and returns the
+// function that restores it. With GOMAXPROCS 1 the racers take turns on one
+// processor, and a store whose window between read and write is a few
+// instructions is never caught. GOMAXPROCS is process wide: tests running
+// in parallel with a race check get more processors for that time, which
+// changes nothing they can observe.
+func raiseProcs() (restore func()) {
+	procs.Lock()
+	defer procs.Unlock()
+
+	if procs.users == 0 {
+		procs.prev = runtime.GOMAXPROCS(0)
+		if procs.prev < minRaceProcs {
+			runtime.GOMAXPROCS(minRaceProcs)
+		}
+	}
+	procs.users++
+
+	return func() {
+		procs.Lock()
+		defer procs.Unlock()
+
+		procs.users--
+		if procs.users == 0 && procs.prev < minRaceProcs {
+			runtime.GOMAXPROCS(procs.prev)
+		}
 	}
 }
 

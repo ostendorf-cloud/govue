@@ -27,6 +27,12 @@ func TestLogin_invalidLoginNeverReachesTheStore(t *testing.T) {
 		"control character":        "alice\n@example.com",
 		"colon":                    "alice:x@example.com",
 		"one byte above the bound": strings.Repeat("a", account.MaxLoginLength+1),
+		// The service never trims: a login padded with a control
+		// character is not the stored login with the padding removed.
+		"trailing tab":      fakeLogin + "\t",
+		"trailing newline":  fakeLogin + "\n",
+		"leading return":    "\r" + fakeLogin,
+		"trailing NUL byte": fakeLogin + "\x00",
 	}
 
 	for name, login := range logins {
@@ -68,6 +74,22 @@ func TestLogin_invalidLoginNeverReachesTheStore(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestLogin_neverTrims logs in with the right password and code, but the
+// login padded with a space. A space is printable, so the store is asked,
+// with the login exactly as given, and finds nothing. Trimming is the
+// application's decision, in its handler.
+func TestLogin_neverTrims(t *testing.T) {
+	t.Parallel()
+
+	for _, login := range []string{" " + fakeLogin, fakeLogin + " "} {
+		f := newFixture(t)
+		_, secret := f.confirmed(t)
+
+		_, err := f.svc.Login(t.Context(), login, fakePassword, f.code(t, secret, 0))
+		wantRefused(t, err)
 	}
 }
 
@@ -125,21 +147,47 @@ func TestChangePassword_ambiguousCommitStillEndsSessions(t *testing.T) {
 	}
 }
 
-// TestChangePassword_ambiguousCommitAndEndSessionsFail reports both.
-func TestChangePassword_ambiguousCommitAndEndSessionsFail(t *testing.T) {
+// TestChangePassword_unknownWriteAndEndSessionsFail reports both causes, but
+// not ErrSessionsNotEnded: that sentinel says the password changed, which is
+// not known after a failed write. A handler that trusts it would tell the
+// person the change worked while the old password may still log in.
+func TestChangePassword_unknownWriteAndEndSessionsFail(t *testing.T) {
 	t.Parallel()
 
-	errCommit := errors.New("fake: context canceled during commit")
-	errEnd := errors.New("fake session store failure")
-	f := newFixtureWith(t, func(f *fixture) {
-		f.store.setHashCommitErr = errCommit
-		f.endErr = errEnd
-	})
-	id, _ := f.confirmed(t)
+	tests := []struct {
+		name       string
+		configure  func(f *fixture, errStore error)
+		oldStillOK bool
+	}{
+		{"write committed, then reported an error", func(f *fixture, errStore error) { f.store.setHashCommitErr = errStore }, false},
+		{"write failed before anything was written", func(f *fixture, errStore error) { f.store.setHashErr = errStore }, true},
+	}
 
-	err := f.svc.ChangePassword(t.Context(), id, fakePassword, fakeNewPassword)
-	if !errors.Is(err, errCommit) || !errors.Is(err, account.ErrSessionsNotEnded) || !errors.Is(err, errEnd) {
-		t.Fatalf("ChangePassword = %v, want the store error and ErrSessionsNotEnded with its cause", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			errStore := errors.New("fake store failure")
+			errEnd := errors.New("fake session store failure")
+			f := newFixtureWith(t, func(f *fixture) {
+				tt.configure(f, errStore)
+				f.endErr = errEnd
+			})
+			id, secret := f.confirmed(t)
+
+			err := f.svc.ChangePassword(t.Context(), id, fakePassword, fakeNewPassword)
+			if !errors.Is(err, errStore) || !errors.Is(err, errEnd) {
+				t.Fatalf("ChangePassword = %v, want both the store error and the end sessions error", err)
+			}
+			if errors.Is(err, account.ErrSessionsNotEnded) || errors.Is(err, account.ErrStale) {
+				t.Fatalf("ChangePassword = %v, want neither ErrSessionsNotEnded nor ErrStale: the write outcome is unknown", err)
+			}
+
+			_, loginErr := f.svc.Login(t.Context(), fakeLogin, fakePassword, f.code(t, secret, 0))
+			if (loginErr == nil) != tt.oldStillOK {
+				t.Errorf("old password logs in: %v, want %v", loginErr == nil, tt.oldStillOK)
+			}
+		})
 	}
 }
 
@@ -150,7 +198,7 @@ func TestChangePassword_endSessionsHasADeadline(t *testing.T) {
 
 	f := newFixtureWith(t, func(f *fixture) {
 		f.endBlocks = true
-		f.endTimeout = 50 * time.Millisecond
+		f.endTimeout = account.MinEndSessionsTimeout
 	})
 	id, _ := f.confirmed(t)
 

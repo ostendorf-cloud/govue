@@ -477,9 +477,16 @@ The design of the library and the reasoning behind it.
   the defaults. The suite is a safety net. What proves a SQL
   adapter atomic is its statement, one conditional `UPDATE` with the comparison in its `WHERE`
   clause, checked by reading it. A product runs the suite with the race detector as well.
-- A test runs the suite in a child process against 32 stores that each break one guard, and
-  expects the matching check to fail. The read then write stores in it have no sleep, so the
-  races they show are as narrow as in a real adapter.
+- With `GOMAXPROCS` 1 the racers take turns on one processor and a narrow race is never hit: at
+  `go test -cpu=1` a read then write store passed every one of 200 runs. The race checks raise
+  `GOMAXPROCS` to at least four while they run and restore it afterwards. The checks of one
+  `Run` are not parallel tests, and other tests running at that time only get more processors.
+- More processors than CPUs do not help on a machine with one CPU, where the threads take turns
+  as well. There a race check fails with a message instead of passing, since a green suite that
+  cannot see a race proves nothing. A product runs the suite on at least two CPUs.
+- A test runs the suite in a child process against 39 stores that each break one guard, and
+  expects the matching check to fail. Four of them run with `-test.cpu=1`. The read then write
+  stores in it have no sleep, so the races they show are as narrow as in a real adapter.
 - `accounttest.MemoryStore` is an in memory store that passes the suite, for tests of code
   built on `account`.
 - Password and TOTP are checked in one login call, as before. A two step login needs somewhere
@@ -579,6 +586,9 @@ The design of the library and the reasoning behind it.
   confusable characters, a Cyrillic `а` for a Latin `a`, are the adapter's or the application's
   to handle, the same way before `SignUp` and before `Login`. Without that, `josé` typed composed
   and decomposed are two accounts.
+- The service never trims a login or a password. calbridge's login trimmed the login before the
+  lookup. A product adopting `account` keeps trimming in its handler where it did before, or a
+  login typed with a leading space no longer finds its account.
 - `Login` and `ConfirmTOTP` never send a login to the store that `SignUp` would refuse as a
   label: empty, too long, not valid UTF-8, not printable or holding a colon. Such a login is
   refused like an unknown one, after the same work. A Postgres text column answers a NUL byte
@@ -642,16 +652,22 @@ The design of the library and the reasoning behind it.
 - `EndSessions` runs with a context detached from the request's cancellation but keeping its
   values, so a client that hangs up after the commit does not keep its old sessions and an
   adapter still finds its tenant. `ServiceConfig.EndSessionsTimeout`, 30 seconds by default,
-  bounds it, so a hung callback cannot hold the call forever.
-- When `EndSessions` fails or times out, the password stays changed and is not rolled back. The
-  error wraps `ErrSessionsNotEnded` and the cause. The caller retries ending the sessions and
-  does not tell the person the change failed.
-- When the store write fails with anything but `ErrNotFound`, it is not known whether it
-  committed: a driver can commit and still report the context ending. The sessions are ended
-  anyway, since ending them once too often is harmless and a changed password with live old
-  sessions is not. The store error is returned, joined with `ErrSessionsNotEnded` when ending
-  failed as well. Only a lost compare and set, `ErrStale`, certainly wrote nothing and ends no
-  session.
+  bounds it, so a hung callback cannot hold the call forever. A timeout below one second is
+  refused, since it would end the callback before it can run. A long one is accepted.
+- Once the current password is verified, `ChangePassword` has four outcomes:
+  - nil: the password changed and every session ended
+  - `ErrSessionsNotEnded` with the cause: the password changed, ending the sessions failed or
+    timed out. The change stands and is not rolled back. The caller retries ending the sessions
+    and does not tell the person the change failed
+  - `ErrStale`: the compare and set was refused, nothing changed and no session ended. The
+    caller asks the person to try again
+  - another error, the store's: whether the write committed is not known, since a driver can
+    commit and still report the context ending. The sessions are ended anyway, since ending them
+    once too often is harmless and a changed password with live old sessions is not. When ending
+    fails as well, its error is joined in without `ErrSessionsNotEnded`, which would claim the
+    password changed. The caller tells the person the change may not have happened
+- `ErrSessionsNotEnded` is only returned when the write is known to have succeeded. A handler
+  that follows its doc and reports success must never do so for a write that did not happen.
 - `SignUp` answers `ErrConflict` for a taken login. With this flow an account existence oracle
   exists: signing up with a login tells whether an account exists. Answering `ErrConflict`
   like a success does not hide it, since the confirm step tells again: the enrolment shown

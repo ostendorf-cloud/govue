@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -452,6 +453,15 @@ func TestNewService_validates(t *testing.T) {
 		t.Fatalf("NewService with a valid config: %v", err)
 	}
 
+	// The shortest accepted timeout is one second, and a long one is fine.
+	for _, d := range []time.Duration{time.Second, 24 * time.Hour, time.Duration(math.MaxInt64)} {
+		cfg := valid
+		cfg.EndSessionsTimeout = d
+		if _, err := account.NewService(cfg); err != nil {
+			t.Errorf("NewService with an end sessions timeout of %v: %v", d, err)
+		}
+	}
+
 	tests := []struct {
 		name   string
 		change func(*account.ServiceConfig)
@@ -461,6 +471,8 @@ func TestNewService_validates(t *testing.T) {
 		{"no end sessions callback", func(c *account.ServiceConfig) { c.EndSessions = nil }},
 		{"no logger", func(c *account.ServiceConfig) { c.Logger = nil }},
 		{"negative end sessions timeout", func(c *account.ServiceConfig) { c.EndSessionsTimeout = -time.Second }},
+		{"end sessions timeout of one nanosecond", func(c *account.ServiceConfig) { c.EndSessionsTimeout = time.Nanosecond }},
+		{"end sessions timeout just below a second", func(c *account.ServiceConfig) { c.EndSessionsTimeout = time.Second - time.Nanosecond }},
 		{"empty issuer", func(c *account.ServiceConfig) { c.Issuer = "" }},
 		{"issuer with a colon", func(c *account.ServiceConfig) { c.Issuer = "Example:App" }},
 	}

@@ -67,6 +67,13 @@ const (
 	setPasswordEmptyOldNoCompare
 	advanceBackwards
 	replaceAllUnconfirmed
+
+	// Found in the second review: the reviewer's own read then write
+	// stores, written apart from update, and a lookup that answers a
+	// wildcard with an error instead of ErrNotFound.
+	reviewAdvanceNoWindow
+	reviewSetPasswordNoWindow
+	findPatternError
 )
 
 // broken is one broken store and the checks that must catch it.
@@ -75,6 +82,11 @@ type broken struct {
 	flaws     []flaw
 	foldsCase bool
 	mustFail  []string
+
+	// oneProcessor runs the child with -test.cpu=1, GOMAXPROCS 1, as a
+	// product CI on a one core container would. The suite must still
+	// catch the store.
+	oneProcessor bool
 }
 
 func brokenStores() []broken {
@@ -111,6 +123,13 @@ func brokenStores() []broken {
 		{name: "empty old hash skips the compare", flaws: []flaw{setPasswordEmptyOldNoCompare}, mustFail: []string{"SetPasswordHash/RefusesAStaleHash"}},
 		{name: "counter moves backwards", flaws: []flaw{advanceBackwards}, mustFail: []string{"AdvanceTOTPCounter/OnlyForward"}},
 		{name: "replace reaches every unconfirmed account", flaws: []flaw{replaceAllUnconfirmed}, mustFail: []string{"Writes/StayInTheirAccount"}},
+		{name: "review advance read then write", flaws: []flaw{reviewAdvanceNoWindow}, mustFail: []string{"AdvanceTOTPCounter/ConcurrentSameCounterOnce"}},
+		{name: "review set password read then write", flaws: []flaw{reviewSetPasswordNoWindow}, mustFail: []string{"SetPasswordHash/ConcurrentSameOldHashOnce"}},
+		{name: "review advance read then write on one processor", flaws: []flaw{reviewAdvanceNoWindow}, mustFail: []string{"AdvanceTOTPCounter/ConcurrentSameCounterOnce"}, oneProcessor: true},
+		{name: "review set password read then write on one processor", flaws: []flaw{reviewSetPasswordNoWindow}, mustFail: []string{"SetPasswordHash/ConcurrentSameOldHashOnce"}, oneProcessor: true},
+		{name: "non atomic create on one processor", flaws: []flaw{nonAtomicCreate}, mustFail: []string{"Create/ConcurrentSameLoginCreatesOne"}, oneProcessor: true},
+		{name: "non atomic confirm on one processor", flaws: []flaw{nonAtomicConfirm}, mustFail: []string{"ConfirmTOTP/ConcurrentOnce"}, oneProcessor: true},
+		{name: "find answers a wildcard with an error", flaws: []flaw{findPatternError}, mustFail: []string{"FindByLogin/ExactMatch"}},
 	}
 }
 
@@ -173,6 +192,9 @@ func (s *brokenStore) FindByLogin(_ context.Context, login string) (account.Reco
 	defer s.mu.Unlock()
 
 	rec, ok := s.byKey[s.findKey(login)]
+	if !ok && s.flaws[findPatternError] && strings.ContainsAny(login, "%_") {
+		return account.Record{}, errors.New("broken: invalid pattern")
+	}
 	if !ok && s.flaws[findPattern] {
 		rec, ok = s.likeLocked(login)
 	}
@@ -234,6 +256,10 @@ func (s *brokenStore) insert(key string, rec account.Record) account.Record {
 }
 
 func (s *brokenStore) AdvanceTOTPCounter(_ context.Context, id string, counter int64) error {
+	if s.flaws[reviewAdvanceNoWindow] {
+		return s.advanceNoWindow(id, counter)
+	}
+
 	return s.update(id, s.flaws[nonAtomicAdvance], func(rec *account.Record) bool {
 		switch {
 		case s.flaws[advanceAnyCounter]:
@@ -305,6 +331,10 @@ func (s *brokenStore) ReplaceTOTPSecret(_ context.Context, id, secret string) er
 }
 
 func (s *brokenStore) SetPasswordHash(_ context.Context, id, oldHash, newHash string) error {
+	if s.flaws[reviewSetPasswordNoWindow] {
+		return s.setPasswordNoWindow(id, oldHash, newHash)
+	}
+
 	if s.flaws[setPasswordAllAccounts] {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -370,6 +400,46 @@ func (s *brokenStore) update(id string, nonAtomic bool, change func(*account.Rec
 	defer s.mu.Unlock()
 
 	s.byKey[key] = rec
+
+	return nil
+}
+
+// advanceNoWindow reads the counter under the lock, compares outside it and
+// writes under the lock again, with no sleep in between. Written by the
+// reviewer, independent of update.
+func (s *brokenStore) advanceNoWindow(id string, counter int64) error {
+	s.mu.Lock()
+	key, rec, ok := s.byIDLocked(id)
+	s.mu.Unlock()
+
+	if !ok || rec.TOTPCounter <= 0 || counter <= rec.TOTPCounter {
+		return account.ErrNotFound
+	}
+
+	s.mu.Lock()
+	cur := s.byKey[key]
+	cur.TOTPCounter = counter
+	s.byKey[key] = cur
+	s.mu.Unlock()
+
+	return nil
+}
+
+// setPasswordNoWindow is the same read, compare, write for the hash.
+func (s *brokenStore) setPasswordNoWindow(id, oldHash, newHash string) error {
+	s.mu.Lock()
+	key, rec, ok := s.byIDLocked(id)
+	s.mu.Unlock()
+
+	if !ok || rec.PasswordHash == "" || rec.PasswordHash != oldHash {
+		return account.ErrNotFound
+	}
+
+	s.mu.Lock()
+	cur := s.byKey[key]
+	cur.PasswordHash = newHash
+	s.byKey[key] = cur
+	s.mu.Unlock()
 
 	return nil
 }

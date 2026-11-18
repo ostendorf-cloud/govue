@@ -21,6 +21,10 @@ const MaxLoginLength = maxTOTPAccountName
 // the EndSessions callback when [ServiceConfig.EndSessionsTimeout] is zero.
 const DefaultEndSessionsTimeout = 30 * time.Second
 
+// MinEndSessionsTimeout is the shortest [ServiceConfig.EndSessionsTimeout]
+// accepted.
+const MinEndSessionsTimeout = time.Second
+
 var (
 	// ErrLoginInvalid is what [Service.SignUp] answers for a login that is
 	// empty, longer than [MaxLoginLength], not valid UTF-8, not printable,
@@ -31,10 +35,11 @@ var (
 
 	// ErrSessionsNotEnded is what [Service.ChangePassword] answers, wrapping
 	// the cause, when the new password is stored but the EndSessions
-	// callback failed. The password change stands and is not rolled back.
-	// Sessions opened with the old password may still be live, so the
-	// caller retries ending them and must not tell the person the change
-	// failed.
+	// callback failed. The password change is known to have committed,
+	// stands and is not rolled back. Sessions opened with the old password
+	// may still be live, so the caller retries ending them and must not
+	// tell the person the change failed. It is never returned when the
+	// write itself failed.
 	ErrSessionsNotEnded = errors.New("account: password changed, but ending the sessions failed")
 
 	// ErrStale is what [Service.ChangePassword] answers when the stored
@@ -69,7 +74,10 @@ type ServiceConfig struct {
 	EndSessions func(ctx context.Context, accountID string) error
 
 	// EndSessionsTimeout bounds how long [Service.ChangePassword] waits for
-	// EndSessions. Zero is [DefaultEndSessionsTimeout]. Negative is refused.
+	// EndSessions. Zero is [DefaultEndSessionsTimeout]. A value below
+	// [MinEndSessionsTimeout], negative included, is refused: a timeout
+	// that ends the callback before it can run turns every password change
+	// into ErrSessionsNotEnded. A long one is accepted.
 	EndSessionsTimeout time.Duration
 
 	// Logger receives operational events, never a password, a hash, a
@@ -113,10 +121,13 @@ type Enrolment struct {
 // the conditional counter write runs after the password and the code
 // matched, so its time tells nothing to whoever does not hold both already.
 //
-// The service does not normalise logins. Letter case, Unicode composed and
-// decomposed forms and confusable characters are the adapter's or the
-// application's to handle, before SignUp and before Login, and the same way
-// for both. A login SignUp refuses as a label never reaches the store from
+// The service does not normalise logins and never trims them. Letter case,
+// Unicode composed and decomposed forms, confusable characters and
+// surrounding spaces are the adapter's or the application's to handle,
+// before SignUp and before Login, and the same way for both. An application
+// whose handler trimmed the login before, as calbridge's login did, keeps
+// trimming there, or a login typed with a leading space no longer finds its
+// account. A login SignUp refuses as a label never reaches the store from
 // Login or ConfirmTOTP and is refused like an unknown login.
 type Service struct {
 	store       Store
@@ -144,8 +155,8 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		return nil, errors.New("account: service needs a logger")
 	case !validLabel(cfg.Issuer, maxTOTPIssuer):
 		return nil, fmt.Errorf("account: service issuer: %w", ErrTOTPLabelInvalid)
-	case cfg.EndSessionsTimeout < 0:
-		return nil, fmt.Errorf("account: end sessions timeout %v is negative", cfg.EndSessionsTimeout)
+	case cfg.EndSessionsTimeout != 0 && cfg.EndSessionsTimeout < MinEndSessionsTimeout:
+		return nil, fmt.Errorf("account: end sessions timeout %v is below %v", cfg.EndSessionsTimeout, MinEndSessionsTimeout)
 	}
 
 	now := cfg.Now
@@ -315,21 +326,32 @@ func (s *Service) Login(ctx context.Context, login, password, code string) (Iden
 // after the commit does not keep its old sessions. It is bounded by
 // [ServiceConfig.EndSessionsTimeout].
 //
-// When EndSessions fails or times out, the password stays changed and the
-// error wraps [ErrSessionsNotEnded] and the cause. The caller retries ending
-// the sessions.
-//
-// When the store write fails with anything but [ErrNotFound], it is not
-// known whether it committed: a driver can commit and still report the
-// context ending. The sessions are ended anyway, since ending them once too
-// often is harmless, and the store error is returned, joined with
-// ErrSessionsNotEnded if ending them failed as well. The caller cannot tell
-// whether the new password is in force and asks the person to check.
-//
 // The write is a compare and set on the hash the current password was
 // verified against. Of two changes racing from the same password, exactly
-// one wins. The other answers [ErrStale], writes nothing and ends no
-// session, since the winner already ended them.
+// one wins.
+//
+// Once the current password is verified, the call has four outcomes, and
+// the caller tells them apart like this:
+//
+//   - nil: the password changed and every session ended.
+//   - [ErrSessionsNotEnded], wrapping the cause: the password changed, but
+//     EndSessions failed or timed out. The change stands and is not rolled
+//     back. The caller retries ending the sessions and must not tell the
+//     person the change failed.
+//   - [ErrStale]: the compare and set was refused, nothing changed, and no
+//     session was ended, since whatever changed the hash ended them or kept
+//     the password. The caller asks the person to try again.
+//   - any other error, the store's error wrapped: whether the write
+//     committed is not known, since a driver can commit and still report
+//     the context ending. The sessions are ended anyway, since ending them
+//     once too often is harmless. If that fails too, its error is joined in,
+//     without ErrSessionsNotEnded, which would claim the password changed.
+//     The caller tells the person the change may not have happened and to
+//     log in with the new password to find out.
+//
+// The service never trims the login or the passwords. An application whose
+// handler trimmed before, as calbridge's login did, keeps trimming in its
+// handler, or a login with a leading space no longer finds its account.
 //
 // A new password that breaks the policy answers [ErrPasswordTooShort] or
 // [ErrPasswordTooLong] before any hashing. A wrong current password, an
@@ -374,30 +396,34 @@ func (s *Service) ChangePassword(ctx context.Context, id Identity, current, next
 		// still report the context ending. Ending the sessions once too
 		// often is harmless. A changed password with the old sessions
 		// alive is not.
+		// ErrSessionsNotEnded is left out on purpose: it says the password
+		// changed, which is not known here.
 		storeErr := fmt.Errorf("account: store the new password hash: %w", err)
 		if endErr := s.endAllSessions(ctx, rec.ID); endErr != nil {
-			return errors.Join(storeErr, endErr)
+			return errors.Join(storeErr, fmt.Errorf("account: end sessions: %w", endErr))
 		}
 
 		return storeErr
 	}
 
-	return s.endAllSessions(ctx, rec.ID)
+	if err := s.endAllSessions(ctx, rec.ID); err != nil {
+		return fmt.Errorf("%w: %w", ErrSessionsNotEnded, err)
+	}
+
+	return nil
 }
 
 // endAllSessions calls EndSessions with ctx detached from its cancellation,
 // so its values stay and a client that hangs up does not stop it, and bounded
 // by the configured timeout, so a hung callback cannot hold the call
-// forever. A failure wraps ErrSessionsNotEnded.
+// forever. It returns the callback's error as it is: whether that means
+// ErrSessionsNotEnded depends on whether the write is known to have
+// succeeded, which only the caller knows.
 func (s *Service) endAllSessions(ctx context.Context, id string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.endTimeout)
 	defer cancel()
 
-	if err := s.endSessions(ctx, id); err != nil {
-		return fmt.Errorf("%w: %w", ErrSessionsNotEnded, err)
-	}
-
-	return nil
+	return s.endSessions(ctx, id)
 }
 
 // attempt is the outcome of authenticate.
