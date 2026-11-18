@@ -43,8 +43,24 @@
 // reused is the middleware's one 401, and a request with a cookie and no
 // Authorization header is never a bearer request. Rotate and SignOut refuse
 // that cookie request with 401. Issue authenticates by nothing but the
-// credentials in its body: it ignores a bearer token and a cookie alike, and
-// it neither reads nor sets a cookie.
+// credentials in its body: the handler reads neither a bearer token nor a
+// cookie, and it never sets one. The chain in front still acts on the headers
+// before Issue runs. A junk, expired, revoked or doubled Authorization header
+// gets the middleware's 401 even with valid credentials. A cookie request
+// without a CSRF token gets the protector's 403. A valid pending token is
+// confirmed by the middleware, as on any request.
+//
+// # What a device token can do
+//
+// Any device token of an account can list every device of the account and
+// revoke any of them, itself included. That is the current behaviour and it
+// is not narrowed to the calling device. A holder of the old token of a
+// rotation, inside the grace window, cannot rotate: Rotate answers 409
+// rotation_refused and issues no token. It can still list, revoke other
+// devices and sign the device out. Signing out through the old token ends the
+// device, so the new token gets 401, and no reuse is logged, because the old
+// token was inside its grace. Within the grace the old token is a full
+// credential of the device.
 //
 // # Rate limit
 //
@@ -73,7 +89,15 @@
 //     token stays valid. The app keeps the token it has.
 //   - 409 stale: the account ended its sessions between the credential check
 //     and the issue. The app signs in again.
-//   - 503: the verifier is busy, or a device store is full or cannot answer.
+//   - 503: the verifier is busy (with Retry-After), the device store is full
+//     on an issue, or the middleware could not read the session because the
+//     store failed, which List and Revoke report. A store error inside
+//     List, Revoke, Rotate or SignOut is an opaque 500, and so is a failed
+//     issue. Neither answer carries the cause.
+//
+// A device name is a label the app chose and is never trusted. It may contain
+// U+2028, U+3164, trailing spaces or markup such as "<script>". The JSON is
+// safe. A UI renders a name as text, never as HTML.
 //
 // # What belongs to the application
 //
@@ -81,10 +105,15 @@
 // the application:
 //
 //   - The app's origin is cross site, so the CSRF protector and these
-//     handlers refuse an Issue request from it. The origin check of this
-//     package accepts the origins in [HandlerConfig.TrustedOrigins]. Whether
-//     the protector gets a dedicated exemption for the one issue route is
-//     step 5 of issue 117.
+//     handlers refuse an Issue request from it. The origin check of Issue,
+//     and of Issue alone, accepts the origins in
+//     [HandlerConfig.IssueTrustedOrigins]. An app origin must never go into
+//     csrf.Protector.TrustOrigin or into the web CORS list, which sends
+//     credentials: either would let a page of that origin ride a cookie.
+//     ADR 0001 says startup fails when an origin is in both lists. That
+//     check is not implemented yet and lands with the app origin list in
+//     step 5 of issue 117, which also decides whether the protector gets a
+//     dedicated exemption for the one issue route.
 //   - A browser engine sends a preflight before a request with Authorization.
 //     The CORS policy for app origins allows that header, with credentials
 //     off, and is step 5 as well.

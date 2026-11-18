@@ -29,24 +29,20 @@ func (a *app) buildDevices(service *account.Service) error {
 		Sessions: a.sessions,
 		VerifyCredentials: func(ctx context.Context, c devicehttp.Credentials) (string, error) {
 			id, err := service.Login(ctx, c.Login, c.Password, c.Code)
-			switch {
-			case err == nil:
-				// The account id is the subject of every session, so one EndAll
-				// at a password change reaches the cookie and the device ones.
-				return id.ID, nil
-			case errors.Is(err, account.ErrInvalidCredentials):
-				return "", devicehttp.ErrInvalidCredentials
-			case errors.Is(err, account.ErrHashingBusy):
-				return "", devicehttp.ErrBusy
+			if err != nil {
+				return "", mapLoginError(err)
 			}
-			return "", err
+			// The account id is the subject of every session, so one EndAll
+			// at a password change reaches the cookie and the device ones.
+			return id.ID, nil
 		},
 		// The same clock as the session manager, because the store compares
 		// the time of the credential check with the time of an EndAll.
 		Now: a.cfg.now,
-		// The same origins the CSRF protector trusts. An app origin is added
-		// when the application decides to serve one, see docs/concepts/govue.md.
-		TrustedOrigins: a.cfg.allowedOrigins,
+		// No IssueTrustedOrigins: the web origins of ALLOWED_ORIGINS feed the
+		// CSRF protector and a CORS policy with credentials, and an app origin
+		// must never be on those lists. A separate app origin list arrives with
+		// step 5 of #117, see docs/concepts/govue.md.
 	})
 	if err != nil {
 		return fmt.Errorf("example: device handlers: %w", err)
@@ -54,6 +50,19 @@ func (a *app) buildDevices(service *account.Service) error {
 	a.devices = handlers
 
 	return nil
+}
+
+// mapLoginError turns what account.Service.Login returns into the two errors
+// devicehttp knows. Anything else passes on and is answered as an opaque 500.
+func mapLoginError(err error) error {
+	switch {
+	case errors.Is(err, account.ErrInvalidCredentials):
+		return devicehttp.ErrInvalidCredentials
+	case errors.Is(err, account.ErrHashingBusy):
+		return devicehttp.ErrBusy
+	}
+
+	return err
 }
 
 // mountDevices registers the device token routes. route is the chain every

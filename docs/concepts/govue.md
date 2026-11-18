@@ -382,9 +382,13 @@ The design of the library and the reasoning behind it.
   `HandlerConfig.Now`, which has to be the clock of `session.Config.Now`. A password change that
   lands during a slow verification answers 409 `stale` and leaves no device behind. A test moves
   the order and fails.
-- `Issue` authenticates by the credentials in its body and by nothing else. A bearer token on the
-  request is not read for it, and a cookie is neither read nor set. A valid token with an empty
-  body is a 401, and with the credentials of another account it issues for that account.
+- `Issue` authenticates by the credentials in its body and by nothing else. The handler reads no
+  bearer token and no cookie and sets none. A valid token with an empty body is a 401, and with
+  the credentials of another account it issues for that account. In the real chain the
+  middleware in front still acts first: a junk, expired, revoked or doubled `Authorization`
+  header gets the middleware's 401 even with valid credentials, a cookie request without a CSRF
+  token gets the protector's 403, and a valid pending token is confirmed by the session
+  middleware as on any request. The contract test pins these.
 - The token is in the body of an `Issue` or `Rotate` success once, as `token`, next to `token_id`,
   which is the device id that the list shows, and `expires_at`. A rotation never moves
   `expires_at`. No other answer carries a token. A list, an error body and every log line are
@@ -400,26 +404,47 @@ The design of the library and the reasoning behind it.
   404 with the same body and headers, and nothing of the other account ends.
 - The list carries id, name, created, last seen, expires and `current`, which is true for the
   device that makes the request. It carries neither token nor hash.
-- Every handler checks the method, then the origin with `net/http.CrossOriginProtection`, then the
-  body: `application/json`, one object, at most 16 KiB by default, unknown fields refused, the
-  device name checked before the credentials. A bearer request skips the origin check on the routes
-  that take one, because a browser never attaches that header by itself. `Issue` checks the origin
-  for every request, since it carries no token and its answer carries the new one. The name rules
-  are those of `IssueDevice`, written twice so that a bad name costs no verification, and a test
-  pins that the two agree.
+- Every handler checks the method first, then the origin with `net/http.CrossOriginProtection`.
+  Only `Issue` trusts `IssueTrustedOrigins`. `Rotate` and `SignOut` then check the bearer token
+  before they read the body. The body is `application/json`, one object, at most 16 KiB by
+  default, unknown fields refused. A bearer request skips the origin check on the routes that
+  take one, because a browser never attaches that header by itself. `Issue` checks the origin for
+  every request, since it carries no token and its answer carries the new one. The device name is
+  checked before the credentials. The name rules are those of `IssueDevice`, written twice so that
+  a bad name costs no verification, and a test pins that the two agree.
+- A device name is a label the app chose. It can carry U+2028, U+3164, trailing spaces or markup
+  such as `<script>`. The JSON is safe. A UI renders a name as text, never as HTML.
+- A `DeviceName` policy that returns a name the session package refuses is a bug of the policy.
+  It answers an opaque 500 before the credentials are checked, so no code is consumed.
+- `NewHandlers` refuses a session manager without a device store, so the first issue does not
+  check credentials and consume a code before it fails.
 - Every answer is JSON in the error shape of `api`, with `Cache-Control: no-store`. A failure has
   one body per cause class: 401 `invalid_credentials` for a refused sign in, 401 `unauthenticated`
   with `WWW-Authenticate: Bearer` for a bearer route without a valid token, 404 `not_found` for a
-  device that is not the caller's, 409 `rotation_refused` and `stale`, and 503 for a busy
-  verifier or a full or unreachable device store. A 5xx carries no cause.
+  device that is not the caller's, 409 `rotation_refused` and `stale`. 503 is a busy verifier
+  (with `Retry-After`), a full device store on an issue, and a session read that failed because
+  the store did, which `List` and `Revoke` report. A store error inside `List`, `Revoke`,
+  `Rotate`, `SignOut` or the issue itself is an opaque 500. A 5xx carries no cause.
+- Any device token of an account can list every device of the account and revoke any of them,
+  itself included. This is the current behaviour, not narrowed to the calling device. A holder of
+  the old token inside the grace of a rotation cannot rotate: `Rotate` answers 409
+  `rotation_refused` and issues no token. It can still list, revoke other devices and sign the
+  device out. The sign out ends the device, so the new token gets 401, and no reuse is logged,
+  because the old token was inside its grace. A test pins this. Whether it should be narrowed is
+  the owner's decision.
 - The issue route needs a per client rate limit, like the four account routes that check a
   password. It costs whatever the callback costs, here an Argon2id derivation. `example/` mounts
   it behind the stricter limit and a test pins the 429.
 - Needs left to the application and to step 5 of #117, listed here so they are not forgotten:
   - The origin of a native app is cross site. The CSRF protector and `Issue` both refuse an issue
-    request from it. `HandlerConfig.TrustedOrigins` lets the application name origins, and step 5
-    decides whether the protector gets a dedicated exemption for the one issue route, as the ADR
-    plans.
+    request from it. `HandlerConfig.IssueTrustedOrigins` lets the application name origins for
+    `Issue` and for no other route, and step 5 decides whether the protector gets a dedicated
+    exemption for the one issue route, as the ADR plans. An app origin must never go into
+    `csrf.Protector.TrustOrigin` or into the web CORS list, which sends credentials: either lets
+    a page of that origin ride a cookie. `example/` passes no trusted origin, and its
+    `ALLOWED_ORIGINS` stays a web list. A test pins that a web origin is refused on `Issue`.
+  - ADR 0001 says startup fails when an origin is both an app origin and a web or trusted
+    origin. That check is not implemented. It lands with the app origin list in step 5.
   - A preflight for a request with `Authorization`. The CORS policy for app origins allows that
     header, with credentials off, and keeps the web policy apart. The example's CORS allows
     neither yet.

@@ -159,15 +159,24 @@ type HandlerConfig struct {
 	// DeviceName is an optional naming policy. It gets the validated name the
 	// app sent, which may be empty, and returns the name to store, for example
 	// a default for an empty one. An error is answered as 400. The result is
-	// validated again, so a policy cannot store a name the session package
-	// would refuse. Nil stores the name as sent.
+	// validated again before the credentials are checked: a name the session
+	// package would refuse is a bug of the policy and answers an opaque 500,
+	// with no credential checked and no code consumed. Nil stores the name as
+	// sent.
+	//
+	// A name is a label the app chose and is never trusted. It may carry
+	// U+2028, U+3164, trailing spaces or markup such as "<script>". The JSON
+	// is safe. A UI renders a name as text, never as HTML.
 	DeviceName func(requested string) (string, error)
 
-	// TrustedOrigins are the cross origin callers the origin check accepts on
-	// the routes that check it, each a scheme and host without a trailing
-	// slash. Zero trusts this origin only. The origins of a native app belong
-	// here only as far as the application decides, see the package doc.
-	TrustedOrigins []string
+	// IssueTrustedOrigins are the cross origin callers the origin check of
+	// [Handlers.Issue] accepts, each a scheme and host without a trailing
+	// slash. Zero trusts this origin only. They apply to Issue and to no
+	// other route: the cookie paths of List and Revoke never trust a cross
+	// origin. The list is the application's list of app origins. It must
+	// never be the list of csrf.Protector.TrustOrigin or of the web CORS
+	// policy, see the package doc.
+	IssueTrustedOrigins []string
 
 	// MaxBodyBytes limits a request body. Zero is [DefaultMaxBodyBytes].
 	MaxBodyBytes int64
@@ -184,7 +193,8 @@ type Handlers struct {
 	sessions     *session.Manager
 	verify       func(ctx context.Context, c Credentials) (string, error)
 	name         func(string) (string, error)
-	cross        *http.CrossOriginProtection
+	cross        *http.CrossOriginProtection // trusts this origin only
+	issueCross   *http.CrossOriginProtection // trusts IssueTrustedOrigins too
 	maxBodyBytes int64
 	now          func() time.Time
 }
@@ -202,10 +212,19 @@ func NewHandlers(cfg HandlerConfig) (*Handlers, error) {
 	if cfg.MaxBodyBytes < 0 {
 		problems = append(problems, fmt.Errorf("max body bytes %d is negative", cfg.MaxBodyBytes))
 	}
-	cross := http.NewCrossOriginProtection()
-	for _, origin := range cfg.TrustedOrigins {
-		if err := cross.AddTrustedOrigin(origin); err != nil {
+	issueCross := http.NewCrossOriginProtection()
+	for _, origin := range cfg.IssueTrustedOrigins {
+		if err := issueCross.AddTrustedOrigin(origin); err != nil {
 			problems = append(problems, fmt.Errorf("trusted origin %q: %w", origin, err))
+		}
+	}
+	// A manager without a device store would fail every issue after the
+	// credentials were checked, and the code consumed. AuthenticateDevice
+	// looks at the store before the token, so an empty token reaches nothing
+	// else.
+	if cfg.Sessions != nil {
+		if _, err := cfg.Sessions.AuthenticateDevice(context.Background(), ""); errors.Is(err, session.ErrDevicesDisabled) {
+			problems = append(problems, errors.New("the session manager has no device store"))
 		}
 	}
 	if err := errors.Join(problems...); err != nil {
@@ -221,7 +240,8 @@ func NewHandlers(cfg HandlerConfig) (*Handlers, error) {
 		sessions:     cfg.Sessions,
 		verify:       cfg.VerifyCredentials,
 		name:         cfg.DeviceName,
-		cross:        cross,
+		cross:        http.NewCrossOriginProtection(),
+		issueCross:   issueCross,
 		maxBodyBytes: cmp.Or(cfg.MaxBodyBytes, DefaultMaxBodyBytes),
 		now:          now,
 	}, nil
@@ -232,20 +252,26 @@ func NewHandlers(cfg HandlerConfig) (*Handlers, error) {
 // this answer only.
 //
 // The caller proves itself with the credentials in the body, checked by
-// [HandlerConfig.VerifyCredentials]. A bearer token or a cookie on the request
-// is no credential here and is never read: a valid token with an empty body is
-// a 401, and with the credentials of another account it issues for that
-// account. The handler neither reads nor sets a cookie.
+// [HandlerConfig.VerifyCredentials]. This handler does not read a bearer token
+// or a cookie: a valid token with an empty body is a 401, and with the
+// credentials of another account it issues for that account. It neither reads
+// nor sets a cookie. In the real chain the middleware in front still acts on
+// the headers before this handler runs: a junk, expired, revoked or doubled
+// Authorization header gets its 401 even with valid credentials, a cookie
+// request without a CSRF token gets the protector's 403, and a valid pending
+// token is confirmed by the session middleware as on any request.
 //
 // The method, the origin, the content type, the size and the shape of the body
 // and the device name are checked before the credentials, so a refused request
-// costs no verification and says nothing about them. Every refusal of the
-// callback answers 401 with one body.
+// costs no verification and says nothing about them. A policy result that is
+// not a valid name is a bug of the application and answers an opaque 500 at
+// the same place, before any credential is checked, so no code is consumed.
+// Every refusal of the callback answers 401 with one body.
 //
 // The route needs a per client rate limit in front of it. See the package
 // documentation.
 func (h *Handlers) Issue() http.Handler {
-	return h.route(http.MethodPost, true, func(w http.ResponseWriter, r *http.Request) error {
+	return h.route(http.MethodPost, h.issueCross, true, func(w http.ResponseWriter, r *http.Request) error {
 		var req IssueRequest
 		if err := h.decode(r, &req); err != nil {
 			return err
@@ -278,7 +304,9 @@ func (h *Handlers) Issue() http.Handler {
 		case errors.Is(err, session.ErrStaleAuthentication):
 			return api.New(http.StatusConflict, CodeStale, messageStale)
 		case errors.Is(err, session.ErrInvalidDeviceName):
-			return invalidName()
+			// The name was checked before the credentials. Reaching this is a
+			// disagreement between the two rules, a bug.
+			return api.Internal(err)
 		case errors.Is(err, session.ErrDeviceStoreFull):
 			return api.Unavailable(messageUnavailable).Exposed().WithCause(err)
 		default:
@@ -302,7 +330,7 @@ func (h *Handlers) Issue() http.Handler {
 // no token while the presented token stays valid answers 409 with
 // [CodeRotationRefused], which an app takes quietly.
 func (h *Handlers) Rotate() http.Handler {
-	return h.route(http.MethodPost, false, func(w http.ResponseWriter, r *http.Request) error {
+	return h.route(http.MethodPost, h.cross, false, func(w http.ResponseWriter, r *http.Request) error {
 		token, err := bearerToken(w, r)
 		if err != nil {
 			return err
@@ -334,7 +362,7 @@ func (h *Handlers) Rotate() http.Handler {
 // same browser, if there is one, stays as it is. Signing out the same token a
 // second time is a 401.
 func (h *Handlers) SignOut() http.Handler {
-	return h.route(http.MethodDelete, false, func(w http.ResponseWriter, r *http.Request) error {
+	return h.route(http.MethodDelete, h.cross, false, func(w http.ResponseWriter, r *http.Request) error {
 		if _, err := bearerToken(w, r); err != nil {
 			return err
 		}
@@ -363,7 +391,7 @@ func (h *Handlers) SignOut() http.Handler {
 // It reads the session [session.Manager.Middleware] put into the request
 // context. Without the middleware every request is a 401.
 func (h *Handlers) List() http.Handler {
-	return h.route(http.MethodGet, false, func(w http.ResponseWriter, r *http.Request) error {
+	return h.route(http.MethodGet, h.cross, false, func(w http.ResponseWriter, r *http.Request) error {
 		caller, err := caller(r)
 		if err != nil {
 			return err
@@ -389,9 +417,14 @@ func (h *Handlers) List() http.Handler {
 // answers 204. An id of another account answers exactly like an unknown id:
 // the same status, body and headers, and nothing of the other account ends.
 // The caller is a cookie session or a device. A cookie request goes through
-// the origin check of this handler and the application's CSRF check.
+// the origin check of this handler, which trusts this origin only, and the
+// application's CSRF check.
+//
+// Any device token of an account can list and revoke every device of the
+// account, itself included. A device that holds an old token inside the grace
+// of a rotation can do the same, see the package documentation.
 func (h *Handlers) Revoke() http.Handler {
-	return h.route(http.MethodDelete, false, func(w http.ResponseWriter, r *http.Request) error {
+	return h.route(http.MethodDelete, h.cross, false, func(w http.ResponseWriter, r *http.Request) error {
 		caller, err := caller(r)
 		if err != nil {
 			return err
@@ -420,7 +453,7 @@ func (h *Handlers) Revoke() http.Handler {
 // always is set. A browser never attaches an Authorization header by itself, so
 // the check guards the requests that ride on ambient credentials, and the
 // issue route, which has none and whose answer carries the token.
-func (h *Handlers) route(method string, always bool, fn api.HandlerFunc) http.Handler {
+func (h *Handlers) route(method string, cross *http.CrossOriginProtection, always bool, fn api.HandlerFunc) http.Handler {
 	return api.Handle(func(w http.ResponseWriter, r *http.Request) error {
 		if r.Method != method {
 			w.Header().Set("Allow", method)
@@ -428,7 +461,7 @@ func (h *Handlers) route(method string, always bool, fn api.HandlerFunc) http.Ha
 			return api.New(http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		}
 		if kind, _ := bearer.Classify(r.Header); always || kind == bearer.None {
-			if err := h.cross.Check(r); err != nil {
+			if err := cross.Check(r); err != nil {
 				return api.PermissionDenied(messageCrossOrigin).WithCause(err)
 			}
 		}
@@ -460,8 +493,11 @@ func (h *Handlers) deviceName(requested string) (string, error) {
 	name := requested
 	if h.name != nil {
 		var err error
-		if name, err = h.name(requested); err != nil || !validName(name) {
+		if name, err = h.name(requested); err != nil {
 			return "", invalidName()
+		}
+		if !validName(name) {
+			return "", api.Internal(errors.New("devicehttp: the device name policy returned a name the session package refuses"))
 		}
 	}
 

@@ -82,7 +82,56 @@ type response struct {
 	body         string
 }
 
+// faultStore is a device store that fails the calls a test asks it to.
+type faultStore struct {
+	session.DeviceStore
+
+	mu                           sync.Mutex
+	create, list, lookup, revoke error
+}
+
+func (s *faultStore) fail(create, list, lookup, revoke error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.create, s.list, s.lookup, s.revoke = create, list, lookup, revoke
+}
+
+func (s *faultStore) errs() (create, list, lookup, revoke error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.create, s.list, s.lookup, s.revoke
+}
+
+func (s *faultStore) Create(ctx context.Context, d session.DeviceSession, maxPerSubject int, at time.Time) ([]string, error) {
+	if err, _, _, _ := s.errs(); err != nil {
+		return nil, err
+	}
+	return s.DeviceStore.Create(ctx, d, maxPerSubject, at)
+}
+
+func (s *faultStore) List(ctx context.Context, subject string) ([]session.DeviceSession, error) {
+	if _, err, _, _ := s.errs(); err != nil {
+		return nil, err
+	}
+	return s.DeviceStore.List(ctx, subject)
+}
+
+func (s *faultStore) Lookup(ctx context.Context, hash session.TokenHash) (session.DeviceSession, session.DeviceSlot, error) {
+	if _, _, err, _ := s.errs(); err != nil {
+		return session.DeviceSession{}, 0, err
+	}
+	return s.DeviceStore.Lookup(ctx, hash)
+}
+
+func (s *faultStore) Revoke(ctx context.Context, subject, id string) error {
+	if _, _, _, err := s.errs(); err != nil {
+		return err
+	}
+	return s.DeviceStore.Revoke(ctx, subject, id)
+}
+
 type fixture struct {
+	store    *faultStore
 	t        *testing.T
 	clock    *clock
 	manager  *session.Manager
@@ -99,10 +148,11 @@ type fixture struct {
 func newFixture(t *testing.T, adjust func(*devicehttp.HandlerConfig)) *fixture {
 	t.Helper()
 	f := &fixture{t: t, clock: &clock{now: time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)}, logs: &syncBuffer{}}
+	f.store = &faultStore{DeviceStore: session.NewMemoryDeviceStore(f.clock.Now, 100)}
 	manager, err := session.New(session.Config{
 		Store:   session.NewMemoryStore(f.clock.Now, 100),
 		Now:     f.clock.Now,
-		Devices: session.DeviceConfig{Store: session.NewMemoryDeviceStore(f.clock.Now, 100)},
+		Devices: session.DeviceConfig{Store: f.store},
 	})
 	if err != nil {
 		t.Fatalf("session.New: %v", err)
@@ -128,7 +178,7 @@ func newFixture(t *testing.T, adjust func(*devicehttp.HandlerConfig)) *fixture {
 			}
 			return "", devicehttp.ErrInvalidCredentials
 		},
-		TrustedOrigins: []string{appOrigin},
+		IssueTrustedOrigins: []string{appOrigin},
 	}
 	if adjust != nil {
 		adjust(&cfg)
@@ -482,9 +532,20 @@ func TestIssueDeviceNamePolicy(t *testing.T) {
 
 	f.issue(credsA(), "")
 	f.issue(credsA(), "Pixel")
-	for _, name := range []string{"forbidden", "grows"} {
+	// A policy that refuses is a 400. A policy that returns a name the session
+	// package refuses is its own bug: an opaque 500. Both are answered before
+	// the credentials are checked, so no code is consumed.
+	for name, want := range map[string]int{"forbidden": http.StatusBadRequest, "grows": http.StatusInternalServerError} {
+		before := f.verifyCount()
 		w := f.do(http.MethodPost, "/auth/token", map[string]string{"login": loginA, "password": passwordA, "code": codeOK, "device_name": name})
-		wantStatus(t, w, http.StatusBadRequest)
+		wantStatus(t, w, want)
+		wantNoStore(t, w)
+		if f.verifyCount() != before {
+			t.Errorf("%s: the credentials were checked", name)
+		}
+		if strings.Contains(w.Body.String(), "policy") {
+			t.Errorf("%s: a cause reached the client: %s", name, w.Body.String())
+		}
 	}
 	devices, err := f.manager.ListDevices(t.Context(), subjectA)
 	if err != nil {
@@ -1173,7 +1234,7 @@ func TestEveryAnswerIsNoStoreJSON(t *testing.T) {
 func TestNewHandlersNamesEveryProblem(t *testing.T) {
 	t.Parallel()
 
-	_, err := devicehttp.NewHandlers(devicehttp.HandlerConfig{MaxBodyBytes: -1, TrustedOrigins: []string{"not an origin/"}})
+	_, err := devicehttp.NewHandlers(devicehttp.HandlerConfig{MaxBodyBytes: -1, IssueTrustedOrigins: []string{"not an origin/"}})
 	if err == nil {
 		t.Fatal("an empty configuration is accepted")
 	}

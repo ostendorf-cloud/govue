@@ -4,7 +4,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -12,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ostendorf-cloud/govue/account"
 	"github.com/ostendorf-cloud/govue/csrf"
 	"github.com/ostendorf-cloud/govue/session"
 	"github.com/ostendorf-cloud/govue/session/devicehttp"
@@ -330,6 +334,73 @@ func TestDeviceTokensEndWithAPasswordChange(t *testing.T) {
 	if got := notesWith(t, a, fresh.Token); got != http.StatusOK {
 		t.Fatalf("the token of the new password = %d, want 200", got)
 	}
+}
+
+// The origins of ALLOWED_ORIGINS are web origins: the CSRF protector trusts
+// them and the CORS policy sends credentials to them. An app origin must never
+// be one of them, so the issue route does not trust them either. The CSRF
+// protector lets such an origin through, and the handler's own check refuses.
+func TestDeviceTokenIssueDoesNotTrustTheWebOrigins(t *testing.T) {
+	t.Parallel()
+	a, clock := newAccountApp(t, true, 100)
+	secret, _ := newAccount(t, a, clock, acctLogin, acctPassword)
+
+	clock.Add(time.Minute)
+	w := a.serve(t, accountCall{
+		method: http.MethodPost, path: tokenPath, site: "cross-site", origin: a.cfg.allowedOrigins[0],
+		body: creds(acctLogin, acctPassword, totpNow(t, secret, clock)),
+	})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("issue from a web origin = %d %s, want 403", w.Code, w.Body.String())
+	}
+}
+
+// The example maps the answers of Service.Login to the two errors devicehttp
+// knows: a busy hasher is a 503 with Retry-After, never a refused sign in.
+func TestMapLoginError(t *testing.T) {
+	t.Parallel()
+
+	if got := mapLoginError(fmt.Errorf("login: %w", account.ErrInvalidCredentials)); !errors.Is(got, devicehttp.ErrInvalidCredentials) {
+		t.Errorf("invalid credentials map to %v", got)
+	}
+	if got := mapLoginError(fmt.Errorf("login: %w", account.ErrHashingBusy)); !errors.Is(got, devicehttp.ErrBusy) {
+		t.Errorf("a busy hasher maps to %v", got)
+	}
+	other := errors.New("store down")
+	if got := mapLoginError(other); !errors.Is(got, other) || errors.Is(got, devicehttp.ErrInvalidCredentials) || errors.Is(got, devicehttp.ErrBusy) {
+		t.Errorf("another error maps to %v", got)
+	}
+
+	// Through the handler, ErrBusy is a 503 with Retry-After.
+	h, err := devicehttp.NewHandlers(devicehttp.HandlerConfig{
+		Sessions: mustSessions(t),
+		VerifyCredentials: func(context.Context, devicehttp.Credentials) (string, error) {
+			return "", mapLoginError(account.ErrHashingBusy)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, tokenPath, strings.NewReader(`{"login":"a"}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.Issue().ServeHTTP(w, r)
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") == "" {
+		t.Fatalf("busy = %d, Retry-After %q, want 503 with one", w.Code, w.Header().Get("Retry-After"))
+	}
+}
+
+func mustSessions(t *testing.T) *session.Manager {
+	t.Helper()
+	m, err := session.New(session.Config{
+		Store:   session.NewMemoryStore(nil, 10),
+		Devices: session.DeviceConfig{Store: session.NewMemoryDeviceStore(nil, 10)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return m
 }
 
 // TestDeviceTokenIssueIsRateLimited pins the 429 the package documentation
