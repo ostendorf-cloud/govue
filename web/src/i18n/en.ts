@@ -49,6 +49,29 @@ const en: MessageTree = {
     language: {
       label: 'Language',
     },
+    passkey: {
+      login: { label: 'Log in with a passkey' },
+      enrol: { label: 'Add a passkey' },
+      busy: 'Waiting for your passkey',
+      cancelled: 'The passkey prompt was closed. Nothing changed.',
+      error: {
+        reauthentication_required: 'Please log in again, then try once more.',
+        invalid_passkey: 'The passkey could not be added. Please try again.',
+        invalid_credentials: 'The passkey could not be verified.',
+        last_factor: 'This is your last way to log in, so it cannot be removed.',
+        not_found: 'This passkey no longer exists.',
+        unsupported: 'This browser does not support passkeys.',
+        unauthenticated: 'You are not logged in. Please log in and try again.',
+        invalid_argument: 'The name is not valid.',
+        permission_denied: 'The request was refused. Please reload the page and try again.',
+        rate_limited: 'Too many attempts. Please wait a moment and try again.',
+        unavailable: 'The server is busy. Please try again in a moment.',
+        network: 'No connection to the server. Please check your network and try again.',
+        already_registered: 'This device already has a passkey for your account.',
+        busy: 'Another passkey prompt is open.',
+        failed: 'Something went wrong. Please try again.',
+      },
+    },
     account: {
       field: {
         login: 'Login',

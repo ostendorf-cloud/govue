@@ -36,7 +36,16 @@ export { createMemoryTokenStorage } from './api/tokenStorage'
 export type { TokenStorage } from './api/tokenStorage'
 export { ApiError, ErrorCode, isApiError } from './api/errors'
 export type { ApiErrorPayload, ErrorCodeValue } from './api/errors'
-export type { Enrolment, LoginResult, SignupResult } from './api/account'
+export type { Enrolment, LoginResult, Passkey, SignupResult } from './api/account'
+
+export { isPasskeySupported, PasskeyError, usePasskey } from './composables/usePasskey'
+export type {
+  PasskeyErrorCode,
+  PasskeyLoginOptions,
+  PasskeyOptions,
+  PasskeyState,
+  PasskeyStatus,
+} from './composables/usePasskey'
 
 export { useToasts } from './composables/useToasts'
 export type { Toast, ToastInput, ToastKind, ToastState } from './composables/useToasts'
@@ -88,6 +97,7 @@ export { default as GovueLanguageSwitch } from './components/GovueLanguageSwitch
 export { default as GovueLoginForm } from './components/GovueLoginForm.vue'
 export { default as GovueNav } from './components/GovueNav.vue'
 export type { NavItem } from './components/GovueNav.vue'
+export { default as GovuePasskeyButton } from './components/GovuePasskeyButton.vue'
 export { default as GovuePage } from './components/GovuePage.vue'
 export type { PageWidth } from './components/GovuePage.vue'
 export { default as GovueSelect } from './components/GovueSelect.vue'

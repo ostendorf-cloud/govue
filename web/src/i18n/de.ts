@@ -49,6 +49,31 @@ const de: MessageTree = {
     language: {
       label: 'Sprache',
     },
+    passkey: {
+      login: { label: 'Mit Passkey anmelden' },
+      enrol: { label: 'Passkey hinzufügen' },
+      busy: 'Warte auf deinen Passkey',
+      cancelled: 'Die Passkey-Abfrage wurde geschlossen. Es hat sich nichts geändert.',
+      error: {
+        reauthentication_required: 'Bitte melde dich erneut an und versuche es noch einmal.',
+        invalid_passkey: 'Der Passkey konnte nicht hinzugefügt werden. Bitte versuche es erneut.',
+        invalid_credentials: 'Der Passkey konnte nicht geprüft werden.',
+        last_factor:
+          'Das ist deine letzte Möglichkeit zur Anmeldung, sie kann nicht entfernt werden.',
+        not_found: 'Dieser Passkey existiert nicht mehr.',
+        unsupported: 'Dieser Browser unterstützt keine Passkeys.',
+        unauthenticated: 'Du bist nicht angemeldet. Bitte melde dich an und versuche es erneut.',
+        invalid_argument: 'Der Name ist nicht gültig.',
+        permission_denied:
+          'Die Anfrage wurde abgelehnt. Bitte lade die Seite neu und versuche es erneut.',
+        rate_limited: 'Zu viele Versuche. Bitte warte einen Moment und versuche es erneut.',
+        unavailable: 'Der Server ist ausgelastet. Bitte versuche es gleich noch einmal.',
+        network: 'Keine Verbindung zum Server. Bitte prüfe dein Netzwerk und versuche es erneut.',
+        already_registered: 'Dieses Gerät hat bereits einen Passkey für dein Konto.',
+        busy: 'Eine andere Passkey-Abfrage ist offen.',
+        failed: 'Etwas ist schiefgegangen. Bitte versuche es erneut.',
+      },
+    },
     account: {
       field: {
         login: 'Login',

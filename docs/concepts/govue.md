@@ -1059,6 +1059,47 @@ The design of the library and the reasoning behind it.
   shows as a refused request. An application with such a flow sets `csrfToken` in
   `createClient`.
 
+#### Passkeys in the web app
+
+- `GovuePasskeyButton` and the `usePasskey` composable run the WebAuthn ceremony against the
+  passkey routes under `/account/passkeys`, the contract of the server half. The button takes
+  the `client` of `createClient` like the forms, `mode` (`login` or `enrol`), an optional `name`
+  for the new passkey and an optional `path` prefix. It emits `success` with the login answer or
+  the new passkey.
+- There is no npm WebAuthn dependency. The browser side uses the native
+  `PublicKeyCredential.parseCreationOptionsFromJSON`, `parseRequestOptionsFromJSON` and
+  `credential.toJSON()`, and the binary values travel as base64url as that serialisation defines
+  them.
+- Support is detected, never assumed. `isPasskeySupported()` is true when both parse helpers and
+  `navigator.credentials` exist. The button renders nothing until it is mounted and nothing at
+  all where the check fails, so a prerendered page and the first client render agree. A product
+  that wants a fallback uses `usePasskey().supported`. `enrol` and `login` reject with
+  `unsupported` without a request.
+- A dismissed prompt (`NotAllowedError` or `AbortError`) is the quiet `cancelled` status. The
+  call resolves with `undefined`, the button emits `cancelled` and shows a short muted note in
+  its live region, and no alert. Every other failure is a `PasskeyError` with a `code` of the
+  contract (`reauthentication_required`, `invalid_passkey`, `invalid_credentials`,
+  `last_factor`, `not_found`), `unsupported`, or one of the client's own: `unauthenticated`,
+  `invalid_argument`, `permission_denied`, `rate_limited`, `unavailable`, `network`,
+  `already_registered`, `busy`, `failed`. The error has a fixed English message per code and no
+  cause, so no challenge, credential or server text ends up in it. The button shows the text of
+  its code from both catalogues under `govue.passkey`.
+- One ceremony runs at a time, because the challenge cookie is one per browser. A second
+  `enrol` while one runs gets the same promise, a `login` during an `enrol` rejects with `busy`,
+  and the button is disabled while it waits. A conditional login (`login({ conditional: true })`,
+  for the autofill UI) leaves the status alone and ends when a prompt the person asked for
+  starts.
+- The login routes set `skipUnauthenticatedHook`, since a 401 there is the answer to the
+  ceremony. Enrolment does not, so a lost session still reaches `onUnauthenticated`. A person
+  whose login is older than the server's window gets `reauthentication_required` and logs in
+  again, then retries. The composable also lists and removes passkeys (`list`, `remove(id)`).
+  There is no list component: a product renders the list the way its page needs.
+- The challenge cookie of the begin answer is `SameSite=Strict` and host only, and the client
+  sends it with the credentials mode of the client. The ceremony therefore works for the web app
+  on the host of the API. It does not work from a cross origin page, and a native app webview
+  on its own origin is such a page. Not verified: WebAuthn inside a Capacitor webview was not
+  tested, and a native app is expected to need its own flow.
+
 ### The bearer client of a native app
 
 - `createClient({ auth: { mode: 'bearer', storage, rotateAfterMs, rotation, deviceName } })` is

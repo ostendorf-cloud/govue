@@ -14,6 +14,18 @@ export interface LoginResult {
   [field: string]: unknown
 }
 
+/**
+ * A registered passkey as the passkey handlers list it. The id is base64url,
+ * the times are RFC 3339, and `last_used_at` is null before the first login.
+ */
+export interface Passkey {
+  id: string
+  name: string
+  created_at: string
+  last_used_at: string | null
+  [field: string]: unknown
+}
+
 /** The TOTP enrolment a signup answers with, once. */
 export interface Enrolment {
   /** The base32 secret, for an app that cannot scan. */
