@@ -10,10 +10,12 @@
   ],
   "files": [
     "src",
-    "scripts/prerender.mjs"
+    "scripts/prerender.mjs",
+    "scripts/check-legal.mjs"
   ],
   "bin": {
-    "govue-prerender": "./scripts/prerender.mjs"
+    "govue-prerender": "./scripts/prerender.mjs",
+    "govue-check-legal": "./scripts/check-legal.mjs"
   },
   "engines": {
     "node": ">=24"

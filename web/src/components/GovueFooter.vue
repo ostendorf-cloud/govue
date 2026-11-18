@@ -2,26 +2,43 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { useGovueText } from '../i18n/plugin'
+import { computed, inject } from 'vue'
+
+import { isLocaleCode } from '../i18n/catalogues'
+import { legalLinks, type LegalPage } from '../i18n/legal'
+import { languageKey, useGovueText } from '../i18n/plugin'
 
 export interface FooterLink {
   href: string
   label: string
 }
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
-    /** Imprint, privacy, and whatever else the law asks for. */
+    /** Further links, after the legal pages. */
     links?: FooterLink[]
+    /**
+     * The legal pages of the site, such as `['imprint', 'privacy']`. Each is
+     * linked first, in the active language, at its canonical path.
+     */
+    legal?: readonly LegalPage[]
     /** The copyright line, or anything else that belongs under the links. */
     note?: string
     /** The footer navigation needs a name of its own, next to the main one. */
     ariaLabel?: string
   }>(),
-  { links: () => [], note: undefined, ariaLabel: undefined },
+  { links: () => [], legal: () => [], note: undefined, ariaLabel: undefined },
 )
 
+const language = inject(languageKey, null)
 const { t } = useGovueText()
+
+// Without the language layer the texts are English, so the links are too.
+const allLinks = computed<FooterLink[]>(() => {
+  const code = language?.locale.value
+  const locale = isLocaleCode(code) ? code : 'en'
+  return [...legalLinks(locale, props.legal, t), ...props.links]
+})
 </script>
 
 <template>
@@ -31,9 +48,9 @@ const { t } = useGovueText()
         <slot />
       </div>
 
-      <nav v-if="links.length > 0" :aria-label="ariaLabel ?? t('govue.footer.label')">
+      <nav v-if="allLinks.length > 0" :aria-label="ariaLabel ?? t('govue.footer.label')">
         <ul class="flex flex-wrap items-center gap-x-4">
-          <li v-for="link in links" :key="link.href">
+          <li v-for="link in allLinks" :key="link.href">
             <a
               :href="link.href"
               class="inline-flex min-h-11 items-center text-sm text-accent-text transition-colors hover:underline"

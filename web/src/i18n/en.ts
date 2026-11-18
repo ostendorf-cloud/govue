@@ -49,6 +49,19 @@ const en: MessageTree = {
     language: {
       label: 'Language',
     },
+    legal: {
+      link: {
+        imprint: 'Imprint',
+        privacy: 'Privacy',
+        terms: 'Terms',
+      },
+      title: {
+        imprint: 'Imprint',
+        privacy: 'Privacy policy',
+        terms: 'Terms and conditions',
+      },
+      back: 'Back to the start page',
+    },
     account: {
       field: {
         login: 'Login',
