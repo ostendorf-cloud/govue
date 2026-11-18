@@ -242,7 +242,15 @@ jobs:
         # pipefail keeps the exit code of the install, not the one of tee.
         run: |
           set -o pipefail
-          task web:deps 2>&1 | tee "$RUNNER_TEMP/install.log"
+          {
+            echo "Error: ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION"
+            echo ""
+            echo "  × installing dependencies"
+            echo "  ╰─▶ 1 lockfile entries failed verification:"
+            echo "        example-package@1.2.3 was published at 2026-11-17T05:56:55.170Z, within the"
+            echo "      minimumReleaseAge cutoff (2026-11-17T02:15:44.662Z)"
+            exit 1
+          } 2>&1 | tee "$RUNNER_TEMP/install.log"
       - name: Keep the install log for the comment job
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
