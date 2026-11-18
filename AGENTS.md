@@ -35,7 +35,8 @@ repeated here.
 - Sixteen Go packages live at the module root: `account`, `api`, `clientip`, `csrf`, `envconf`,
   `favicon`, `health`, `httpserver`, `language`, `logging`, `metrics`, `middleware`, `oidc`,
   `ratelimit`, `session`, `themeboot`.
-- `account` holds local accounts against the consumer's own tables. Its `Store` interface
+- `account` holds local accounts against the consumer's own tables: the contract, Argon2id
+  password hashing and TOTP. Its `Store` interface
   carries only the calls its logic makes for login, TOTP enrolment and password change. A new
   method needs a reason in the pull request, because what the interface lacks is what the
   package cannot reach.
@@ -66,8 +67,10 @@ task example:build   # compile the example application
 
 ### Go
 
-- The standard library only. `prometheus/client_golang` is the one exception and stays confined
-  to the `metrics` package. A second dependency needs a reason in the pull request.
+- The standard library only, with two exceptions. `prometheus/client_golang` stays confined to
+  the `metrics` package. `golang.org/x/crypto` stays confined to the `account` package, for
+  Argon2id, which the standard library lacks. The owner accepted it for local accounts. Another
+  dependency needs a reason in the pull request.
 - A package stays usable on its own. An application that wants `clientip` must not pull in
   `session` with it.
 - The secure choice is the default, never an option an application has to remember. Weakening

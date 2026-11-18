@@ -8,9 +8,27 @@
 // an account, so a consumer satisfies [Store] with an adapter over what it has.
 // Adopting this package is an adapter, not a data migration.
 //
-// So far the package holds the contract only: [Identity], [Store], [Record]
-// and the errors. Password hashing, TOTP and the login logic follow on top of
-// it.
+// So far the package holds the contract, [Identity], [Store], [Record] and the
+// errors, and the two checks a login is built from: Argon2id password
+// hashing in [Hasher] and TOTP in [VerifyTOTPCode]. The login logic that
+// combines them with the store follows on top of it.
+//
+// # Password hashing
+//
+// [Hasher] writes Argon2id in the PHC string format and reads the parameters
+// of a stored hash back from it, so a later parameter change keeps older
+// hashes verifiable and [PasswordCheck.NeedsRehash] says when to rewrite one.
+// Every [Hasher.VerifyPassword] call runs one derivation at today's cost,
+// also for an unknown account, which passes the empty string. At most
+// [HasherConfig.MaxConcurrentHashes] derivations run at once. A caller that
+// finds no slot within [DefaultHashWait] gets [ErrHashingBusy].
+//
+// # TOTP
+//
+// [VerifyTOTPCode] accepts one step either side of now and returns the
+// counter of the matched step. The caller consumes it with
+// [Store.AdvanceTOTPCounter], and only that conditional write refuses a
+// replayed code.
 //
 // # One identity, whatever the path
 //
