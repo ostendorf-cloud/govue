@@ -5,6 +5,7 @@ package session_test
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -126,7 +127,8 @@ func TestStartSetsAHostPrefixedCookie(t *testing.T) {
 	f := newFixture(t, nil)
 
 	rec := httptest.NewRecorder()
-	started, err := f.manager.Start(context.Background(), rec, session.Session{Subject: "u1", Username: "simon"})
+	const subject, username = "subject-4f1c9e27", "username-b83d0a56"
+	started, err := f.manager.Start(context.Background(), rec, session.Session{Subject: subject, Username: username})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -163,12 +165,21 @@ func TestStartSetsAHostPrefixedCookie(t *testing.T) {
 		t.Errorf("the cookie is persistent: MaxAge = %d, Expires = %s", cookie.MaxAge, cookie.Expires)
 	}
 
+	// Nothing but the id travels in the cookie.
 	if cookie.Value != started.ID || started.ID == "" {
 		t.Errorf("cookie value %q and session id %q differ", cookie.Value, started.ID)
 	}
-	// Nothing but the id travels in the cookie.
-	for _, leak := range []string{"simon", "u1"} {
-		if strings.Contains(cookie.Value, leak) {
+	// The value is exactly one NewID: 32 bytes, base64url, 43 characters, so
+	// there is no room for anything appended.
+	raw, err := base64.RawURLEncoding.DecodeString(cookie.Value)
+	if err != nil || len(cookie.Value) != 43 || len(raw) != 32 {
+		t.Errorf("cookie value %q is not a bare session id", cookie.Value)
+	}
+	// The subject and the username are long enough that a random value never
+	// contains them by chance, in clear text or encoded.
+	for _, leak := range []string{subject, username} {
+		encoded := base64.RawURLEncoding.EncodeToString([]byte(leak))
+		if strings.Contains(cookie.Value, leak) || strings.Contains(cookie.Value, encoded[:len(encoded)-1]) || strings.Contains(string(raw), leak) {
 			t.Errorf("the cookie carries session content %q: %q", leak, cookie.Value)
 		}
 	}
