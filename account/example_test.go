@@ -94,9 +94,13 @@ func (s *mapStore) ReplaceTOTPSecret(_ context.Context, id, secret string) error
 	})
 }
 
-func (s *mapStore) SetPasswordHash(_ context.Context, id, hash string) error {
+func (s *mapStore) SetPasswordHash(_ context.Context, id, oldHash, newHash string) error {
 	return s.update(id, func(rec *account.Record) bool {
-		rec.PasswordHash = hash
+		if rec.PasswordHash == "" || rec.PasswordHash != oldHash {
+			return false
+		}
+
+		rec.PasswordHash = newHash
 
 		return true
 	})
@@ -129,7 +133,8 @@ func (s *mapStore) update(id string, change func(*account.Record) bool) error {
 // secret can be replaced, a secret is confirmed once by the counter of its
 // first code and only if it is still the stored secret, and a counter only
 // moves forward, so a replayed code fails in
-// the store rather than in a check before it.
+// the store rather than in a check before it. A password hash is replaced
+// only from the hash the caller read, so a concurrent change is never lost.
 func ExampleStore() {
 	ctx := context.Background()
 
@@ -175,6 +180,14 @@ func ExampleStore() {
 	err = store.AdvanceTOTPCounter(ctx, rec.ID, 102)
 	fmt.Println("same code again, refused:", errors.Is(err, account.ErrNotFound))
 
+	const newHash = "$argon2id$v=19$m=65536,t=3,p=4$fake$fake-new"
+
+	fmt.Println("set password from the read hash:", store.SetPasswordHash(ctx, rec.ID, rec.PasswordHash, newHash))
+
+	// A second write from the same old hash lost the race and is refused.
+	err = store.SetPasswordHash(ctx, rec.ID, rec.PasswordHash, "$argon2id$v=19$m=65536,t=3,p=4$fake$fake-other")
+	fmt.Println("set password from a stale hash, refused:", errors.Is(err, account.ErrNotFound))
+
 	_, err = store.FindByLogin(ctx, "bob@example.com")
 	fmt.Println("unknown login:", errors.Is(err, account.ErrNotFound))
 
@@ -190,5 +203,7 @@ func ExampleStore() {
 	// replay of the confirming code, refused: true
 	// advance: <nil>
 	// same code again, refused: true
+	// set password from the read hash: <nil>
+	// set password from a stale hash, refused: true
 	// unknown login: true
 }

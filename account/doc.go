@@ -8,10 +8,32 @@
 // an account, so a consumer satisfies [Store] with an adapter over what it has.
 // Adopting this package is an adapter, not a data migration.
 //
-// So far the package holds the contract, [Identity], [Store], [Record] and the
-// errors, and the two checks a login is built from: Argon2id password
-// hashing in [Hasher] and TOTP in [VerifyTOTPCode]. The login logic that
-// combines them with the store follows on top of it.
+// The package holds the contract, [Identity], [Store], [Record] and the
+// errors, the two checks a login is built from, Argon2id password hashing in
+// [Hasher] and TOTP in [VerifyTOTPCode], and [Service], which combines them
+// with the store: signup, TOTP confirmation, login and password change. The
+// HTTP handlers on top of it are not part of the package yet.
+//
+// The accounttest package holds the conformance suite every adapter runs
+// against its own storage, and an in memory store for tests.
+//
+// # The service
+//
+// [Service.SignUp] creates an account with an unconfirmed TOTP secret.
+// [Service.ConfirmTOTP] confirms it with a code, gated on the password,
+// since no session exists yet. Only then can [Service.Login] succeed, which
+// checks the password and the code in one call. [Service.ChangePassword]
+// stores the new hash first and then calls the application's EndSessions
+// callback, in that order. The package imports nothing from session.
+//
+// [Store.SetPasswordHash] is a compare and set on the hash the caller read.
+// Of two password changes racing from one password exactly one wins, and the
+// other answers [ErrStale]. A rehash after a login never puts back a password
+// that was changed meanwhile.
+//
+// SignUp answers [ErrConflict] for a taken login. That tells anyone whether
+// an account exists. See [Service.SignUp] for what an application can do
+// about it.
 //
 // # Password hashing
 //
@@ -61,5 +83,7 @@
 // # One answer for every failed login
 //
 // Every refused login answers [ErrInvalidCredentials], whatever was wrong, so
-// the answer never tells which part of a guess was right.
+// the answer never tells which part of a guess was right. It also costs the
+// same work: one Argon2id derivation and the same HMACs, against empty
+// values when no account matched.
 package account
