@@ -202,7 +202,7 @@ function dueAlice(storage: SlowStorage | undefined, hooks: ServerHooks = {}) {
   const client = createClient({
     fetch: server.fetch,
     onUnauthenticated,
-    auth: { mode: 'bearer', storage: slow },
+    auth: { mode: 'bearer', storage: slow, rotation: 'owner' },
   })
   return { model, token, server, storage: slow, client, onUnauthenticated }
 }
@@ -243,7 +243,7 @@ describe('a sign in races a rotation of the old token', () => {
     const storage = slowStorage(rec(token, Date.now()), 1, 20)
     const client = createClient({
       fetch: modelServer(model).fetch,
-      auth: { mode: 'bearer', storage },
+      auth: { mode: 'bearer', storage, rotation: 'owner' },
     })
 
     const signing = client.signIn({ login: 'bob', password: 'pw' })
@@ -379,7 +379,7 @@ describe('the rotation timeout', () => {
     const client = createClient({
       fetch: modelServer(model).fetch,
       timeoutMs: 60_000,
-      auth: { mode: 'bearer', storage },
+      auth: { mode: 'bearer', storage, rotation: 'owner' },
     })
 
     await client.get('/me')
@@ -411,7 +411,7 @@ describe('rotation rules', () => {
     ]
     const storage = slowStorage(rec('govue-test-token-OLD', START.getTime() - 2 * HOUR), 0, 0)
     const client = createClient({
-      auth: { mode: 'bearer', storage },
+      auth: { mode: 'bearer', storage, rotation: 'owner' },
       fetch: ((input: string) => {
         calls.push(input)
         return Promise.resolve(
@@ -432,7 +432,10 @@ describe('rotation rules', () => {
     const token = model.issue('alice')
     const server = modelServer(model)
     const storage = slowStorage(rec(token, Date.now() + 100 * HOUR), 0, 0)
-    const client = createClient({ fetch: server.fetch, auth: { mode: 'bearer', storage } })
+    const client = createClient({
+      fetch: server.fetch,
+      auth: { mode: 'bearer', storage, rotation: 'owner' },
+    })
 
     for (let minute = 0; minute < 12; minute++) {
       await client.get('/me')
@@ -450,7 +453,7 @@ describe('rotation rules', () => {
     const storage = slowStorage(rec(token, Date.now()), 0, 0)
     const client = createClient({
       fetch: server.fetch,
-      auth: { mode: 'bearer', storage, rotateAfterMs: 2 * HOUR },
+      auth: { mode: 'bearer', storage, rotation: 'owner', rotateAfterMs: 2 * HOUR },
     })
 
     await client.get('/start')
@@ -469,7 +472,10 @@ describe('rotation rules', () => {
     const token = model.issue('alice')
     const server = modelServer(model)
     const storage = slowStorage(rec(token, Date.now() - START_MIN_AGE_MS / 2), 0, 0)
-    const client = createClient({ fetch: server.fetch, auth: { mode: 'bearer', storage } })
+    const client = createClient({
+      fetch: server.fetch,
+      auth: { mode: 'bearer', storage, rotation: 'owner' },
+    })
 
     await client.get('/start')
     expect(model.rotateCalls).toBe(0)
@@ -485,7 +491,10 @@ describe('rotation rules', () => {
     vi.setSystemTime(START.getTime() + START_MIN_AGE_MS)
     const server = modelServer(model)
     const storage = slowStorage(rec(token, START.getTime()), 0, 0)
-    const client = createClient({ fetch: server.fetch, auth: { mode: 'bearer', storage } })
+    const client = createClient({
+      fetch: server.fetch,
+      auth: { mode: 'bearer', storage, rotation: 'owner' },
+    })
 
     await client.get('/start')
 
@@ -500,7 +509,7 @@ describe('rotation rules', () => {
     const storage = slowStorage(rec(token, START.getTime()), 0, 0)
     const client = createClient({
       fetch: server.fetch,
-      auth: { mode: 'bearer', storage, rotateAfterMs: 1000 },
+      auth: { mode: 'bearer', storage, rotation: 'owner', rotateAfterMs: 1000 },
     })
     model.devices[0].rotatedAt = Date.now()
 
@@ -566,11 +575,11 @@ describe('a context that does not own the rotation', () => {
     expect(storage.value()).not.toBeNull()
   })
 
-  it('refuses signIn and signOut and a wrong rotation value', async () => {
+  it('refuses signIn and signOut', async () => {
     const fetchFake = vi.fn()
     const client = createClient({
       fetch: fetchFake,
-      auth: { mode: 'bearer', rotation: 'none' },
+      auth: { mode: 'bearer', storage: slowStorage(null, 0, 0), rotation: 'none' },
     })
 
     const inError = await client.signIn({ login: 'a', password: 'b' }).catch((e: unknown) => e)
@@ -579,12 +588,6 @@ describe('a context that does not own the rotation', () => {
     expect(isApiError(inError)).toBe(true)
     expect(isApiError(outError)).toBe(true)
     expect(fetchFake).not.toHaveBeenCalled()
-    expect(() =>
-      createClient({
-        auth: { mode: 'bearer', rotation: 'both' as never },
-        fetch: fetchFake as never,
-      }),
-    ).toThrow(TypeError)
   })
 })
 
@@ -614,7 +617,7 @@ describe('answers that a leak could hide in', () => {
     })
     const storage = slowStorage(rec(SECRET, Date.now()), 0, 0)
     const client = createClient({
-      auth: { mode: 'bearer', storage },
+      auth: { mode: 'bearer', storage, rotation: 'owner' },
       fetch: () => Promise.resolve(response),
     })
 
@@ -631,10 +634,13 @@ describe('answers that a leak could hide in', () => {
     const token = model.issue('alice')
     const server = modelServer(model)
     const storage = slowStorage(rec(token, Date.now()), 0, 0)
-    const client = createClient({ fetch: server.fetch, auth: { mode: 'bearer', storage } })
+    const client = createClient({
+      fetch: server.fetch,
+      auth: { mode: 'bearer', storage, rotation: 'owner' },
+    })
     const spy = vi.fn()
     const wrapped = createClient({
-      auth: { mode: 'bearer', storage },
+      auth: { mode: 'bearer', storage, rotation: 'owner' },
       fetch: ((input: string, init: RequestInit) => {
         spy(init.headers)
         return server.fetch(input, init)

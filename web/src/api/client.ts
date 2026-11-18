@@ -19,6 +19,8 @@ import { createMemoryTokenStorage } from './tokenStorage'
 
 export type {
   BearerAuthOptions,
+  BearerMemoryAuthOptions,
+  BearerStorageAuthOptions,
   CookieAuthOptions,
   DeviceSession,
   SignInCredentials,
@@ -116,8 +118,19 @@ export function createClient(options: ClientOptions = {}): ApiClient | BearerCli
     if (options.credentials !== undefined || options.csrfToken !== undefined) {
       throw new TypeError('bearer mode does not take the credentials or csrfToken option')
     }
-    if (bearerAuth.rotation !== undefined && !['owner', 'none'].includes(bearerAuth.rotation)) {
-      throw new TypeError("auth.rotation must be 'owner' or 'none'")
+    // First, before anything is built. A JavaScript caller or a cast reaches
+    // this without the union type. The messages carry no storage content.
+    const rotation: unknown = bearerAuth.rotation
+    if (bearerAuth.storage !== undefined && bearerAuth.storage !== null) {
+      if (rotation !== 'owner' && rotation !== 'none') {
+        throw new TypeError(
+          "auth.rotation is required with auth.storage and must be 'owner' or 'none'",
+        )
+      }
+    } else if (rotation !== undefined && rotation !== 'owner') {
+      throw new TypeError(
+        "auth.rotation must be omitted or 'owner' without auth.storage, 'none' needs the storage of the owner",
+      )
     }
     if (bearerAuth.rotateAfterMs !== undefined) {
       checkRotateAfter(bearerAuth.rotateAfterMs)
