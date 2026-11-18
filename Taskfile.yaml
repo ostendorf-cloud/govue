@@ -67,7 +67,7 @@ tasks:
         done
         addlicense -check -c "Simon Ostendorf" -y 2026 -l apache -s=only \
           $(find . -name "*.go" -not -path "./.claude/worktrees/*" -not -path "*/node_modules/*") \
-          $(find web/src web/scripts -type f \( -name "*.ts" -o -name "*.vue" -o -name "*.mjs" \) \
+          $(find web/src web/scripts web/example -type f \( -name "*.ts" -o -name "*.vue" -o -name "*.mjs" \) \
             -not -path "*/node_modules/*" -not -path "*/dist/*") \
           $(find "$d" -type f -name "*.ts")
 

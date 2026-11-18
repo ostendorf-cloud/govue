@@ -39,6 +39,10 @@ repeated here.
   lives in `web/src/components/` with the other components.
   A visitor-facing default text goes into both catalogues under `govue.`, never into a
   component as a string. A text prop stays as an override.
+  The legal pages (`language.HandleLegal`, `GovueLegalPage`, `govue-check-legal`) are structure
+  only: govue never ships an imprint, privacy or terms text.
+- `web/example/` is a placeholder site of the legal pages, prerendered and checked by its own
+  test. It is not shipped.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
@@ -94,8 +98,8 @@ task example:build   # compile the example application
 - `lint:vet`, `lint:golangci` and `test:go` run `go vet`, `golangci-lint run` and
   `go test -race` across every package at the module root, each its own CI job.
 - `lint:license` checks the Apache-2.0 header on every Go file at the module root and every
-  `.ts`/`.vue`/`.mjs`/`.mts` file (`.d.mts` included) under `web/src/` and `web/scripts/`, with
-  `addlicense`.
+  `.ts`/`.vue`/`.mjs`/`.mts` file (`.d.mts` included) under `web/src/`, `web/scripts/` and
+  `web/example/`, with `addlicense`.
   `addlicense` skips `.mts` files, so the check runs on a `.ts` copy of each.
 
 ## Constraints
