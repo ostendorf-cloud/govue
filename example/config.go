@@ -45,7 +45,7 @@ type config struct {
 	// authRateLimitBurst and authRateLimitPer are the limit of the routes that
 	// check a password: signup, login, TOTP confirmation and password change.
 	// It is stricter than the general limit, because a guess costs an Argon2id
-	// derivation and the hasher has few slots.
+	// derivation and the hasher has one slot by default.
 	authRateLimitBurst int
 	authRateLimitPer   time.Duration
 

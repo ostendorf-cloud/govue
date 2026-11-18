@@ -40,6 +40,7 @@ describe('GovueLoginForm', () => {
 
     expect(screen.getByRole('form', { name: 'Log in' })).toBeVisible()
     expect(screen.getByLabelText(/^Login/)).toBeRequired()
+    expect(screen.getByLabelText(/^Login/)).toHaveAttribute('autocomplete', 'username')
     expect(screen.getByLabelText(/^Password/)).toHaveAttribute('type', 'password')
     expect(screen.getByLabelText(/^Password/)).toHaveAttribute('autocomplete', 'current-password')
     expect(screen.getByLabelText(/^Code from/)).toHaveAttribute('autocomplete', 'one-time-code')
@@ -168,6 +169,22 @@ describe('GovueLoginForm', () => {
 
     release(answer(200, { login: 'alice@example.com' }))
     await waitFor(() => expect(screen.getByLabelText(/^Login/)).toBeEnabled())
+  })
+
+  it('does not report a refused login as a lost session', async () => {
+    const user = userEvent.setup()
+    const onUnauthenticated = vi.fn()
+    const fetchMock = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(failure(401, 'invalid_credentials'))
+    const client = createClient({ fetch: fetchMock, onUnauthenticated })
+    render(GovueLoginForm, { props: { client } })
+
+    await fill(user)
+    await user.click(screen.getByRole('button', { name: 'Log in' }))
+
+    expect(await screen.findByRole('alert')).toBeVisible()
+    expect(onUnauthenticated).not.toHaveBeenCalled()
   })
 
   it('is disabled as a whole when asked to', () => {

@@ -46,6 +46,7 @@ describe('GovueSignupForm', () => {
     expect(screen.getByRole('form', { name: 'Create an account' })).toBeVisible()
     expect(screen.getByLabelText(/^Login/)).toBeRequired()
     expect(screen.getByLabelText(/^Password/)).toHaveAttribute('autocomplete', 'new-password')
+    expect(screen.getByLabelText(/^Password/)).toHaveAttribute('type', 'password')
     expect(screen.getByLabelText(/^Password/)).toHaveAccessibleDescription(
       'At least 12 characters.',
     )
@@ -91,6 +92,49 @@ describe('GovueSignupForm', () => {
       password: 'a fake password for tests',
     })
     expect(screen.getByLabelText(/^Password/)).toHaveValue('')
+  })
+
+  it('sends the password exactly as typed, spaces included', async () => {
+    const user = userEvent.setup()
+    const { fetchMock } = setup(() => answer(201, created))
+
+    await fill(user, '  a spaced password  ')
+    await user.click(screen.getByRole('button', { name: 'Create account' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).password).toBe(
+      '  a spaced password  ',
+    )
+  })
+
+  it('says a refused signup in its own words', async () => {
+    const user = userEvent.setup()
+    setup(() =>
+      answer(403, { error: { code: 'permission_denied', message: 'signup is not available' } }),
+    )
+
+    await fill(user)
+    await user.click(screen.getByRole('button', { name: 'Create account' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Signup is not open, or the request was refused.',
+    )
+  })
+
+  it('does not report a refused signup as a lost session', async () => {
+    const user = userEvent.setup()
+    const onUnauthenticated = vi.fn()
+    const fetchMock = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(answer(401, { error: { code: 'unauthenticated', message: 'x' } }))
+    const client = createClient({ fetch: fetchMock, onUnauthenticated })
+    render(GovueSignupForm, { props: { client } })
+
+    await fill(user)
+    await user.click(screen.getByRole('button', { name: 'Create account' }))
+
+    expect(await screen.findByRole('alert')).toBeVisible()
+    expect(onUnauthenticated).not.toHaveBeenCalled()
   })
 
   it('puts a taken login on the login field', async () => {

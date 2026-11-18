@@ -779,8 +779,7 @@ The design of the library and the reasoning behind it.
   `Exposed`, since the server chose it. It is no failed login, and a 401 would tell a person with
   the right password that it is wrong.
 - A client that treats every 401 as a lost session, as `createClient`'s `onUnauthenticated`
-  does, sees a failed login as one. The login form is where such a client is already, and an
-  application whose callback redirects to the login page can leave it as it is.
+  does, sees a failed login as one. The forms opt out per request, see below.
 - A password change answers the four outcomes of the service. 200 with
   `{"password_changed": true, "sessions_ended": true}` is the clean one. 200 with
   `sessions_ended` false is a change that stands with `EndSessions` failed, logged, and the
@@ -800,7 +799,7 @@ The design of the library and the reasoning behind it.
   `accounttest`, behind the same chain as every other route. Login, TOTP confirmation, password
   change and signup sit behind a second rate limiter, `AUTH_RATE_LIMIT_BURST` and
   `AUTH_RATE_LIMIT_PER`, a burst of five refilled over a minute by default, because a guess
-  costs an Argon2id derivation and the hasher has one slot. TOTP confirmation and password
+  costs an Argon2id derivation and the hasher has one slot by default. TOTP confirmation and password
   change are included since both check a password. Signup is mounted only with
   `ALLOW_SIGNUP=true`. The in memory store is the conformance fake, so every account is gone on a
   restart.
@@ -817,7 +816,36 @@ The design of the library and the reasoning behind it.
   request went through, and kept after a failure, so a retry costs one field.
 - `GovueTotpEnrolment` asks for the password again instead of receiving it from the signup form,
   so no secret travels through the parent, and a reload between the two steps costs only one
-  field.
+  field. It also holds a visually hidden read only input with `autocomplete="username"` and the
+  login, so a password manager saves the password under the right name. The parent drops the
+  enrolment secret after `confirmed`.
+- Four routes need a per client rate limit, not two: signup, login, TOTP confirmation and
+  password change. Each costs an Argon2id derivation and the default is one slot, so without a
+  limit anyone keeps the hasher busy and everybody gets 503. Confirmation needs no session.
+  Password change answers 403 for a wrong current password and 200 for the right one, so a
+  stolen session can test passwords as fast as the hasher allows. The package doc and the doc
+  comment of each handler say so, and tests in `example/` pin the 429 of all four.
+- A login does not end a session the request already carries, because `account` does not know
+  sessions. In `example/`, `StartSession` ends the old session first, unless the request carries
+  an `Authorization` header: a bearer request gets no cookie session, and ending the device
+  session of a failed attempt would sign the app out.
+- The ids of local accounts and the subjects of an OIDC login share the namespace of the
+  session's subject, which `EndAll` keys on. A product that runs both prefixes one of them, for
+  example `local:` before the account id, or an OIDC subject could equal a local id and share
+  its sessions. The memory store of `example/` keeps its plain `acct-1` ids, and the example says
+  so in a comment, since it runs no OIDC account next to them.
+- Bodies are decoded by Go's `encoding/json` with unknown fields refused. Field names match case
+  insensitively, of two equal keys the last wins and invalid UTF-8 becomes U+FFFD. A proxy or a
+  WAF that parses JSON differently is out of scope. `AllowSignup` runs before the body is read
+  and cannot take an invite code from it, so an invite check uses a header, a cookie or a query
+  parameter.
+- `createClient` calls `onUnauthenticated` on every 401, a failed login included. The forms set
+  `skipUnauthenticatedHook` on their requests, so a wrong password does not look like a lost
+  session. The option is per request, additive and false by default.
+- A form used while a person is logged in, for a second login or a confirmation, sends no
+  CSRF token unless the client has `csrfToken` set, and the server answers 403, which the form
+  shows as a refused request. An application with such a flow sets `csrfToken` in
+  `createClient`.
 
 ### Theming through a published token contract
 

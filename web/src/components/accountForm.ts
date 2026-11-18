@@ -45,7 +45,11 @@ export function passwordTooShort(password: string): boolean {
  *
  * A field detail the server sent in a field the form has lands on that field.
  */
-export function localizeError(caught: unknown, t: Translate): ApiError {
+export function localizeError(
+  caught: unknown,
+  t: Translate,
+  refusedKey = 'govue.account.error.crossOrigin',
+): ApiError {
   if (!(caught instanceof ApiError)) {
     return new ApiError({
       code: ErrorCode.internal,
@@ -75,7 +79,7 @@ export function localizeError(caught: unknown, t: Translate): ApiError {
     })
   }
 
-  return new ApiError({ ...base, message: messageFor(caught, t) })
+  return new ApiError({ ...base, message: messageFor(caught, t, refusedKey) })
 }
 
 function detailText(field: string, detail: string, t: Translate): string | undefined {
@@ -91,7 +95,7 @@ function detailText(field: string, detail: string, t: Translate): string | undef
   return undefined
 }
 
-function messageFor(error: ApiError, t: Translate): string {
+function messageFor(error: ApiError, t: Translate, refusedKey: string): string {
   switch (error.code) {
     case 'invalid_credentials':
       return t('govue.account.error.invalidCredentials')
@@ -100,7 +104,7 @@ function messageFor(error: ApiError, t: Translate): string {
     case ErrorCode.tooManyRequests:
       return t('govue.account.error.rateLimited')
     case ErrorCode.permissionDenied:
-      return t('govue.account.error.crossOrigin')
+      return t(refusedKey)
     case ErrorCode.network:
     case ErrorCode.timeout:
       return t('govue.account.error.network')

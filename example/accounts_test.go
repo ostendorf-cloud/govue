@@ -57,7 +57,11 @@ type accountCall struct {
 	body   any
 	cookie *http.Cookie
 	token  string
-	site   string
+	// site is the Sec-Fetch-Site header, same-origin when empty and left out
+	// when it is "-".
+	site string
+	// origin is the Origin header, left out when empty.
+	origin string
 }
 
 func (a *app) serve(t *testing.T, c accountCall) *httptest.ResponseRecorder {
@@ -79,7 +83,12 @@ func (a *app) serve(t *testing.T, c accountCall) *httptest.ResponseRecorder {
 	if site == "" {
 		site = "same-origin"
 	}
-	r.Header.Set("Sec-Fetch-Site", site)
+	if site != "-" {
+		r.Header.Set("Sec-Fetch-Site", site)
+	}
+	if c.origin != "" {
+		r.Header.Set("Origin", c.origin)
+	}
 	if c.cookie != nil {
 		r.AddCookie(c.cookie)
 	}
@@ -324,6 +333,25 @@ func TestAccountsRateLimitLoginAndSignup(t *testing.T) {
 			t.Fatalf("second signup = %d, want 429", w.Code)
 		}
 	})
+
+	// Confirm and password change check a password too. Each is mounted
+	// behind the stricter limit, and the limit answers before the session
+	// or the body is looked at.
+	for _, path := range []string{"/confirm", "/password"} {
+		t.Run(path[1:], func(t *testing.T) {
+			t.Parallel()
+			a, _ := newAccountApp(t, true, 1)
+
+			call := accountCall{method: http.MethodPost, path: accountPrefix + path, body: map[string]string{}}
+			if w := a.serve(t, call); w.Code == http.StatusTooManyRequests {
+				t.Fatalf("first request = 429, want it to reach the handler")
+			}
+			w := a.serve(t, call)
+			if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" {
+				t.Fatalf("second request = %d, Retry-After %q, want 429 with Retry-After", w.Code, w.Header().Get("Retry-After"))
+			}
+		})
+	}
 
 	t.Run("the general routes are not held by the stricter limit", func(t *testing.T) {
 		t.Parallel()

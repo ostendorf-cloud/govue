@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -258,7 +259,23 @@ func asJSON(t *testing.T, v any) string {
 func (f *hFixture) call(h http.Handler, method, body string, mods ...func(*http.Request)) *httptest.ResponseRecorder {
 	f.t.Helper()
 
-	r := httptest.NewRequestWithContext(f.t.Context(), method, "/account", strings.NewReader(body))
+	return f.callReader(h, method, strings.NewReader(body), mods...)
+}
+
+// unreadable is a body that fails the test when anything reads it, for a
+// handler that must answer before it looks at the body.
+type unreadable struct{ t *testing.T }
+
+func (u unreadable) Read([]byte) (int, error) {
+	u.t.Errorf("the handler read the request body")
+
+	return 0, errors.New("body must not be read")
+}
+
+func (f *hFixture) callReader(h http.Handler, method string, body io.Reader, mods ...func(*http.Request)) *httptest.ResponseRecorder {
+	f.t.Helper()
+
+	r := httptest.NewRequestWithContext(f.t.Context(), method, "/account", body)
 	r.Header.Set("Content-Type", "application/json")
 	r = r.WithContext(logging.NewContext(r.Context(), f.logger))
 	for _, mod := range mods {
@@ -530,7 +547,8 @@ func TestHandlerSignup(t *testing.T) {
 		f := newHFixture(t, nil)
 		f.allow = func(*http.Request) error { return errors.New("invite list: secret-invite-detail") }
 
-		w := f.post(f.handlers.Signup(), asJSON(t, map[string]string{"login": hLogin, "password": hPassword}))
+		// The refusal comes before the body is read: it cannot depend on it.
+		w := f.callReader(f.handlers.Signup(), http.MethodPost, unreadable{t})
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("status = %d %s, want 403", w.Code, w.Body.String())
 		}
@@ -555,6 +573,25 @@ func TestHandlerSignup(t *testing.T) {
 		w := f.post(f.handlers.Signup(), asJSON(t, map[string]string{"login": hLogin, "password": hPassword}))
 		if w.Code != http.StatusTooManyRequests || readError(t, w).Error.Message != "the list is full" {
 			t.Fatalf("answer = %d %s, want the callback's api error", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("AllowSignup wrapped api error logs the outer error", func(t *testing.T) {
+		t.Parallel()
+		f := newHFixture(t, nil)
+		f.allow = func(*http.Request) error {
+			return fmt.Errorf("invite check for list 7: %w", api.PermissionDenied("signup is closed"))
+		}
+
+		w := f.callReader(f.handlers.Signup(), http.MethodPost, strings.NewReader(""))
+		if w.Code != http.StatusForbidden || readError(t, w).Error.Message != "signup is closed" {
+			t.Fatalf("answer = %d %s, want the inner api error", w.Code, w.Body.String())
+		}
+		if strings.Contains(w.Body.String(), "list 7") {
+			t.Fatalf("the answer carries the outer error: %s", w.Body.String())
+		}
+		if !strings.Contains(f.logs.String(), "invite check for list 7") {
+			t.Fatal("the outer error was not logged")
 		}
 	})
 
@@ -1011,7 +1048,7 @@ func TestHandlerChangePassword(t *testing.T) {
 		f := newHFixture(t, nil)
 		f.register()
 
-		w := change(f, hPassword, hNewPassword)
+		w := f.callReader(f.handlers.ChangePassword(), http.MethodPost, unreadable{t})
 		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("status = %d, want 401", w.Code)
 		}
@@ -1206,6 +1243,8 @@ func TestEveryBodyHandlerIsStrict(t *testing.T) {
 		{"an array", func(string) string { return `[]` }, nil, http.StatusBadRequest},
 		{"broken json", func(v string) string { return v[:len(v)-1] }, nil, http.StatusBadRequest},
 		{"a field of the wrong type", func(string) string { return `{"login":5,"password":5,"code":5,"current_password":5,"new_password":5}` }, nil, http.StatusBadRequest},
+		{"a content type that only starts with application/json", func(v string) string { return v }, withHeader("Content-Type", "application/jsonx"), http.StatusUnsupportedMediaType},
+		{"a content type with a malformed parameter", func(v string) string { return v }, withHeader("Content-Type", "application/json; charset"), http.StatusUnsupportedMediaType},
 		{"a body over the limit", func(v string) string {
 			return strings.Replace(v, "{", `{"login":"`+strings.Repeat("x", int(account.DefaultMaxBodyBytes))+`",`, 1)
 		}, nil, http.StatusRequestEntityTooLarge},
@@ -1246,6 +1285,30 @@ func TestEveryBodyHandlerIsStrict(t *testing.T) {
 		w := f.post(f.handlers.Signup(), allHandlers()[0].body(t), withHeader("Content-Type", "application/json; charset=utf-8"))
 		if w.Code != http.StatusCreated {
 			t.Fatalf("status = %d %s, want 201", w.Code, w.Body.String())
+		}
+	})
+
+	// The default is 16 KiB exactly, written as a literal so a change of the
+	// constant shows here. A body of that size passes the limit, one byte
+	// more does not. The long login is refused later, as a bad login.
+	t.Run("the default limit is 16384 bytes", func(t *testing.T) {
+		t.Parallel()
+
+		sized := func(n int) string {
+			const prefix, suffix = `{"login":"`, `","password":"x"}`
+
+			return prefix + strings.Repeat("a", n-len(prefix)-len(suffix)) + suffix
+		}
+
+		f := newHFixture(t, nil)
+		if body := sized(16384); len(body) != 16384 {
+			t.Fatalf("test body is %d bytes", len(body))
+		}
+		if w := f.post(f.handlers.Signup(), sized(16384)); w.Code == http.StatusRequestEntityTooLarge {
+			t.Fatalf("a body of 16384 bytes was refused as too large: %s", w.Body.String())
+		}
+		if w := f.post(f.handlers.Signup(), sized(16385)); w.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("a body of 16385 bytes = %d, want 413", w.Code)
 		}
 	})
 

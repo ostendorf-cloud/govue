@@ -173,6 +173,22 @@ type HandlerConfig struct {
 // without a CSRF middleware in front does not leave a login open to a cross
 // site form. A session bound CSRF token is the application's middleware, as
 // for any other unsafe route.
+//
+// Signup, TOTP confirmation, login and password change each cost an Argon2id
+// derivation, and the hasher has one slot by default. Each needs a per client
+// rate limit in front of it: without one, anyone keeps the slot busy and
+// everybody gets 503. TOTP confirmation needs no session, and password change
+// answers 403 for a wrong current password and 200 for the right one, so a
+// stolen session can test passwords as fast as the hasher allows.
+//
+// Bodies are decoded by Go's encoding/json with unknown fields refused. Field
+// names match case insensitively, of two equal keys the last wins, and invalid
+// UTF-8 is replaced by U+FFFD. A proxy or a WAF that parses JSON differently is
+// out of scope.
+//
+// Local account ids and OIDC subjects share the namespace of the session's
+// subject, which session.Manager.EndAll keys on. A product that runs both
+// prefixes one of them, for example "local:" in front of the account id.
 type Handlers struct {
 	service      *Service
 	start        func(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity) error
@@ -235,14 +251,23 @@ func NewHandlers(cfg HandlerConfig) (*Handlers, error) {
 // account cannot log in before [Handlers.ConfirmTOTP].
 //
 // A login that is taken answers 409. That is an account existence oracle, as
-// [Service.SignUp] documents, so put the rate limit of the login route in
-// front of it as well.
+// [Service.SignUp] documents. Every request costs one Argon2id derivation, and
+// the hasher has one slot by default, so this route needs a per client rate
+// limit in front of it, as do login, TOTP confirmation and password change.
+//
+// [HandlerConfig.AllowSignup] runs before the body is read. It cannot read an
+// invite code from the body, since the strict decoder has not run yet. An
+// invite check reads a header, a cookie or a query parameter.
 func (h *Handlers) Signup() http.Handler {
 	return h.post(func(w http.ResponseWriter, r *http.Request) error {
 		if h.allowSignup != nil {
 			if err := h.allowSignup(r); err != nil {
 				var apiErr *api.Error
 				if errors.As(err, &apiErr) {
+					// The outer error may say more than the answer does.
+					logging.FromContext(r.Context()).DebugContext(r.Context(),
+						"account: signup refused", "error", err.Error())
+
 					return apiErr
 				}
 
@@ -271,6 +296,10 @@ func (h *Handlers) Signup() http.Handler {
 // on the password, and starts a session through [HandlerConfig.StartSession],
 // since the call proved both factors. It answers 200 with a [LoginResult].
 // Every refusal answers exactly like a refused login.
+//
+// It needs no session and costs one Argon2id derivation per request, so it
+// needs a per client rate limit in front of it, like signup, login and
+// password change.
 func (h *Handlers) ConfirmTOTP() http.Handler {
 	return h.post(func(w http.ResponseWriter, r *http.Request) error {
 		var req CredentialsRequest
@@ -295,6 +324,13 @@ func (h *Handlers) ConfirmTOTP() http.Handler {
 // a wrong, missing or replayed code, an unconfirmed secret and a disabled
 // account. A server without capacity to hash answers 503 with Retry-After,
 // which says nothing about the guess. No session is started on any failure.
+//
+// The login does not end a session the request already carries, so a person
+// logged in as one account who logs in as another keeps the first session
+// alive. [HandlerConfig.StartSession] is where an application ends it before
+// it starts the new one, as example/ does. Every login costs an Argon2id
+// derivation, so the route needs a per client rate limit in front of it, like
+// signup, TOTP confirmation and password change.
 func (h *Handlers) Login() http.Handler {
 	return h.post(func(w http.ResponseWriter, r *http.Request) error {
 		var req CredentialsRequest
@@ -324,6 +360,10 @@ func (h *Handlers) Login() http.Handler {
 // A request without a session answers 401, a wrong current password 403 with
 // [CodeInvalidCredentials], a new password that breaks the policy 400 with the
 // field in the details, and a server without hashing capacity 503.
+//
+// The route needs a per client rate limit in front of it, like signup, login
+// and TOTP confirmation: it tells a right current password from a wrong one,
+// so a stolen session can test passwords as fast as the hasher allows.
 func (h *Handlers) ChangePassword() http.Handler {
 	return h.post(func(w http.ResponseWriter, r *http.Request) error {
 		id, ok, err := h.current(r)

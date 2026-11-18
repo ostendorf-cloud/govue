@@ -85,6 +85,8 @@ const en: MessageTree = {
         passwordTooShort: 'The password needs at least {min} characters.',
         passwordTooLong: 'The password is too long.',
         crossOrigin: 'The request was refused. Please reload the page and try again.',
+        signupRefused:
+          'Signup is not open, or the request was refused. Please reload the page and try again.',
         network: 'No connection to the server. Please check your network and try again.',
         generic: 'Something went wrong. Please try again.',
       },

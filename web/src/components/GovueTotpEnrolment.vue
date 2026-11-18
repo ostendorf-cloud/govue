@@ -15,11 +15,20 @@ import GovueInput from './GovueInput.vue'
 
 const props = withDefaults(
   defineProps<{
-    /** The client of createClient. The form never assumes a cookie. */
+    /**
+     * The client of createClient. The form never assumes a cookie. Its
+     * request sets skipUnauthenticatedHook. When a person can be logged in
+     * while the form is used, the client needs csrfToken, or the server
+     * answers 403 and the form shows a refused request.
+     */
     client: ApiClient
     /** The login the enrolment belongs to. */
     login: string
-    /** What the signup answered with. It is shown here and nowhere else. */
+    /**
+     * What the signup answered with. It is shown here and nowhere else. The
+     * parent drops it once `confirmed` is emitted, since the secret is shown
+     * once and has no reason to stay in memory.
+     */
     enrolment: Enrolment
     /** The confirm route, relative to the client's base URL. */
     path?: string
@@ -46,7 +55,11 @@ const form = useForm({
   submit: async (values) => {
     let result: LoginResult
     try {
-      result = await props.client.post<LoginResult>(props.path, { login: props.login, ...values })
+      result = await props.client.post<LoginResult>(
+        props.path,
+        { login: props.login, ...values },
+        { skipUnauthenticatedHook: true },
+      )
     } catch (caught) {
       throw localizeError(caught, t)
     }
@@ -74,6 +87,19 @@ const appLink = computed(() =>
     :aria-busy="submitting ? 'true' : undefined"
     @submit.prevent="form.handleSubmit()"
   >
+    <!-- The login for the password manager, which saves the password next to
+         a username field. Hidden from the eye and from a screen reader, which
+         has the login from the page it is on. -->
+    <input
+      type="text"
+      class="sr-only"
+      tabindex="-1"
+      aria-hidden="true"
+      autocomplete="username"
+      readonly
+      :value="login"
+    />
+
     <p class="text-base text-text">{{ t('govue.account.totp.intro') }}</p>
 
     <!-- Read only inputs, so the value can be selected and copied and a

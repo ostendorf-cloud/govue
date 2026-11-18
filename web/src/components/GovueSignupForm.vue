@@ -15,7 +15,12 @@ import GovueInput from './GovueInput.vue'
 
 const props = withDefaults(
   defineProps<{
-    /** The client of createClient. The form never assumes a cookie. */
+    /**
+     * The client of createClient. The form never assumes a cookie. Its
+     * request sets skipUnauthenticatedHook. When a person can be logged in
+     * while the form is used, the client needs csrfToken, or the server
+     * answers 403 and the form shows a refused signup.
+     */
     client: ApiClient
     /** The signup route, relative to the client's base URL. */
     path?: string
@@ -45,9 +50,13 @@ const form = useForm({
   submit: async (values) => {
     let result: SignupResult
     try {
-      result = await props.client.post<SignupResult>(props.path, { ...values })
+      result = await props.client.post<SignupResult>(
+        props.path,
+        { ...values },
+        { skipUnauthenticatedHook: true },
+      )
     } catch (caught) {
-      throw localizeError(caught, t)
+      throw localizeError(caught, t, 'govue.account.error.signupRefused')
     }
     form.values.password = ''
     emit('signedUp', result)

@@ -78,9 +78,31 @@
 // account disabled. A server without capacity to hash answers 503 with
 // Retry-After instead, which says nothing about the guess. Neither the
 // password, a code, a secret nor a hash reaches the log or an answer, and no
-// session is started on any failure. The login route needs a per client rate
-// limit in front of it, and so does signup, which answers 409 for a taken
-// login and so is an account existence oracle. See [Service.SignUp].
+// session is started on any failure.
+//
+// Four routes need a per client rate limit in front of them: signup, login,
+// TOTP confirmation and password change. Each costs an Argon2id derivation and
+// the hasher has one slot by default, so without a limit anyone keeps it busy
+// and everybody gets 503. Confirmation needs no session. Password change
+// answers 403 for a wrong current password and 200 for the right one, so a
+// stolen session can test passwords as fast as the hasher allows. Signup
+// answers 409 for a taken login and so is an account existence oracle. See
+// [Service.SignUp].
+//
+// A login does not end a session the request already carries. The
+// application ends it in StartSession before it starts the new one.
+//
+// Bodies are decoded by Go's encoding/json with unknown fields refused. Field
+// names match case insensitively, of two equal keys the last wins, and invalid
+// UTF-8 is replaced by U+FFFD. A proxy or a WAF that parses JSON differently
+// is out of scope. For the same reason AllowSignup, which runs before the body
+// is read, cannot take an invite code from it: an invite check reads a header,
+// a cookie or a query parameter.
+//
+// The ids of local accounts and the subjects of an OIDC login share the
+// namespace of the session's subject, which EndAll keys on. A product that runs
+// both prefixes one of them, for example "local:" before the account id, or an
+// OIDC subject could end up equal to a local id and share its sessions.
 //
 // A password change answers with the four outcomes of
 // [Service.ChangePassword]: 200 with sessions_ended true, 200 with

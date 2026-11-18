@@ -15,7 +15,13 @@ import GovueInput from './GovueInput.vue'
 
 const props = withDefaults(
   defineProps<{
-    /** The client of createClient. The form never assumes a cookie. */
+    /**
+     * The client of createClient. The form never assumes a cookie. Its
+     * requests set skipUnauthenticatedHook, so a wrong guess does not call
+     * the client's onUnauthenticated. When a person can be logged in while
+     * the form is used, the client needs csrfToken, or the server answers
+     * 403 and the form shows a refused request.
+     */
     client: ApiClient
     /** The login route, relative to the client's base URL. */
     path?: string
@@ -38,7 +44,12 @@ const form = useForm({
   submit: async (values) => {
     let result: LoginResult
     try {
-      result = await props.client.post<LoginResult>(props.path, { ...values })
+      // A 401 is the answer to a wrong guess here, not a lost session.
+      result = await props.client.post<LoginResult>(
+        props.path,
+        { ...values },
+        { skipUnauthenticatedHook: true },
+      )
     } catch (caught) {
       throw localizeError(caught, t)
     }

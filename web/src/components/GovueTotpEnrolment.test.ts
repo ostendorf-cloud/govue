@@ -62,6 +62,41 @@ describe('GovueTotpEnrolment', () => {
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 
+  it('does not turn a URI that merely contains otpauth:// into a link', () => {
+    setup(() => answer(200, { login: 'x' }), {
+      enrolment: { secret: enrolment.secret, uri: 'javascript:alert(1)//otpauth://' },
+    })
+
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  it('holds the login in a hidden username input for a password manager', () => {
+    const { container } = setup(() => answer(200, { login: 'x' }))
+
+    const hidden = container.querySelector('input[autocomplete="username"]')
+    expect(hidden).toHaveValue('alice@example.com')
+    expect(hidden).toHaveAttribute('aria-hidden', 'true')
+    expect(hidden).toHaveAttribute('tabindex', '-1')
+    // The field a person fills in is not it.
+    expect(screen.queryByLabelText(/alice@example.com/)).not.toBeInTheDocument()
+  })
+
+  it('does not report a refused confirmation as a lost session', async () => {
+    const user = userEvent.setup()
+    const onUnauthenticated = vi.fn()
+    const fetchMock = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(answer(401, { error: { code: 'invalid_credentials', message: 'x' } }))
+    const client = createClient({ fetch: fetchMock, onUnauthenticated })
+    render(GovueTotpEnrolment, { props: { client, login: 'alice@example.com', enrolment } })
+
+    await fill(user)
+    await user.click(screen.getByRole('button', { name: 'Confirm code' }))
+
+    expect(await screen.findByRole('alert')).toBeVisible()
+    expect(onUnauthenticated).not.toHaveBeenCalled()
+  })
+
   it('draws no QR code', () => {
     const { container } = setup(() => answer(200, { login: 'x' }))
 
@@ -73,6 +108,7 @@ describe('GovueTotpEnrolment', () => {
 
     expect(screen.getByRole('form', { name: 'Set up your authenticator app' })).toBeVisible()
     expect(screen.getByLabelText(/^Password/)).toBeRequired()
+    expect(screen.getByLabelText(/^Password/)).toHaveAttribute('type', 'password')
     expect(screen.getByLabelText(/^Code from/)).toBeRequired()
     expect(screen.getByLabelText(/^Code from/)).toHaveAttribute('inputmode', 'numeric')
   })

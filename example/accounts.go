@@ -55,7 +55,20 @@ func (a *app) buildAccounts() error {
 	handlers, err := account.NewHandlers(account.HandlerConfig{
 		Service: service,
 		// The account id is the session's subject, whatever the login path.
-		StartSession: func(ctx context.Context, w http.ResponseWriter, _ *http.Request, id account.Identity) error {
+		// The memory store's ids keep their plain form, since this example
+		// runs no OIDC account next to them. A product that does prefixes one
+		// of the two, for example "local:", because both share the subject
+		// namespace that EndAll keys on.
+		StartSession: func(ctx context.Context, w http.ResponseWriter, r *http.Request, id account.Identity) error {
+			// A login does not end the session the request already carries,
+			// so logging in as B while logged in as A would leave A alive.
+			// A bearer request is left alone: it gets no cookie session
+			// anyway, and End would sign its device out.
+			if r.Header.Get("Authorization") == "" {
+				if err := a.sessions.End(ctx, w, r); err != nil {
+					return err
+				}
+			}
 			_, err := a.sessions.Start(ctx, w, session.Session{Subject: id.ID, Username: id.Login})
 			return err
 		},

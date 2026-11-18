@@ -212,6 +212,24 @@ describe('createClient', () => {
     expect(onUnauthenticated).toHaveBeenCalledTimes(1)
   })
 
+  it('leaves the callback alone for a request that asks to skip it, and still throws', async () => {
+    respond = () => Promise.resolve(answer(401, errorBody('invalid_credentials', 'wrong')))
+    const onUnauthenticated = vi.fn()
+    const client = createClient({ fetch: fetchStub, onUnauthenticated })
+
+    const error = (await client
+      .post('/login', {}, { skipUnauthenticatedHook: true })
+      .catch((caught: unknown) => caught)) as ApiError
+
+    expect(error.status).toBe(401)
+    expect(error.code).toBe('invalid_credentials')
+    expect(onUnauthenticated).not.toHaveBeenCalled()
+
+    // The option is per request: the next one without it reports again.
+    await client.post('/login', {}).catch(() => undefined)
+    expect(onUnauthenticated).toHaveBeenCalledTimes(1)
+  })
+
   it('turns a failed connection into a transport error', async () => {
     respond = () => Promise.reject(new TypeError('Failed to fetch'))
     const client = createClient({ fetch: fetchStub })

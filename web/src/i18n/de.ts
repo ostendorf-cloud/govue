@@ -86,6 +86,8 @@ const de: MessageTree = {
         passwordTooLong: 'Das Passwort ist zu lang.',
         crossOrigin:
           'Die Anfrage wurde abgelehnt. Bitte lade die Seite neu und versuche es erneut.',
+        signupRefused:
+          'Die Registrierung ist nicht offen, oder die Anfrage wurde abgelehnt. Bitte lade die Seite neu und versuche es erneut.',
         network: 'Keine Verbindung zum Server. Bitte prüfe dein Netzwerk und versuche es erneut.',
         generic: 'Etwas ist schiefgegangen. Bitte versuche es erneut.',
       },
