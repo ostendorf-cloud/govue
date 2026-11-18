@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/ostendorf-cloud/govue/internal/bearer"
 )
@@ -123,7 +124,10 @@ type Expected func(*http.Request) (string, bool)
 
 // Protector checks the origin signals and the token on every unsafe method.
 type Protector struct {
-	cross        *http.CrossOriginProtection
+	cross *http.CrossOriginProtection
+	// routes maps "METHOD path" to the check of a route with its own list of
+	// trusted origins, see TrustOriginOnRoute.
+	routes       map[string]*http.CrossOriginProtection
 	expected     Expected
 	respond      func(http.ResponseWriter, *http.Request, error)
 	exemptBearer bool
@@ -157,6 +161,68 @@ func (p *Protector) TrustOrigin(origin string) error {
 	if err := p.cross.AddTrustedOrigin(origin); err != nil {
 		return fmt.Errorf("csrf: trusted origin %q: %w", origin, err)
 	}
+	return nil
+}
+
+// TrustOriginOnRoute trusts the given origins for requests with exactly this
+// method and exactly this path, and for no other route. It is for the one
+// endpoint a native app calls from its own origin without a bearer token: the
+// issue of a device token. Every other origin keeps the origin half of the
+// check on that route, and so does every other route. The origins of
+// TrustOrigin are not added on that route: its list is the one given here. The token half stays for
+// all of them: it passes for a caller with no session, and a request that
+// carries a session cookie still needs the CSRF token.
+//
+// It takes the origins, and not a switch for every origin, so that exempting
+// a route that sets a cookie without a session, such as a login, cannot open
+// it to login CSRF from any site. The endpoint should still check the origin
+// itself, as devicehttp.Handlers.Issue does with IssueTrustedOrigins, as a
+// second layer. It is safe only for an endpoint that carries no ambient
+// credential and changes no browser state.
+//
+// method is POST, PUT, PATCH or DELETE: a safe method needs no origin check,
+// so it is an error here and not a silent no-op, and CONNECT and TRACE are
+// never a route of an API. path is an absolute path without a host, a query, a
+// wildcard, a wildcard variable, "{$}", a trailing slash, "..", "//", "/." or
+// "%", so it is exact and clean. It is compared byte for byte, and case
+// sensitive, with the escaped path of the request. A neighbouring path, a path
+// with a trailing slash, another case and another escaping of the same path,
+// such as "%2F" for a slash or "%74" for a letter, keep the origin check.
+// ServeMux may route such a spelling to the same handler: the app request then
+// gets the refusal of the protector, which fails closed. Each origin follows the rules of TrustOrigin, at least one is
+// required, and it is compared byte for byte with the Origin header. A second
+// call for the same route is an error. It is meant to be called during setup
+// like TrustOrigin.
+func (p *Protector) TrustOriginOnRoute(method, path string, origins []string) error {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+	default:
+		return fmt.Errorf("csrf: trust origin on route: method %q must be POST, PUT, PATCH or DELETE", method)
+	}
+	if !strings.HasPrefix(path, "/") || path == "/" || strings.HasSuffix(path, "/") ||
+		strings.ContainsAny(path, "{}*? #%\t\r\n") || strings.Contains(path, "..") ||
+		strings.Contains(path, "//") || strings.Contains(path, "/.") {
+		return fmt.Errorf("csrf: trust origin on route: path %q must be an absolute, exact and clean path without "+
+			"a wildcard, a query, an escape or a trailing slash", path)
+	}
+	if len(origins) == 0 {
+		return errors.New("csrf: trust origin on route: at least one origin is required")
+	}
+	key := method + " " + path
+	if _, ok := p.routes[key]; ok {
+		return fmt.Errorf("csrf: trust origin on route: %s is already set", key)
+	}
+	cross := http.NewCrossOriginProtection()
+	for _, origin := range origins {
+		if err := cross.AddTrustedOrigin(origin); err != nil {
+			return fmt.Errorf("csrf: trust origin on route: %s: origin %q: %w", key, origin, err)
+		}
+	}
+	if p.routes == nil {
+		p.routes = make(map[string]*http.CrossOriginProtection)
+	}
+	p.routes[key] = cross
+
 	return nil
 }
 
@@ -210,7 +276,11 @@ func (p *Protector) Check(r *http.Request) error {
 			return nil
 		}
 	}
-	if err := p.cross.Check(r); err != nil {
+	cross := p.cross
+	if route, ok := p.routes[r.Method+" "+r.URL.EscapedPath()]; ok {
+		cross = route
+	}
+	if err := cross.Check(r); err != nil {
 		return fmt.Errorf("csrf: cross origin check: %w", err)
 	}
 	if safe(r.Method) {

@@ -199,16 +199,27 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 
 - The token endpoint is the one unsafe request from the app without a bearer header. Its origin
   is cross site, so the origin half of the CSRF check refuses it.
-- It is exempt from the origin half only. The token half stays, and it passes because the app
-  sends no cookie.
-- The exemption is safe because the endpoint carries no ambient credential and changes no browser
+- On that route the app origins are trusted for the origin half only, and no other origin is. The
+  token half stays, and it passes because the app sends no cookie.
+- Trusting them is safe because the endpoint carries no ambient credential and changes no browser
   state. Its only effect is a response that a caller must read cross origin through CORS.
-- `csrf.Protector` gets a dedicated method that names exactly one method and path. It returns an
-  error at setup for a missing method, a host part, a trailing slash, `{$}` or a wildcard.
-- The underlying `net/http` bypass panics on an invalid or conflicting pattern. The method
-  validates first and turns a conflict into an error, so refusal stays an error at setup.
-- Tests in `csrf` pin the refusals, and that a neighbouring path and a path with a trailing slash
-  still get the origin check. The `example/` contract test covers the token route.
+- `csrf.Protector.TrustOriginOnRoute(method, path, origins)` is the dedicated method. It takes
+  the origins and not a switch for every origin: a switch on a route that sets a cookie without
+  a session would open it to login CSRF from any site. Every other origin keeps the origin half
+  on that route, the origins of `TrustOrigin` are not added there, and the handler's own check
+  against `IssueTrustedOrigins` stays a second layer.
+- It does not use the `net/http` bypass pattern, which would skip the check for every origin.
+  It keeps one `http.CrossOriginProtection` per route with the listed origins trusted, and
+  returns an error at setup, never a panic, for a method that is not POST, PUT, PATCH or DELETE,
+  a path that is not absolute, exact and clean (a host part, a trailing slash, `{$}`, a wildcard,
+  `..`, `//`, `/.`, `%`), an empty or invalid origin, and a second call for the same route.
+- The route is matched on the escaped request path, byte for byte, and on the method. A
+  different case, an encoded slash (`%2F`) and an encoded letter (`%74`) do not match, so the
+  request keeps the origin check. The mux can treat `/auth/%74oken` as the token route. The
+  protector then refuses the app request with 403, which fails closed.
+- Tests in `csrf` pin the refusals, that an unlisted origin and a neighbouring path, a path with
+  a trailing slash and other spellings of the path still get the origin check. The `example/`
+  contract test covers the token route.
 
 ### Responses and CORS
 
@@ -220,7 +231,14 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 - App origins are a separate list with their own CORS policy: `Authorization` allowed,
   credentials off. The web policy is unchanged.
 - The app origin list never reaches `csrf.TrustOrigin`. Startup fails when an origin is both an
-  app origin and a web or trusted origin. A test pins that refusal.
+  app origin and a web or trusted origin. A test pins that refusal. This is implemented in two
+  parts. The web CORS list is structural: `middleware.NewAppCORS` takes the web `CORS` and fails
+  construction on an overlap. The origins passed to `csrf.Protector.TrustOrigin` stay a call of
+  the application, `middleware.AppOrigins.RejectOverlap`, at startup.
+- The dedicated method of the token endpoint section is `csrf.Protector.TrustOriginOnRoute`. It
+  names one method, one path and the app origins, so every other origin keeps the origin half on
+  that route. A switch for every origin would open a route that sets a cookie without a session
+  to login CSRF.
 - A custom scheme is an explicit opt in of exact origins such as `capacitor://localhost`. No
   wildcard, no scheme wide rule and never `null`.
 - The preflight is answered inside the CORS middleware, before rate limit, CSRF and any session

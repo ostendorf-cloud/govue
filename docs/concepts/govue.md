@@ -91,6 +91,8 @@ The design of the library and the reasoning behind it.
 - An origin that does not parse as a bare `scheme://host`, carrying a path, a query, userinfo, or
   the literal `null` a sandboxed context sends, is refused at construction rather than silently
   never matching: a config entry that could never fire is a mistake worth catching at startup.
+- The origins of a native app are not web origins and never go into this list. They have their
+  own type and handler, see "App origins" under "Token handlers".
 
 ### Security headers default to the strict choice, every time
 
@@ -278,7 +280,7 @@ The design of the library and the reasoning behind it.
 - It is off while `DeviceConfig.Store` is nil. With a store, `EndAll` also ends the account's
   device sessions.
 - The routes that issue, rotate, list and revoke tokens are in `session/devicehttp`, see "Token
-  handlers" below. CORS for app origins is unchanged and left to step 5 of #117.
+  handlers" below. The origins of a native app and their CORS policy are in "App origins" below.
 - `internal/bearer` holds the one predicate both `session` and `csrf` import. It reads every
   `Authorization` value and answers none, bearer or malformed. Bearer is one value with the scheme
   `Bearer` in any ASCII case. One or more spaces separate it from the token, as RFC 9110 allows.
@@ -435,25 +437,121 @@ The design of the library and the reasoning behind it.
 - The issue route needs a per client rate limit, like the four account routes that check a
   password. It costs whatever the callback costs, here an Argon2id derivation. `example/` mounts
   it behind the stricter limit and a test pins the 429.
-- Needs left to the application and to step 5 of #117, listed here so they are not forgotten:
-  - The origin of a native app is cross site. The CSRF protector and `Issue` both refuse an issue
-    request from it. `HandlerConfig.IssueTrustedOrigins` lets the application name origins for
-    `Issue` and for no other route, and step 5 decides whether the protector gets a dedicated
-    exemption for the one issue route, as the ADR plans. An app origin must never go into
-    `csrf.Protector.TrustOrigin` or into the web CORS list, which sends credentials: either lets
-    a page of that origin ride a cookie. `example/` passes no trusted origin, and its
-    `ALLOWED_ORIGINS` stays a web list. A test pins that a web origin is refused on `Issue`.
-  - ADR 0001 says startup fails when an origin is both an app origin and a web or trusted
-    origin. That check is not implemented. It lands with the app origin list in step 5.
-  - A preflight for a request with `Authorization`. The CORS policy for app origins allows that
-    header, with credentials off, and keeps the web policy apart. The example's CORS allows
-    neither yet.
+- The origin of a native app is cross site. The CSRF protector and `Issue` both refuse an issue
+  request from it unless the application sets the app mode up, see "App origins" below.
+  `HandlerConfig.IssueTrustedOrigins` names origins for `Issue` and for no other route. An app
+  origin must never go into `csrf.Protector.TrustOrigin` or into the web CORS list, which sends
+  credentials: either lets a page of that origin ride a cookie. A test pins that a web origin is
+  refused on `Issue`.
 - `example/` pins the handlers three ways. A contract test sends credential, site and CSRF token
   through the real chain for each handler: cookie only, bearer only, both, a junk bearer, two
   headers and neither. An HTTP test runs sign up, confirm, issue, an authenticated call, rotation,
   the old token inside and after the grace, list, revoke and sign out. Another runs a password
   change that ends the device sessions. The handler package has its own tests, and the mutations
   of the pull request show each rule fails a test.
+
+#### App origins
+
+- `middleware.AppOrigins` is the list of origins a native app sends its requests from. It is a
+  type of its own, which helps to keep it apart from the web lists. That is a convention helped
+  by the type and not a compile error: `List()` returns a plain `[]string`, which the compiler
+  accepts in `CORSConfig.Origins` or `TrustOrigin`. What is structural is the web CORS list,
+  see `AppCORS` below. The decision is made in `middleware` and not in a new
+  package for one reason: it sits next to `CORS` and shares its origin rules, and a package of
+  one type would only add an import. `AGENTS.md` keeps its list of seventeen packages.
+- `NewAppOrigins(origins, customSchemes...)` validates exactly. Each entry is `scheme://host` or
+  `scheme://host:port`, written the way a browser sends it: lower case, no path, no trailing
+  slash, no query, no fragment, no userinfo. The host is ASCII, because a browser sends an
+  internationalised host as punycode and a Unicode lookalike would never match. A port is
+  numeric from 1 to 65535 without a leading zero, an empty port is an error, and so is `:443` on
+  `https`, which a browser leaves out. The scheme is `https` or one of the custom schemes
+  the caller names. A wildcard, `null`, `http`, an empty list and a duplicate are errors, and so
+  is a custom scheme that is not a lower case URL scheme or that a browser handles itself (`file`,
+  `data`, `javascript`, `blob`, `about`, `ws`, `chrome`, `chrome-extension`, `moz-extension`,
+  `safari-web-extension`, `view-source`, `vbscript`, `intent`, `content` and a few more). Nothing
+  is normalised: a spelling that differs
+  from what a browser sends is an error, so the list an operator reads is the list that matches.
+  Every error names the offending value.
+- The web CORS list is checked structurally. `NewAppCORS(origins, web)` takes the web `CORS` and
+  fails construction when an app origin is on its list, naming the origin. The comparison is
+  trimmed, without a trailing slash, lower case, as the web policy reads its own list.
+- `AppOrigins.RejectOverlap(webCORS, csrfTrusted)` is the same comparison as a function, for the
+  list this package cannot see. A consumer calls it at startup with every origin it passes to
+  `csrf.Protector.TrustOrigin`, and refuses to start on an error. The error names the origin and
+  the list. This stays a call of the application, and it is the one part of ADR 0001's check
+  that is not structural. The function cannot see a list it is not given.
+- `AppCORS` is the one CORS handler of an app mode deployment and replaces `CORS.Middleware` in
+  the chain at the same place, before the rate limit, the protector and the session. It holds the
+  web `CORS` and routes by the `Origin` header. A request whose `Origin` is on the app list is
+  answered by the app policy and goes to the next handler directly, never through the web policy.
+  Any other request goes through the web policy, which answers its own origins and refuses
+  the rest as before. No origin gets the answer of both, so a real request from an app origin
+  never carries the credentials of the web policy and has one `Vary: Origin`, even if the
+  overlap check were bypassed. A test builds the struct past the check to pin that.
+- The preflight of an app origin is answered inside the handler with 204, as the web handler
+  does. It sends `Access-Control-Allow-Origin` with the matched origin, `Allow-Methods: GET,
+  POST, DELETE` (the methods of the token routes), `Allow-Headers: Authorization, Content-Type`,
+  `Max-Age: 600` and `Vary: Origin, Access-Control-Request-Method,
+  Access-Control-Request-Headers`. A response to a real request from an app origin carries the
+  matched origin and `Vary: Origin`. No response carries `Access-Control-Allow-Credentials`: a
+  bearer token is not a cookie, so credentials mode stays off. An origin that is not listed gets
+  `Vary: Origin` and no `Access-Control-` header, and is never echoed. No `Expose-Headers` is
+  sent, so a page reads the CORS safelisted response headers only. An app that needs
+  `Retry-After` of a 429 or the request id has to ask for it, and that is not decided here.
+  `Access-Control-Allow-Private-Network` is not sent either: a preflight with
+  `Access-Control-Request-Private-Network` gets the answer without it, and a browser that
+  enforces Private Network Access, such as Chrome, fails the request when the API is on a private
+  network. That is not decided here either.
+- The `Authorization` header is allowed for app origins only. The web policy does not allow it.
+- The issue route needs the origin half of the CSRF protector out of the way for the app origins,
+  because the app origin is cross site and carries no bearer token on that route.
+  `csrf.Protector.TrustOriginOnRoute(method, path, origins)` does that for one method, one path
+  and the listed origins, as ADR 0001 plans. It takes the origins and not a switch for every
+  origin, for one reason: a switch on a route that sets a cookie without a session, such as a
+  login, would open it to login CSRF from any site. Every other origin keeps the origin half on
+  that route, and the origins of `TrustOrigin` are not added there. The method is POST, PUT,
+  PATCH or DELETE: a safe method needs no origin check, so it is an error and not a silent no-op,
+  and so is `CONNECT`. The path is absolute, exact and clean: no wildcard, variable, query,
+  trailing slash, `..`, `//`, `/.` or `%`. It is matched case sensitively against the escaped
+  request path, so another case, `%2F` for a slash or `%74` for a letter does not match. The mux
+  may route such a spelling to the same handler, and the protector then refuses the app request
+  with 403, which fails closed. Each origin follows the rules of `TrustOrigin`, at least one is
+  required, and a second call for the route is an error. The token half stays. A request with a
+  session cookie still needs the CSRF token, and an app has no session. The route checks the
+  origin itself as a second layer: `Issue` accepts `IssueTrustedOrigins` and no other cross
+  origin caller. A consumer that sets `IssueTrustedOrigins` calls `TrustOriginOnRoute` for the
+  issue route with the same list, and calls neither without app origins.
+- `example/` turns the mode on with `APP_ORIGINS` and `APP_SCHEMES`, both empty by default. A
+  custom scheme is an opt in, one scheme at a time: `APP_ORIGINS=capacitor://localhost` needs
+  `APP_SCHEMES=capacitor`. The list goes to `Issue` as `IssueTrustedOrigins`, to the issue route
+  of the protector and to `NewAppCORS`, and to nothing else. `ALLOWED_ORIGINS` stays the web
+  list. `newApp` passes it to `RejectOverlap` as the trusted origins, because the example feeds
+  the same list to `TrustOrigin`, and `NewAppCORS` checks it against the web CORS policy.
+  Startup fails for an overlap, a wildcard, `null`, a path, a duplicate, `http`, a bad port, a
+  Unicode host, a custom scheme that is not opted in, and `APP_SCHEMES` without `APP_ORIGINS`.
+- A cookie request from an app origin stays a cross site request. The protector refuses it on
+  every route that changes state, with a valid CSRF token as well, and a safe request from it
+  gets an answer without `Access-Control-Allow-Credentials`, so a browser does not hand it to the
+  page. The issue route refuses a request with a session cookie and no CSRF token.
+- What a Capacitor webview sends. Verified on 2026-11-18 against
+  <https://capacitorjs.com/docs/config>: `server.hostname` defaults to `localhost`,
+  `server.iosScheme` defaults to `capacitor` and cannot be `http` or `https`, `server.androidScheme`
+  defaults to `https`, and the page warns against a value other than `http` or `https` on
+  Android. Verified against <https://ionicframework.com/docs/troubleshooting/cors> on the same
+  day: for Capacitor on iOS the origin is `capacitor://localhost`, and for the Ionic WebView 3.x
+  plugin it is `ionic://localhost`. The page says to replace `localhost` with the own hostname when
+  the config changed it. That page lists `http://localhost` for Android, which is the older
+  Capacitor default and disagrees with the config page. The config page decides. So the origins
+  to list are `capacitor://localhost` for iOS and `https://localhost` for Android, both with
+  the hostname of the app's own config. `http://localhost` is refused here by design: an app
+  on the `http` Android scheme has to change `androidScheme`.
+- Assumed and not verified: the exact `Origin` header a webview puts on a request, which is
+  derived from scheme and hostname here and not quoted from a page. The `Sec-Fetch-Site` value of
+  a request from the bundled origin. Whether the native HTTP plugin of Capacitor bypasses CORS
+  when a product enables it, in which case no CORS header matters for it. A product checks the
+  real header of its own build and lists what it sees.
+- An origin is no app identity. Every Capacitor app and any local dev server share these origins.
+  The bearer token is the only authentication.
 
 ### Session in context lives in `session`, not in `middleware`
 

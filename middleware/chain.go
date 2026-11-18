@@ -4,7 +4,8 @@
 // Package middleware is the http.Handler wrapping this library's
 // applications compose themselves from: a chain helper, request id and panic
 // recovery, an access log, a rate limiter, and the security and CORS header
-// middlewares.
+// middlewares. A native app has its own origin list, [AppOrigins], and its own
+// CORS handler, [AppCORS], kept apart from the web [CORS] policy.
 //
 // Every middleware here takes its dependencies, including a *slog.Logger,
 // through a field or a constructor argument. None of them builds its own

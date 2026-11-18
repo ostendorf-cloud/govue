@@ -101,22 +101,28 @@
 //
 // # What belongs to the application
 //
-// The headers and CORS needs of an app origin are not set here, and left to
-// the application:
+// The headers and CORS needs of an app origin are not set here, and belong to
+// the application, which uses the middleware and csrf packages for them:
 //
 //   - The app's origin is cross site, so the CSRF protector and these
 //     handlers refuse an Issue request from it. The origin check of Issue,
 //     and of Issue alone, accepts the origins in
-//     [HandlerConfig.IssueTrustedOrigins]. An app origin must never go into
+//     [HandlerConfig.IssueTrustedOrigins]. Pass middleware.AppOrigins.List
+//     there and nothing else. An app origin must never go into
 //     csrf.Protector.TrustOrigin or into the web CORS list, which sends
 //     credentials: either would let a page of that origin ride a cookie.
-//     ADR 0001 says startup fails when an origin is in both lists. That
-//     check is not implemented yet and lands with the app origin list in
-//     step 5 of issue 117, which also decides whether the protector gets a
-//     dedicated exemption for the one issue route.
+//     middleware.NewAppCORS refuses an overlap with the web CORS policy it is
+//     given. The application calls middleware.AppOrigins.RejectOverlap at
+//     startup with the origins it passes to csrf.Protector.TrustOrigin, and
+//     refuses to start on an error. For the protector it calls
+//     csrf.Protector.TrustOriginOnRoute for the one issue route with the same
+//     app origins, which skips the origin half there for those origins only
+//     and keeps the token half.
 //   - A browser engine sends a preflight before a request with Authorization.
-//     The CORS policy for app origins allows that header, with credentials
-//     off, and is step 5 as well.
+//     middleware.AppCORS answers it for the app origins with Authorization
+//     and Content-Type allowed and credentials off. It replaces the web CORS
+//     middleware in the chain, answers before authentication and hands every
+//     other origin to the web policy.
 //
 // # Bodies
 //
