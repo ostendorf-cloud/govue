@@ -265,6 +265,26 @@ The design of the library and the reasoning behind it.
 - Every failure of that read is one error. A missing cookie and a value that does not verify are
   indistinguishable to the caller, which leaves one code path to get the refusal right.
 
+### Device sessions for native apps
+
+- ADR 0001 holds the design. This section says what exists so far.
+- `session` has the device session layer without HTTP: `IssueDevice`, `AuthenticateDevice`,
+  `RotateDevice`, `ListDevices` and `RevokeDevice` on the `Manager`, configured through
+  `Config.Devices`.
+- It is off while `DeviceConfig.Store` is nil. With a store, `EndAll` also ends the account's
+  device sessions.
+- Nothing reads a bearer header yet, no route issues a token, and `csrf` and CORS are unchanged.
+  Later steps of #117 add them.
+- The token is a prefix, 32 random bytes in base64url and a CRC-32 checksum. The store keeps only
+  its SHA-256. A malformed token never reaches the store.
+- `DeviceStore` is a separate interface, so no `Store` implementation breaks. Every method is
+  atomic on one record, and rotation is a conditional swap, never a read followed by a write.
+- `MemoryDeviceStore` is for one replica. A full one refuses to issue for everyone and never
+  evicts another account's device. A restart signs every app out, so a product with apps writes a
+  shared store.
+- `session/sessiontest` is the conformance suite for any `DeviceStore`: the atomic operations,
+  the rotation and reuse rules through a `Manager`, and their races.
+
 ### Session in context lives in `session`, not in `middleware`
 
 - `Manager.Middleware` reads the session once per request and puts the outcome in the request
