@@ -65,10 +65,12 @@ The design of the library and the reasoning behind it.
 
 ### Small, independent, standard library
 
-- The Go side is the standard library, with two exceptions. `prometheus/client_golang` is
+- The Go side is the standard library, with three exceptions. `prometheus/client_golang` is
   confined to the `metrics` package, because the exposition format is not worth reimplementing.
   `golang.org/x/crypto` is confined to the `account` package, for Argon2id, which the standard
-  library lacks. Writing a memory hard hash by hand is the worse risk.
+  library lacks. Writing a memory hard hash by hand is the worse risk. `go-webauthn/webauthn`
+  is imported by the `passkey` package only, because a WebAuthn ceremony is not worth writing
+  by hand either, see "Passkeys".
 - A package stays usable alone: taking `clientip` must not pull in `session`.
 - Handlers return an error and one `api` helper writes the single error shape, so no handler
   writes error JSON and no cause reaches a client.
@@ -554,7 +556,7 @@ The design of the library and the reasoning behind it.
   accepts in `CORSConfig.Origins` or `TrustOrigin`. What is structural is the web CORS list,
   see `AppCORS` below. The decision is made in `middleware` and not in a new
   package for one reason: it sits next to `CORS` and shares its origin rules, and a package of
-  one type would only add an import. `AGENTS.md` keeps its list of seventeen packages.
+  one type would only add an import. `AGENTS.md` keeps its list of packages.
 - `NewAppOrigins(origins, customSchemes...)` validates exactly. Each entry is `scheme://host` or
   `scheme://host:port`, written the way a browser sends it: lower case, no path, no trailing
   slash, no query, no fragment, no userinfo. The host is ASCII, because a browser sends an

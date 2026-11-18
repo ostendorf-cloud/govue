@@ -63,8 +63,9 @@ type config struct {
 	// decision.
 	allowSignup bool
 
-	// passkeyRPID and passkeyRPName turn passkeys on. Both are empty by
-	// default, which mounts no passkey route. The relying party id is never
+	// passkeyRPID turns passkeys on. It is empty by default, which mounts no
+	// passkey route. passkeyRPName only names the relying party and defaults
+	// to "govue example". The relying party id is never
 	// derived from a request's Host header, and the origins a ceremony may
 	// come from are allowedOrigins, so PASSKEY_RP_ID needs ALLOWED_ORIGINS.
 	passkeyRPID   string
