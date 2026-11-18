@@ -97,14 +97,15 @@ type procChange struct{ to int }
 // minRaceProcs all the time, and the original value must come back only when
 // the last user of the raise is done, never while another run still races.
 // Each race check of one Run raises and restores on its own, so "once"
-// holds per stretch of overlapping checks, not per Run. It changes a process wide setting, so it does
-// not run in parallel itself.
+// holds per stretch of overlapping checks, not per Run. A start value of 8 is
+// above the minimum: nothing is raised or restored. It changes a process wide
+// setting, so it does not run in parallel itself.
 func TestRun_parallelRunsRestoreProcessorsOnce(t *testing.T) {
 	if n := runtime.NumCPU(); n < 2 {
 		t.Skipf("runtime.NumCPU() = %d: Run refuses to pass on fewer than two CPUs", n)
 	}
 
-	for _, start := range []int{1, 2, 3} {
+	for _, start := range []int{1, 2, 3, 8} {
 		t.Run("from "+strconv.Itoa(start), func(t *testing.T) {
 			outer := runtime.GOMAXPROCS(start)
 			t.Cleanup(func() { runtime.GOMAXPROCS(outer) })
@@ -208,6 +209,15 @@ func TestRun_parallelRunsRestoreProcessorsOnce(t *testing.T) {
 
 			mu.Lock()
 			defer mu.Unlock()
+
+			// At or above the minimum nothing is raised and nothing restored.
+			if start >= minRaceProcs {
+				if len(changes) != 0 {
+					t.Errorf("GOMAXPROCS changes = %v, want none from a start of %d", changes, start)
+				}
+
+				return
+			}
 
 			// While both runs raced, the first one raised once and nobody
 			// restored: the restore comes from the last user only.

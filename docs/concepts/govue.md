@@ -539,10 +539,13 @@ The design of the library and the reasoning behind it.
 - More processors than CPUs do not help on a machine with one CPU, where the threads take turns
   as well. There a race check fails with a message instead of passing, since a green suite that
   cannot see a race proves nothing. A product runs the suite on at least two CPUs.
-- The check reads `runtime.NumCPU()`, which does not see a container CPU quota. A pod limited to
-  one CPU on a node with many passes the check and gets `GOMAXPROCS` 4, but the quota throttles
-  the threads, so a narrow race is hit as rarely as on one CPU. A green run there proves less.
-  The job gets a quota of two CPUs or more, or the product raises `Harness.Rounds`.
+- The check reads `runtime.NumCPU()`, which does not see a container CPU quota. The default
+  `GOMAXPROCS` of the Go runtime does honour a quota, rounded up with a minimum of two, so a pod
+  limited to one CPU starts at 2 and the suite raises it to 4. The quota caps the total CPU time
+  of the threads, so in the same wall time fewer racing attempts overlap, and a green run there
+  is weaker evidence. That is not measured. A pod pinned to a cpuset changes the affinity mask,
+  and `runtime.NumCPU()` does see that. The job gets a quota of two CPUs or more, or the product
+  raises `Harness.Rounds`.
 - A test runs the suite in a child process against 39 stores that each break one guard, and
   expects the matching check to fail. Four of them run with `-test.cpu=1`. The read then write
   stores in it have no sleep, so the races they show are as narrow as in a real adapter.

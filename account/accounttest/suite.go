@@ -71,11 +71,13 @@
 // two cores or more.
 //
 // The check reads runtime.NumCPU(), which does not see a container CPU
-// quota. A pod limited to one CPU on a node with many passes the check and
-// gets GOMAXPROCS 4, but the quota throttles the threads, so they share one
-// CPU of time and a narrow race is hit as rarely as on one CPU. A green run
-// there proves less than it does elsewhere. Give the job a quota of two CPUs
-// or more, or raise [Harness.Rounds].
+// quota. The default GOMAXPROCS of the Go runtime does honour a quota, rounded
+// up with a minimum of two, so a pod limited to one CPU starts at 2 and the
+// suite raises it to 4. The quota caps the total CPU time of the threads, so
+// in the same wall time fewer racing attempts overlap, and a green run there
+// is weaker evidence. That is not measured. A pod pinned to a cpuset changes
+// the affinity mask, and runtime.NumCPU() does see that. Give the job a quota
+// of two CPUs or more, or raise [Harness.Rounds].
 package accounttest
 
 import (
