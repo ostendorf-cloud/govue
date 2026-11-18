@@ -277,7 +277,8 @@ The design of the library and the reasoning behind it.
   `Config.Devices`.
 - It is off while `DeviceConfig.Store` is nil. With a store, `EndAll` also ends the account's
   device sessions.
-- No route issues a token yet, and CORS is unchanged. Later steps of #117 add them.
+- The routes that issue, rotate, list and revoke tokens are in `session/devicehttp`, see "Token
+  handlers" below. CORS for app origins is unchanged and left to step 5 of #117.
 - `internal/bearer` holds the one predicate both `session` and `csrf` import. It reads every
   `Authorization` value and answers none, bearer or malformed. Bearer is one value with the scheme
   `Bearer` in any ASCII case. One or more spaces separate it from the token, as RFC 9110 allows.
@@ -354,6 +355,105 @@ The design of the library and the reasoning behind it.
     check lies before the floor is then refused, which fails closed.
 - `session/sessiontest` is the conformance suite for any `DeviceStore`: the atomic operations,
   the rotation and reuse rules through a `Manager`, and their races.
+
+#### Token handlers
+
+- `session/devicehttp.NewHandlers` returns one `http.Handler` per route: `Issue`, `Rotate`,
+  `SignOut`, `List` and `Revoke`. The application mounts them with the method in the pattern.
+  `example/` uses these under `/api/v1/auth`:
+  - `POST /token` issues a token after a verified sign in.
+  - `POST /token/rotate` replaces the token of the calling device.
+  - `DELETE /token` ends the calling device.
+  - `GET /devices` lists the caller's devices.
+  - `DELETE /devices/{id}` ends one device of the caller.
+- The handlers are a sub package of `session`, not a file in it. `session` imports no `api` today,
+  and an application that wants the session layer alone must not pull the error shape in with it,
+  the same rule that keeps `clientip` apart from `session`. The handlers need nothing that is not
+  exported, so the split costs no API. `devicehttp` imports `session`, `api`, `logging` and
+  `internal/bearer`, and never `account`. `account` and `session` stay independent: the
+  credential check is a callback, as `StartSession` is in `account`. The ADR says the handlers
+  live in `session`. The package path is the one change to that sentence, the design is not.
+- `HandlerConfig.VerifyCredentials` gets login, password and code and returns the subject. It
+  answers `ErrInvalidCredentials` for every refusal and `ErrBusy` for a verifier without capacity.
+  In `example/` it is `account.Service.Login`, so the token needs the same factors as the cookie
+  login, and the TOTP code is consumed. An optional `DeviceName` policy maps the requested name,
+  for example to a default for an empty one.
+- The handler takes the time of the check before it calls the callback, as the ADR requires, from
+  `HandlerConfig.Now`, which has to be the clock of `session.Config.Now`. A password change that
+  lands during a slow verification answers 409 `stale` and leaves no device behind. A test moves
+  the order and fails.
+- `Issue` authenticates by the credentials in its body and by nothing else. The handler reads no
+  bearer token and no cookie and sets none. A valid token with an empty body is a 401, and with
+  the credentials of another account it issues for that account. In the real chain the
+  middleware in front still acts first: a junk, expired, revoked or doubled `Authorization`
+  header gets the middleware's 401 even with valid credentials, a cookie request without a CSRF
+  token gets the protector's 403, and a valid pending token is confirmed by the session
+  middleware as on any request. The contract test pins these.
+- The token is in the body of an `Issue` or `Rotate` success once, as `token`, next to `token_id`,
+  which is the device id that the list shows, and `expires_at`. A rotation never moves
+  `expires_at`. No other answer carries a token. A list, an error body and every log line are
+  scanned for the token and for its hash in nine spellings by a test.
+- `Rotate` and `SignOut` need a bearer token. A request with a cookie and no token is a 401, and
+  the cookie is never read. `Rotate` answers 409 `rotation_refused` when it issued no token and
+  the presented token stays valid: inside the minimum interval, a retired token inside its
+  grace, the first use of a pending token, a concurrent rotation that won. An app takes it
+  quietly and keeps the token it has.
+- `List` and `Revoke` take a cookie session or a device, so the web app can end a lost phone. They
+  read the session from the request context that `session.Manager.Middleware` fills, and answer
+  401 without it. `Revoke` answers an id of another account exactly like an unknown id: the same
+  404 with the same body and headers, and nothing of the other account ends.
+- The list carries id, name, created, last seen, expires and `current`, which is true for the
+  device that makes the request. It carries neither token nor hash.
+- Every handler checks the method first, then the origin with `net/http.CrossOriginProtection`.
+  Only `Issue` trusts `IssueTrustedOrigins`. `Rotate` and `SignOut` then check the bearer token
+  before they read the body. The body is `application/json`, one object, at most 16 KiB by
+  default, unknown fields refused. A bearer request skips the origin check on the routes that
+  take one, because a browser never attaches that header by itself. `Issue` checks the origin for
+  every request, since it carries no token and its answer carries the new one. The device name is
+  checked before the credentials. The name rules are those of `IssueDevice`, written twice so that
+  a bad name costs no verification, and a test pins that the two agree.
+- A device name is a label the app chose. It can carry U+2028, U+3164, trailing spaces or markup
+  such as `<script>`. The JSON is safe. A UI renders a name as text, never as HTML.
+- A `DeviceName` policy that returns a name the session package refuses is a bug of the policy.
+  It answers an opaque 500 before the credentials are checked, so no code is consumed.
+- `NewHandlers` refuses a session manager without a device store, so the first issue does not
+  check credentials and consume a code before it fails.
+- Every answer is JSON in the error shape of `api`, with `Cache-Control: no-store`. A failure has
+  one body per cause class: 401 `invalid_credentials` for a refused sign in, 401 `unauthenticated`
+  with `WWW-Authenticate: Bearer` for a bearer route without a valid token, 404 `not_found` for a
+  device that is not the caller's, 409 `rotation_refused` and `stale`. 503 is a busy verifier
+  (with `Retry-After`), a full device store on an issue, and a session read that failed because
+  the store did, which `List` and `Revoke` report. A store error inside `List`, `Revoke`,
+  `Rotate`, `SignOut` or the issue itself is an opaque 500. A 5xx carries no cause.
+- Any device token of an account can list every device of the account and revoke any of them,
+  itself included. This is the current behaviour, not narrowed to the calling device. A holder of
+  the old token inside the grace of a rotation cannot rotate: `Rotate` answers 409
+  `rotation_refused` and issues no token. It can still list, revoke other devices and sign the
+  device out. The sign out ends the device, so the new token gets 401, and no reuse is logged,
+  because the old token was inside its grace. A test pins this. Whether it should be narrowed is
+  the owner's decision.
+- The issue route needs a per client rate limit, like the four account routes that check a
+  password. It costs whatever the callback costs, here an Argon2id derivation. `example/` mounts
+  it behind the stricter limit and a test pins the 429.
+- Needs left to the application and to step 5 of #117, listed here so they are not forgotten:
+  - The origin of a native app is cross site. The CSRF protector and `Issue` both refuse an issue
+    request from it. `HandlerConfig.IssueTrustedOrigins` lets the application name origins for
+    `Issue` and for no other route, and step 5 decides whether the protector gets a dedicated
+    exemption for the one issue route, as the ADR plans. An app origin must never go into
+    `csrf.Protector.TrustOrigin` or into the web CORS list, which sends credentials: either lets
+    a page of that origin ride a cookie. `example/` passes no trusted origin, and its
+    `ALLOWED_ORIGINS` stays a web list. A test pins that a web origin is refused on `Issue`.
+  - ADR 0001 says startup fails when an origin is both an app origin and a web or trusted
+    origin. That check is not implemented. It lands with the app origin list in step 5.
+  - A preflight for a request with `Authorization`. The CORS policy for app origins allows that
+    header, with credentials off, and keeps the web policy apart. The example's CORS allows
+    neither yet.
+- `example/` pins the handlers three ways. A contract test sends credential, site and CSRF token
+  through the real chain for each handler: cookie only, bearer only, both, a junk bearer, two
+  headers and neither. An HTTP test runs sign up, confirm, issue, an authenticated call, rotation,
+  the old token inside and after the grace, list, revoke and sign out. Another runs a password
+  change that ends the device sessions. The handler package has its own tests, and the mutations
+  of the pull request show each rule fails a test.
 
 ### Session in context lives in `session`, not in `middleware`
 

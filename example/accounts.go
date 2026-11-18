@@ -102,6 +102,10 @@ func (a *app) buildAccounts() error {
 	}
 	a.accounts = handlers
 
+	if err := a.buildDevices(service); err != nil {
+		return err
+	}
+
 	a.authLimiter = ratelimit.New(a.cfg.authRateLimitBurst, a.cfg.authRateLimitPer, maxRateLimitKeys)
 	authRateLimit, err := middleware.NewRateLimit(middleware.RateLimitConfig{Limiter: a.authLimiter, ClientIP: a.clientIPs})
 	if err != nil {
