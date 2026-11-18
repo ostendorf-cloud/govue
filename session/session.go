@@ -35,6 +35,12 @@
 //
 //	token := csrf.Token(key, s.ID)
 //
+// A native app signs in with a device session instead, see
+// [Manager.IssueDevice]: an opaque token stored by its hash behind a
+// [DeviceStore], rotated with reuse detection. It is off until
+// [DeviceConfig.Store] is set, and nothing reads a bearer token from a request
+// yet.
+//
 // Nothing here binds a session to a client IP or a user agent. Both change mid
 // session on a mobile network, behind a carrier NAT and across a VPN, so the
 // check logs out real users at a rate the attacks it catches do not justify. An
@@ -81,7 +87,11 @@ const (
 //
 // Subject is the identity provider's stable id for the account and is what
 // [Manager.EndAll] matches on, so it has to be set for a password change or a
-// disabled account to be enforceable. Data is the application's own and is kept
+// disabled account to be enforceable. [DeviceSession.Subject] is matched by the
+// same call, so one EndAll reaches every sign in path only when both carry the
+// same account id: an application that signs in through OIDC and through its
+// own accounts maps the provider's subject to its own id before [Manager.Start].
+// Data is the application's own and is kept
 // small: it travels with every read of the session.
 //
 // The three timestamps are the manager's, not the caller's. Whatever a caller
@@ -159,6 +169,10 @@ type Config struct {
 
 	// Now is the clock. Zero is [time.Now]. Tests replace it.
 	Now func() time.Time
+
+	// Devices configures the device sessions of native apps. They are off
+	// while Devices.Store is nil.
+	Devices DeviceConfig
 }
 
 // Manager issues, reads and ends sessions, and owns the cookie. It is safe for
@@ -199,6 +213,10 @@ func New(cfg Config) (*Manager, error) {
 		problems = append(problems, fmt.Errorf(
 			"touch interval %s is not shorter than the idle timeout %s, so a session would expire before its first touch",
 			cfg.TouchEvery, cfg.Idle))
+	}
+	if cfg.Devices.Store != nil {
+		cfg.Devices = cfg.Devices.withDefaults()
+		problems = append(problems, cfg.Devices.problems(cfg.TouchEvery)...)
 	}
 	if err := errors.Join(problems...); err != nil {
 		return nil, fmt.Errorf("session: %w", err)
@@ -375,14 +393,24 @@ func (m *Manager) End(ctx context.Context, w http.ResponseWriter, r *http.Reques
 // password change, a disabled account and a log out everywhere all need. It
 // takes no response writer: the sessions it ends are mostly not the one making
 // the request, and there is no cookie of theirs to clear.
+//
+// With a device store configured, it ends the account's device sessions too.
+// Both stores are always asked, so a failure of one does not keep the other's
+// sessions alive, and every failure is reported.
 func (m *Manager) EndAll(ctx context.Context, subject string) error {
 	if subject == "" {
 		return errors.New("session: end all: subject is empty")
 	}
+	var problems []error
 	if err := m.cfg.Store.DeleteSubject(ctx, subject); err != nil {
-		return fmt.Errorf("session: delete the account's sessions: %w", err)
+		problems = append(problems, fmt.Errorf("session: delete the account's sessions: %w", err))
 	}
-	return nil
+	if m.cfg.Devices.Store != nil {
+		if err := m.cfg.Devices.Store.DeleteSubject(ctx, subject, m.cfg.Now().UTC()); err != nil {
+			problems = append(problems, fmt.Errorf("session: delete the account's device sessions: %w", err))
+		}
+	}
+	return errors.Join(problems...)
 }
 
 func (m *Manager) setCookie(w http.ResponseWriter, s Session) {
