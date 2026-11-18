@@ -76,6 +76,19 @@ const de: MessageTree = {
         failed: 'Etwas ist schiefgegangen. Bitte versuche es erneut.',
       },
     },
+    legal: {
+      link: {
+        imprint: 'Impressum',
+        privacy: 'Datenschutz',
+        terms: 'AGB',
+      },
+      title: {
+        imprint: 'Impressum',
+        privacy: 'Datenschutzerklärung',
+        terms: 'Allgemeine Geschäftsbedingungen',
+      },
+      back: 'Zurück zur Startseite',
+    },
     account: {
       field: {
         login: 'Login',
