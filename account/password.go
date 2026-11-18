@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -423,11 +424,18 @@ func decodeHash(encoded string) (storedHash, error) {
 		return storedHash{}, ErrPasswordHashInvalid
 	}
 
+	// maxHashThreads is far below the uint8 range, so this never fires. The
+	// check sits next to the conversion so no later change to the limit can
+	// make the conversion wrap.
+	if threads > math.MaxUint8 {
+		return storedHash{}, ErrPasswordHashInvalid
+	}
+
 	return storedHash{
 		params: argon2idParams{
 			memoryKiB: memoryKiB,
 			time:      iterations,
-			threads:   uint8(threads), // Bounded by maxHashThreads above.
+			threads:   uint8(threads),
 		},
 		salt: salt,
 		key:  key,
