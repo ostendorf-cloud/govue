@@ -17,6 +17,10 @@ import (
 // treats a longer one as unknown without asking the store.
 const MaxLoginLength = maxTOTPAccountName
 
+// DefaultEndSessionsTimeout is how long [Service.ChangePassword] waits for
+// the EndSessions callback when [ServiceConfig.EndSessionsTimeout] is zero.
+const DefaultEndSessionsTimeout = 30 * time.Second
+
 var (
 	// ErrLoginInvalid is what [Service.SignUp] answers for a login that is
 	// empty, longer than [MaxLoginLength], not valid UTF-8, not printable,
@@ -34,8 +38,10 @@ var (
 	ErrSessionsNotEnded = errors.New("account: password changed, but ending the sessions failed")
 
 	// ErrStale is what [Service.ChangePassword] answers when the stored
-	// password hash changed between reading it and writing the new one,
-	// usually through a concurrent password change, or the account is gone.
+	// password hash changed between reading it and writing the new one, or
+	// the account is gone. A concurrent password change does that, and so
+	// does the rehash of a login with the same password that lands in
+	// between, which rewrites the hash without changing the password.
 	// Nothing was written and no session was ended. The caller asks the
 	// person to try again. The current password may by then be another one.
 	ErrStale = errors.New("account: the account changed during the call")
@@ -62,6 +68,10 @@ type ServiceConfig struct {
 	// not lock out whoever knew the old password.
 	EndSessions func(ctx context.Context, accountID string) error
 
+	// EndSessionsTimeout bounds how long [Service.ChangePassword] waits for
+	// EndSessions. Zero is [DefaultEndSessionsTimeout]. Negative is refused.
+	EndSessionsTimeout time.Duration
+
 	// Logger receives operational events, never a password, a hash, a
 	// secret or a code. Required.
 	Logger *slog.Logger
@@ -87,18 +97,33 @@ type Enrolment struct {
 // its own and is safe for concurrent use.
 //
 // A refused login or confirmation always answers [ErrInvalidCredentials],
-// unwrapped, after the same work: one Argon2id derivation at today's
-// parameters and one HMAC per step of the TOTP window. That holds for an
-// unknown login, a disabled account, a wrong password, a wrong, missing or
-// replayed code and an unconfirmed secret alike. Only an outcome nobody can
-// reach without both factors differs: the conditional counter write runs
-// after the password and the code matched, so its time tells nothing to
-// whoever does not hold both already.
+// unwrapped, after one Argon2id derivation and one HMAC per step of the TOTP
+// window. That holds for an unknown login, a disabled account, a wrong
+// password, a wrong, missing or replayed code and an unconfirmed secret
+// alike. The derivation runs at today's parameters when no usable hash
+// exists: no account, no password, a corrupted hash. For an existing
+// account with a valid hash it runs at the parameters stored in that hash,
+// as [Hasher.VerifyPassword] says. After a parameter change, a wrong
+// password for an account still on the old parameters therefore costs what
+// those say, which can tell an outdated account from an unknown one by time
+// until a login rehashes it. Today every hash both existing applications
+// write uses today's parameters.
+//
+// Only an outcome nobody can reach without both factors differs in work:
+// the conditional counter write runs after the password and the code
+// matched, so its time tells nothing to whoever does not hold both already.
+//
+// The service does not normalise logins. Letter case, Unicode composed and
+// decomposed forms and confusable characters are the adapter's or the
+// application's to handle, before SignUp and before Login, and the same way
+// for both. A login SignUp refuses as a label never reaches the store from
+// Login or ConfirmTOTP and is refused like an unknown login.
 type Service struct {
 	store       Store
 	hasher      *Hasher
 	issuer      string
 	endSessions func(ctx context.Context, accountID string) error
+	endTimeout  time.Duration
 	logger      *slog.Logger
 	now         func() time.Time
 
@@ -119,6 +144,8 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		return nil, errors.New("account: service needs a logger")
 	case !validLabel(cfg.Issuer, maxTOTPIssuer):
 		return nil, fmt.Errorf("account: service issuer: %w", ErrTOTPLabelInvalid)
+	case cfg.EndSessionsTimeout < 0:
+		return nil, fmt.Errorf("account: end sessions timeout %v is negative", cfg.EndSessionsTimeout)
 	}
 
 	now := cfg.Now
@@ -126,11 +153,17 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		now = time.Now
 	}
 
+	endTimeout := cfg.EndSessionsTimeout
+	if endTimeout == 0 {
+		endTimeout = DefaultEndSessionsTimeout
+	}
+
 	return &Service{
 		store:       cfg.Store,
 		hasher:      cfg.Hasher,
 		issuer:      cfg.Issuer,
 		endSessions: cfg.EndSessions,
+		endTimeout:  endTimeout,
 		logger:      cfg.Logger,
 		now:         now,
 		mac:         hmacSHA1,
@@ -143,15 +176,17 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 // a code from it, so a person who never scanned the secret is not locked out
 // by a signup that looked finished. No session is started here.
 //
-// A login that is already taken answers [ErrConflict]. That answer is an
-// enumeration oracle: anyone can learn whether an account exists by signing
-// up with its login. The work is the same either way, one derivation before
-// the store is asked, so only the answer tells. Hiding it needs a channel
-// outside the response, for example a mail to the address that says an
-// account exists, which this package does not have. An application that
-// cannot accept the oracle answers ErrConflict like a success in its handler
-// and tells the person through that channel. Put the same per client rate
-// limit in front of signup as in front of login.
+// A login that is already taken answers [ErrConflict]. With this flow an
+// account existence oracle exists: anyone can learn whether an account
+// exists by signing up with its login. Answering ErrConflict like a success
+// in the handler does not hide it, since the next step tells: the confirm
+// with the enrolment shown succeeds for a fresh login and is refused for a
+// taken one. A product that must hide account existence has to defer
+// creating the account until the person proved control of the address, for
+// example through a mailed link, and SignUp does not support that. The work
+// is the same either way, one derivation before the store is asked, so only
+// the answers tell. Put the same per client rate limit in front of signup
+// as in front of login.
 //
 // Other refusals are [ErrLoginInvalid], [ErrPasswordTooShort] and
 // [ErrPasswordTooLong], checked before any hashing. [ErrHashingBusy] means
@@ -276,13 +311,20 @@ func (s *Service) Login(ctx context.Context, login, password, code string) (Iden
 // first, and only then EndSessions runs. Ending the sessions first would
 // leave a window in which a session started with the old password, which
 // still verifies, survives the change. EndSessions runs with ctx detached
-// from its cancellation, so a client that hangs up after the commit does not
-// keep its old sessions.
+// from its cancellation but keeping its values, so a client that hangs up
+// after the commit does not keep its old sessions. It is bounded by
+// [ServiceConfig.EndSessionsTimeout].
 //
-// When EndSessions fails, the password stays changed and the error wraps
-// [ErrSessionsNotEnded] and the cause. The caller retries ending the
-// sessions. When the store write fails, nothing changed and no session is
-// ended.
+// When EndSessions fails or times out, the password stays changed and the
+// error wraps [ErrSessionsNotEnded] and the cause. The caller retries ending
+// the sessions.
+//
+// When the store write fails with anything but [ErrNotFound], it is not
+// known whether it committed: a driver can commit and still report the
+// context ending. The sessions are ended anyway, since ending them once too
+// often is harmless, and the store error is returned, joined with
+// ErrSessionsNotEnded if ending them failed as well. The caller cannot tell
+// whether the new password is in force and asks the person to check.
 //
 // The write is a compare and set on the hash the current password was
 // verified against. Of two changes racing from the same password, exactly
@@ -322,15 +364,36 @@ func (s *Service) ChangePassword(ctx context.Context, id Identity, current, next
 
 	// Written only over the hash the current password was verified against.
 	// A concurrent change got there first when that fails, and it stands.
-	if err := s.store.SetPasswordHash(ctx, rec.ID, rec.PasswordHash, hash); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return ErrStale
+	err = s.store.SetPasswordHash(ctx, rec.ID, rec.PasswordHash, hash)
+	switch {
+	case err == nil:
+	case errors.Is(err, ErrNotFound):
+		return ErrStale
+	default:
+		// The write may have committed anyway: a driver can commit and
+		// still report the context ending. Ending the sessions once too
+		// often is harmless. A changed password with the old sessions
+		// alive is not.
+		storeErr := fmt.Errorf("account: store the new password hash: %w", err)
+		if endErr := s.endAllSessions(ctx, rec.ID); endErr != nil {
+			return errors.Join(storeErr, endErr)
 		}
 
-		return fmt.Errorf("account: store the new password hash: %w", err)
+		return storeErr
 	}
 
-	if err := s.endSessions(context.WithoutCancel(ctx), rec.ID); err != nil {
+	return s.endAllSessions(ctx, rec.ID)
+}
+
+// endAllSessions calls EndSessions with ctx detached from its cancellation,
+// so its values stay and a client that hangs up does not stop it, and bounded
+// by the configured timeout, so a hung callback cannot hold the call
+// forever. A failure wraps ErrSessionsNotEnded.
+func (s *Service) endAllSessions(ctx context.Context, id string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.endTimeout)
+	defer cancel()
+
+	if err := s.endSessions(ctx, id); err != nil {
 		return fmt.Errorf("%w: %w", ErrSessionsNotEnded, err)
 	}
 
@@ -364,7 +427,9 @@ func (s *Service) authenticate(ctx context.Context, login, password, code string
 	case errors.Is(err, ErrHashingBusy):
 		return attempt{}, err
 	case errors.Is(err, ErrPasswordHashInvalid):
-		s.logger.LogAttrs(ctx, slog.LevelWarn, "account: stored password hash is not a valid argon2id hash",
+		// Debug, not a warning: anyone can reach this path without
+		// credentials, once per request, and must not flood the log.
+		s.logger.LogAttrs(ctx, slog.LevelDebug, "account: stored password hash is not a valid argon2id hash",
 			slog.String("account_id", rec.ID))
 	}
 
@@ -379,10 +444,13 @@ func (s *Service) authenticate(ctx context.Context, login, password, code string
 }
 
 // lookup finds the account behind login. No account is not an error. A login
-// that is empty or longer than MaxLoginLength cannot exist and is not sent to
-// the store.
+// SignUp would refuse as a label, empty, longer than MaxLoginLength, not
+// valid UTF-8, not printable or holding a colon, is treated as unknown and
+// never sent to the store. A store may answer such a value with an error of
+// its own, a NUL byte in a Postgres text column does, which would turn a
+// refusal into a store failure without the equal work.
 func (s *Service) lookup(ctx context.Context, login string) (Record, bool, error) {
-	if login == "" || len(login) > MaxLoginLength {
+	if !validLabel(login, MaxLoginLength) {
 		return Record{}, false, nil
 	}
 

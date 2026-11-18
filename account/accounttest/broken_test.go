@@ -6,10 +6,10 @@ package accounttest_test
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/ostendorf-cloud/govue/account"
 )
@@ -57,6 +57,16 @@ const (
 
 	// Disable does not stop a login.
 	disableNoop
+
+	// Found in review: a confirm that overwrites a confirmed counter when
+	// the new one is higher, a lookup that reads the login as a LIKE
+	// pattern, an empty old hash read as "do not compare", a counter that
+	// may move back, and a replace that reaches every unconfirmed account.
+	confirmForward
+	findPattern
+	setPasswordEmptyOldNoCompare
+	advanceBackwards
+	replaceAllUnconfirmed
 )
 
 // broken is one broken store and the checks that must catch it.
@@ -95,6 +105,12 @@ func brokenStores() []broken {
 		{name: "set password on an account without one", flaws: []flaw{setPasswordOnEmpty}, mustFail: []string{"SetPasswordHash/RefusesAnAccountWithoutAPassword"}},
 		{name: "unknown login is a plain error", flaws: []flaw{findOtherError}, mustFail: []string{"FindByLogin/UnknownLogin"}},
 		{name: "disable does nothing", flaws: []flaw{disableNoop}, mustFail: []string{"Disable/CannotLogIn"}},
+		{name: "confirm overwrites a confirmed counter moving forward", flaws: []flaw{confirmForward}, mustFail: []string{"ConfirmTOTP/Guards"}},
+		{name: "folds case in create only, declared not folding", flaws: []flaw{foldInCreateOnly}, mustFail: []string{"Login/CaseHandling"}},
+		{name: "find by login as a LIKE pattern", flaws: []flaw{findPattern}, mustFail: []string{"FindByLogin/ExactMatch"}},
+		{name: "empty old hash skips the compare", flaws: []flaw{setPasswordEmptyOldNoCompare}, mustFail: []string{"SetPasswordHash/RefusesAStaleHash"}},
+		{name: "counter moves backwards", flaws: []flaw{advanceBackwards}, mustFail: []string{"AdvanceTOTPCounter/OnlyForward"}},
+		{name: "replace reaches every unconfirmed account", flaws: []flaw{replaceAllUnconfirmed}, mustFail: []string{"Writes/StayInTheirAccount"}},
 	}
 }
 
@@ -124,10 +140,6 @@ func newBrokenStore(flaws []flaw) *brokenStore {
 
 	return s
 }
-
-// window is the gap a non atomic write leaves between its read and its
-// write, long enough for every racing call to read the same old value.
-const window = 5 * time.Millisecond
 
 func (s *brokenStore) findKey(login string) string {
 	if s.flaws[foldEverywhere] {
@@ -161,6 +173,9 @@ func (s *brokenStore) FindByLogin(_ context.Context, login string) (account.Reco
 	defer s.mu.Unlock()
 
 	rec, ok := s.byKey[s.findKey(login)]
+	if !ok && s.flaws[findPattern] {
+		rec, ok = s.likeLocked(login)
+	}
 	if !ok || s.disabled[rec.ID] {
 		if s.flaws[findOtherError] {
 			return account.Record{}, errors.New("broken: no rows")
@@ -183,9 +198,9 @@ func (s *brokenStore) Create(_ context.Context, rec account.Record) (account.Rec
 		return account.Record{}, account.ErrConflict
 	}
 
-	if s.flaws[nonAtomicCreate] {
-		time.Sleep(window)
-	} else {
+	// A non atomic create inserts in a second step, with nothing between the
+	// check and the insert but releasing and taking the lock.
+	if !s.flaws[nonAtomicCreate] {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
@@ -224,6 +239,12 @@ func (s *brokenStore) AdvanceTOTPCounter(_ context.Context, id string, counter i
 		case s.flaws[advanceAnyCounter]:
 		case rec.TOTPCounter <= 0 && !s.flaws[advanceUnconfirmed]:
 			return false
+		case s.flaws[advanceBackwards]:
+			// Refuses zero, negative and the same counter, but takes a
+			// lower positive one: the counter moves back.
+			if counter <= 0 || counter == rec.TOTPCounter {
+				return false
+			}
 		case s.flaws[advanceSameCounter] && counter < rec.TOTPCounter:
 			return false
 		case !s.flaws[advanceSameCounter] && counter <= rec.TOTPCounter:
@@ -244,7 +265,7 @@ func (s *brokenStore) ConfirmTOTP(_ context.Context, id, secret string, counter 
 		if rec.TOTPSecret != secret && !s.flaws[confirmIgnoresSecret] {
 			return false
 		}
-		if rec.TOTPCounter != 0 && !s.flaws[confirmTwice] {
+		if rec.TOTPCounter != 0 && !s.flaws[confirmTwice] && (!s.flaws[confirmForward] || counter <= rec.TOTPCounter) {
 			return false
 		}
 		if counter <= 0 && !s.flaws[confirmZeroCounter] {
@@ -258,6 +279,20 @@ func (s *brokenStore) ConfirmTOTP(_ context.Context, id, secret string, counter 
 }
 
 func (s *brokenStore) ReplaceTOTPSecret(_ context.Context, id, secret string) error {
+	if s.flaws[replaceAllUnconfirmed] {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		for key, rec := range s.byKey {
+			if rec.TOTPCounter == 0 {
+				rec.TOTPSecret = secret
+				s.byKey[key] = rec
+			}
+		}
+
+		return nil
+	}
+
 	return s.update(id, false, func(rec *account.Record) bool {
 		if rec.TOTPCounter != 0 && !s.flaws[replaceConfirmed] {
 			return false
@@ -283,7 +318,7 @@ func (s *brokenStore) SetPasswordHash(_ context.Context, id, oldHash, newHash st
 	}
 
 	err := s.update(id, s.flaws[nonAtomicSetPassword], func(rec *account.Record) bool {
-		if !s.flaws[setPasswordUnconditional] {
+		if !s.flaws[setPasswordUnconditional] && (!s.flaws[setPasswordEmptyOldNoCompare] || oldHash != "") {
 			if rec.PasswordHash == "" && !s.flaws[setPasswordOnEmpty] {
 				return false
 			}
@@ -308,7 +343,9 @@ func (s *brokenStore) SetPasswordHash(_ context.Context, id, oldHash, newHash st
 
 // update applies change to the account with id. A non atomic update copies
 // the record under the lock, decides and changes the copy outside it, and
-// writes the copy back under the lock after the window: read, then write.
+// writes the copy back under the lock: read, then write. Nothing but
+// releasing and taking the lock sits between the two, no sleep, so the race
+// is as narrow as in a real adapter that reads and then writes.
 func (s *brokenStore) update(id string, nonAtomic bool, change func(*account.Record) bool) error {
 	s.mu.Lock()
 	key, rec, ok := s.byIDLocked(id)
@@ -329,14 +366,39 @@ func (s *brokenStore) update(id string, nonAtomic bool, change func(*account.Rec
 		return account.ErrNotFound
 	}
 
-	time.Sleep(window)
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.byKey[key] = rec
 
 	return nil
+}
+
+// likeLocked matches login as a SQL LIKE pattern, % any run, _ one
+// character, the way an adapter written as WHERE email ILIKE $1 does.
+func (s *brokenStore) likeLocked(pattern string) (account.Record, bool) {
+	var re strings.Builder
+	re.WriteString("^")
+	for _, r := range pattern {
+		switch r {
+		case '%':
+			re.WriteString(".*")
+		case '_':
+			re.WriteString(".")
+		default:
+			re.WriteString(regexp.QuoteMeta(string(r)))
+		}
+	}
+	re.WriteString("$")
+
+	rx := regexp.MustCompile(re.String())
+	for key, rec := range s.byKey {
+		if rx.MatchString(key) {
+			return rec, true
+		}
+	}
+
+	return account.Record{}, false
 }
 
 func (s *brokenStore) byIDLocked(id string) (string, account.Record, bool) {

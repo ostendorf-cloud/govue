@@ -31,9 +31,14 @@
 // other answers [ErrStale]. A rehash after a login never puts back a password
 // that was changed meanwhile.
 //
-// SignUp answers [ErrConflict] for a taken login. That tells anyone whether
-// an account exists. See [Service.SignUp] for what an application can do
-// about it.
+// SignUp answers [ErrConflict] for a taken login. With this flow an account
+// existence oracle exists, and an application cannot hide it by faking a
+// success, since the confirm step tells again. A product that must hide it
+// defers account creation until the person proved control of the address,
+// which SignUp does not support. See [Service.SignUp].
+//
+// The service does not normalise logins: letter case, Unicode forms and
+// confusable characters are the adapter's or the application's job.
 //
 // # Password hashing
 //
@@ -83,7 +88,10 @@
 // # One answer for every failed login
 //
 // Every refused login answers [ErrInvalidCredentials], whatever was wrong, so
-// the answer never tells which part of a guess was right. It also costs the
-// same work: one Argon2id derivation and the same HMACs, against empty
-// values when no account matched.
+// the answer never tells which part of a guess was right. It also costs one
+// Argon2id derivation and the same HMACs, against empty values when no
+// account matched. The derivation runs at today's parameters without a
+// usable hash and at the stored parameters for an existing account with a
+// password, so after a parameter change an account still on the old
+// parameters costs what those say until a login rehashes it.
 package account

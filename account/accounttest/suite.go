@@ -20,13 +20,36 @@
 // conditional counter write that refuses a replayed TOTP code, the guards of
 // TOTP confirmation, the compare and set of a password hash that keeps a
 // concurrent password change from being lost, the unique login, also under
-// concurrent signups, and that a disabled account cannot be found for login. A store that fails one of
-// them breaks a security property of every login built on it.
+// concurrent signups, that a login matches only itself, and that a disabled
+// account cannot be found for login. A store that fails one of them breaks a
+// security property of every login built on it.
 //
-// The concurrency checks start many calls at once and count the successes. A
-// store that reads and then writes may pass one run by luck. It does not
-// pass reliably, and the checks repeat each race several times to make luck
-// unlikely.
+// # What the concurrency checks can and cannot prove
+//
+// The concurrency checks start [DefaultRacers] calls at once behind a start
+// barrier, count the successes, and repeat that [DefaultRounds] times. A
+// store that reads, compares in Go and then writes passes a single round
+// most of the time: its window is a few instructions. Over many rounds it
+// fails. Measured on one machine, such stores escaped none of 200 runs
+// with the defaults, with and without the race detector, against up to 178
+// of 200 with the earlier 16 racers and 10 rounds.
+//
+// That is a measurement, not a proof. A test can only show a race it hits.
+// Another scheduler, fewer cores or a store with a different latency may
+// hit it less often. Load lowers it as well: next to CPU heavy tests in the
+// same go test run, such a store escaped the defaults in one of ten runs.
+// An adapter whose window is that narrow, one that keeps its state in Go
+// memory, raises [Harness.Rounds]. A SQL adapter that reads and then writes
+// has a window of a round trip and is far easier to catch. The suite is a
+// safety net. What proves a SQL adapter
+// atomic is its statement: one conditional UPDATE whose WHERE clause holds
+// the comparison, for example
+//
+//	UPDATE accounts SET totp_counter = $2 WHERE id = $1 AND totp_counter > 0 AND totp_counter < $2
+//
+// checked by reading it. Run the suite with the race detector as well, go
+// test -race, which also reports unsynchronised memory access in an adapter
+// that caches in Go.
 package accounttest
 
 import (
@@ -34,10 +57,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ostendorf-cloud/govue/account"
@@ -64,14 +89,55 @@ type Harness struct {
 	// a store with no way to disable an account still passes a function
 	// that clears the hash.
 	Disable func(t *testing.T, store account.Store, id string)
+
+	// Racers is how many calls each concurrency check starts at once. Zero
+	// is [DefaultRacers]. A value below two is refused, since one call
+	// cannot race.
+	Racers int
+
+	// Rounds is how often each concurrency check repeats its race. Zero is
+	// [DefaultRounds]. Negative is refused. Lower it for a slow store only
+	// when its atomicity is proven otherwise, for example by a WHERE clause
+	// that compares and writes in one statement: fewer rounds catch a read
+	// then write store less often.
+	Rounds int
 }
 
-// racers is how many calls each concurrency check starts at once, and rounds
-// how often it repeats the race.
+// DefaultRacers is how many calls each concurrency check starts at once when
+// [Harness.Racers] is zero, and DefaultRounds how often it repeats the race
+// when [Harness.Rounds] is zero.
+//
+// They were chosen by measurement, not by argument. Stores that read,
+// compare in Go and write, with nothing between but taking a lock again,
+// were run through their race check 200 times each, with and without the
+// race detector, on a 15 core darwin/arm64 machine. With 16 racers and 10
+// rounds they escaped up to 178 of 200 runs. With 32 racers and 200 rounds
+// one still escaped once in 200 runs. With these defaults they were caught
+// in every run. Without the start barrier in the race helper, 200 rounds
+// let one escape in 63 of 200 runs. Another machine, scheduler or store
+// latency changes these numbers, which is why the check is a safety net and
+// not a proof; see the package doc. The whole suite takes about half a
+// second against [MemoryStore], a few seconds under the race detector.
 const (
-	racers = 16
-	rounds = 10
+	DefaultRacers = 32
+	DefaultRounds = 1000
 )
+
+func (h Harness) racers() int {
+	if h.Racers == 0 {
+		return DefaultRacers
+	}
+
+	return h.Racers
+}
+
+func (h Harness) rounds() int {
+	if h.Rounds == 0 {
+		return DefaultRounds
+	}
+
+	return h.Rounds
+}
 
 // Fake values only. The store keeps them as given and never interprets them.
 const (
@@ -89,6 +155,9 @@ func Run(t *testing.T, h Harness) {
 	if h.NewStore == nil || h.Disable == nil {
 		t.Fatal("accounttest: Harness.NewStore and Harness.Disable are required")
 	}
+	if h.Racers < 0 || h.Racers == 1 || h.Rounds < 0 {
+		t.Fatalf("accounttest: Harness.Racers %d and Harness.Rounds %d: want zero for the default, at least two racers and a positive number of rounds", h.Racers, h.Rounds)
+	}
 
 	checks := []struct {
 		name string
@@ -101,6 +170,7 @@ func Run(t *testing.T, h Harness) {
 		{"Login/CaseHandling", checkCaseHandling},
 		{"Login/ConcurrentCaseVariants", checkConcurrentCaseVariants},
 		{"FindByLogin/UnknownLogin", checkFindUnknown},
+		{"FindByLogin/ExactMatch", checkFindExact},
 		{"AdvanceTOTPCounter/RefusesUnconfirmed", checkAdvanceRefusesUnconfirmed},
 		{"AdvanceTOTPCounter/OnlyForward", checkAdvanceOnlyForward},
 		{"AdvanceTOTPCounter/UnknownID", checkAdvanceUnknownID},
@@ -192,29 +262,48 @@ func wantNotFound(t *testing.T, what string, err error) {
 	}
 }
 
-// race runs call racers times at once, rounds times over, with a fresh setup
-// value per round, and hands each round's results to check.
-func race[T any](t *testing.T, setup func(round int) T, call func(ctx context.Context, v T, i int) error, check func(round int, v T, errs []error)) {
+// race runs call h.racers() times at once, h.rounds() times over, with a
+// fresh setup value per round, and hands each round's results to check. It
+// stops at the first round that fails.
+//
+// Every racer first checks in at a start barrier and spins, yielding, until
+// all have checked in, so all of them are running when the first one calls.
+// A channel close would wake them one after another instead, and a fast
+// store would serve the first before the last was scheduled. The yield
+// between rounds lets the scheduler spread the next round anew.
+func race[T any](t *testing.T, h Harness, setup func(round int) T, call func(ctx context.Context, v T, i int) error, check func(round int, v T, errs []error)) {
 	t.Helper()
+
+	racers, rounds := h.racers(), h.rounds()
 
 	for round := range rounds {
 		v := setup(round)
 
 		errs := make([]error, racers)
-		start := make(chan struct{})
 
-		var wg sync.WaitGroup
+		var (
+			wg      sync.WaitGroup
+			arrived atomic.Int64
+		)
 		for i := range racers {
 			wg.Go(func() {
-				<-start
+				arrived.Add(1)
+				for arrived.Load() < int64(racers) {
+					runtime.Gosched()
+				}
+
 				errs[i] = call(t.Context(), v, i)
 			})
 		}
 
-		close(start)
 		wg.Wait()
 
 		check(round, v, errs)
+		if t.Failed() {
+			return
+		}
+
+		runtime.Gosched()
 	}
 }
 
@@ -311,15 +400,15 @@ func checkCreateRefusesTaken(t *testing.T, h Harness) {
 func checkCreateConcurrent(t *testing.T, h Harness) {
 	store := h.NewStore(t)
 
-	race(t,
+	race(t, h,
 		func(int) string { return uniqueLogin(t, "racing-signup") },
 		func(ctx context.Context, login string, _ int) error {
 			_, err := store.Create(ctx, account.Record{Login: login, PasswordHash: fakeHash, TOTPSecret: fakeSecret})
 			return err
 		},
 		func(round int, _ string, errs []error) {
-			if ok, refused := countOutcomes(t, errs, account.ErrConflict); ok != 1 || refused != racers-1 {
-				t.Errorf("round %d: %d of %d concurrent Create calls for one login succeeded, want exactly 1", round, ok, racers)
+			if ok, refused := countOutcomes(t, errs, account.ErrConflict); ok != 1 || refused != len(errs)-1 {
+				t.Errorf("round %d: %d of %d concurrent Create calls for one login succeeded, want exactly 1", round, ok, len(errs))
 			}
 		})
 }
@@ -369,7 +458,7 @@ func checkConcurrentCaseVariants(t *testing.T, h Harness) {
 		want = 2
 	}
 
-	race(t,
+	race(t, h,
 		func(int) string { return uniqueLogin(t, "racing-case") },
 		func(ctx context.Context, login string, i int) error {
 			if i%2 == 1 {
@@ -390,6 +479,32 @@ func checkFindUnknown(t *testing.T, h Harness) {
 
 	_, err := store.FindByLogin(t.Context(), uniqueLogin(t, "unknown"))
 	wantNotFound(t, "FindByLogin of an unknown login", err)
+}
+
+// checkFindExact refuses a lookup that matches more than the login itself:
+// SQL LIKE wildcards, a prefix and a longer login must find nothing. An
+// adapter written as WHERE login LIKE $1 would let % log in as anybody.
+func checkFindExact(t *testing.T, h Harness) {
+	store := h.NewStore(t)
+	login := uniqueLogin(t, "exact")
+	create(t, store, login)
+
+	at := strings.Index(login, "@")
+	probes := []string{
+		"%",
+		"%" + login[at:],
+		"_" + login[1:],
+		login[:at] + "%",
+		login[:len(login)-1],
+		login + "x",
+	}
+
+	for _, probe := range probes {
+		got, err := store.FindByLogin(t.Context(), probe)
+		if !errors.Is(err, account.ErrNotFound) {
+			t.Errorf("FindByLogin(%q) = %+v, %v, want account.ErrNotFound: a login matches only itself", probe, got, err)
+		}
+	}
 }
 
 func checkAdvanceRefusesUnconfirmed(t *testing.T, h Harness) {
@@ -435,14 +550,14 @@ func checkAdvanceUnknownID(t *testing.T, h Harness) {
 func checkAdvanceConcurrentOnce(t *testing.T, h Harness) {
 	store := h.NewStore(t)
 
-	race(t,
+	race(t, h,
 		func(int) account.Record { return createConfirmed(t, store, uniqueLogin(t, "racing-replay")) },
 		func(ctx context.Context, rec account.Record, _ int) error {
 			return store.AdvanceTOTPCounter(ctx, rec.ID, 101)
 		},
 		func(round int, rec account.Record, errs []error) {
-			if ok, refused := countOutcomes(t, errs, account.ErrNotFound); ok != 1 || refused != racers-1 {
-				t.Errorf("round %d: %d of %d concurrent advances with one counter succeeded, want exactly 1", round, ok, racers)
+			if ok, refused := countOutcomes(t, errs, account.ErrNotFound); ok != 1 || refused != len(errs)-1 {
+				t.Errorf("round %d: %d of %d concurrent advances with one counter succeeded, want exactly 1", round, ok, len(errs))
 			}
 			if got := find(t, store, rec.Login); got.TOTPCounter != 101 {
 				t.Errorf("round %d: TOTPCounter = %d, want 101", round, got.TOTPCounter)
@@ -453,15 +568,15 @@ func checkAdvanceConcurrentOnce(t *testing.T, h Harness) {
 func checkAdvanceNeverBack(t *testing.T, h Harness) {
 	store := h.NewStore(t)
 
-	race(t,
+	race(t, h,
 		func(int) account.Record { return createConfirmed(t, store, uniqueLogin(t, "racing-forward")) },
 		func(ctx context.Context, rec account.Record, i int) error {
 			return store.AdvanceTOTPCounter(ctx, rec.ID, 101+int64(i))
 		},
 		func(round int, rec account.Record, errs []error) {
 			countOutcomes(t, errs, account.ErrNotFound)
-			if got := find(t, store, rec.Login); got.TOTPCounter != 100+racers {
-				t.Errorf("round %d: TOTPCounter = %d after racing advances, want the highest, %d", round, got.TOTPCounter, 100+racers)
+			if want := int64(confirmedCounter + len(errs)); find(t, store, rec.Login).TOTPCounter != want {
+				t.Errorf("round %d: TOTPCounter = %d after racing advances, want the highest, %d", round, find(t, store, rec.Login).TOTPCounter, want)
 			}
 		})
 }
@@ -502,14 +617,14 @@ func checkConfirmGuards(t *testing.T, h Harness) {
 func checkConfirmConcurrentOnce(t *testing.T, h Harness) {
 	store := h.NewStore(t)
 
-	race(t,
+	race(t, h,
 		func(int) account.Record { return create(t, store, uniqueLogin(t, "racing-confirm")) },
 		func(ctx context.Context, rec account.Record, i int) error {
 			return store.ConfirmTOTP(ctx, rec.ID, fakeSecret, 100+int64(i%2))
 		},
 		func(round int, _ account.Record, errs []error) {
-			if ok, refused := countOutcomes(t, errs, account.ErrNotFound); ok != 1 || refused != racers-1 {
-				t.Errorf("round %d: %d of %d concurrent confirms succeeded, want exactly 1", round, ok, racers)
+			if ok, refused := countOutcomes(t, errs, account.ErrNotFound); ok != 1 || refused != len(errs)-1 {
+				t.Errorf("round %d: %d of %d concurrent confirms succeeded, want exactly 1", round, ok, len(errs))
 			}
 		})
 }
@@ -596,15 +711,15 @@ func checkSetPasswordHashRefusesNoPassword(t *testing.T, h Harness) {
 func checkSetPasswordHashConcurrentOnce(t *testing.T, h Harness) {
 	store := h.NewStore(t)
 
-	race(t,
+	race(t, h,
 		func(int) account.Record { return createConfirmed(t, store, uniqueLogin(t, "racing-password")) },
 		func(ctx context.Context, rec account.Record, i int) error {
 			return store.SetPasswordHash(ctx, rec.ID, fakeHash, fakeOtherHash+"-"+strconv.Itoa(i))
 		},
 		func(round int, rec account.Record, errs []error) {
 			ok, refused := countOutcomes(t, errs, account.ErrNotFound)
-			if ok != 1 || refused != racers-1 {
-				t.Errorf("round %d: %d of %d concurrent writes from one old hash succeeded, want exactly 1", round, ok, racers)
+			if ok != 1 || refused != len(errs)-1 {
+				t.Errorf("round %d: %d of %d concurrent writes from one old hash succeeded, want exactly 1", round, ok, len(errs))
 
 				return
 			}

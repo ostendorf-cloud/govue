@@ -145,6 +145,10 @@ type recordingStore struct {
 	confirmErr  error
 	setHashErr  error
 	setHashHook func()
+
+	// setHashCommitErr is returned after a successful write: an ambiguous
+	// commit, the write happened but the caller is told it failed.
+	setHashCommitErr error
 }
 
 func (s *recordingStore) FindByLogin(ctx context.Context, login string) (account.Record, error) {
@@ -223,6 +227,9 @@ func (s *recordingStore) SetPasswordHash(ctx context.Context, id, oldHash, newHa
 	if s.setHashHook != nil {
 		s.setHashHook()
 	}
+	if err == nil && s.setHashCommitErr != nil {
+		return s.setHashCommitErr
+	}
 
 	return err
 }
@@ -237,8 +244,11 @@ type fixture struct {
 	logs   *syncBuffer
 	clock  atomic.Int64
 
-	endErr  error
-	endCtxs chan context.Context
+	endErr     error
+	endCtxs    chan context.Context
+	endCtxErrs chan error    // ctx.Err() as EndSessions saw it when called
+	endBlocks  bool          // EndSessions waits until its context ends
+	endTimeout time.Duration // ServiceConfig.EndSessionsTimeout
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -253,11 +263,12 @@ func newFixtureWith(t *testing.T, configure func(*fixture)) *fixture {
 	t.Helper()
 
 	f := &fixture{
-		memory:  accounttest.NewMemoryStore(accounttest.MemoryConfig{}),
-		work:    &work{},
-		events:  &events{},
-		logs:    &syncBuffer{},
-		endCtxs: make(chan context.Context, 64),
+		memory:     accounttest.NewMemoryStore(accounttest.MemoryConfig{}),
+		work:       &work{},
+		events:     &events{},
+		logs:       &syncBuffer{},
+		endCtxs:    make(chan context.Context, 64),
+		endCtxErrs: make(chan error, 64),
 	}
 	f.store = &recordingStore{Store: f.memory, events: f.events}
 	f.clock.Store(testStart.Unix())
@@ -279,11 +290,19 @@ func newFixtureWith(t *testing.T, configure func(*fixture)) *fixture {
 		EndSessions: func(ctx context.Context, id string) error {
 			f.events.add("EndSessions " + id)
 			f.endCtxs <- ctx
+			f.endCtxErrs <- ctx.Err()
+
+			if f.endBlocks {
+				<-ctx.Done()
+
+				return ctx.Err()
+			}
 
 			return f.endErr
 		},
-		Logger: slog.New(slog.NewTextHandler(f.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		Now:    f.now,
+		EndSessionsTimeout: f.endTimeout,
+		Logger:             slog.New(slog.NewTextHandler(f.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		Now:                f.now,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -441,6 +460,7 @@ func TestNewService_validates(t *testing.T) {
 		{"no hasher", func(c *account.ServiceConfig) { c.Hasher = nil }},
 		{"no end sessions callback", func(c *account.ServiceConfig) { c.EndSessions = nil }},
 		{"no logger", func(c *account.ServiceConfig) { c.Logger = nil }},
+		{"negative end sessions timeout", func(c *account.ServiceConfig) { c.EndSessionsTimeout = -time.Second }},
 		{"empty issuer", func(c *account.ServiceConfig) { c.Issuer = "" }},
 		{"issuer with a colon", func(c *account.ServiceConfig) { c.Issuer = "Example:App" }},
 	}
@@ -594,7 +614,16 @@ func TestSignUp_longestLogin(t *testing.T) {
 	f := newFixture(t)
 	login := strings.Repeat("a", account.MaxLoginLength-len("@example.com")) + "@example.com"
 
-	f.signUp(t, login)
+	_, enrolment := f.signUp(t, login)
+
+	// The longest login also confirms and logs in: the bound is inclusive
+	// on every path.
+	if _, err := f.svc.ConfirmTOTP(t.Context(), login, fakePassword, f.code(t, enrolment.Secret, -1)); err != nil {
+		t.Fatalf("ConfirmTOTP with the longest login: %v", err)
+	}
+	if _, err := f.svc.Login(t.Context(), login, fakePassword, f.code(t, enrolment.Secret, 0)); err != nil {
+		t.Fatalf("Login with the longest login: %v", err)
+	}
 }
 
 func TestSignUp_hashingBusy(t *testing.T) {
@@ -1486,7 +1515,10 @@ func TestChangePassword_hashingBusy(t *testing.T) {
 	}
 }
 
-func TestChangePassword_storeFailureEndsNoSessions(t *testing.T) {
+// TestChangePassword_storeFailureEndsSessionsAnyway fails the write with a
+// store error. The service cannot know whether it committed, so it ends the
+// sessions anyway and returns the store error, not ErrStale.
+func TestChangePassword_storeFailureEndsSessionsAnyway(t *testing.T) {
 	t.Parallel()
 
 	errStore := errors.New("fake store failure")
@@ -1494,18 +1526,37 @@ func TestChangePassword_storeFailureEndsNoSessions(t *testing.T) {
 	id, secret := f.confirmed(t)
 
 	err := f.svc.ChangePassword(t.Context(), id, fakePassword, fakeNewPassword)
-	if !errors.Is(err, errStore) || errors.Is(err, account.ErrSessionsNotEnded) {
-		t.Fatalf("ChangePassword = %v, want the store failure and not ErrSessionsNotEnded", err)
+	if !errors.Is(err, errStore) || errors.Is(err, account.ErrSessionsNotEnded) || errors.Is(err, account.ErrStale) {
+		t.Fatalf("ChangePassword = %v, want the store failure alone", err)
+	}
+
+	got := f.events.all()
+	if n := len(got); n < 2 || got[n-2] != "SetPasswordHash "+id.ID || got[n-1] != "EndSessions "+id.ID {
+		t.Errorf("events = %v, want the write, then EndSessions", got)
+	}
+
+	// This fake failed before writing, so the old password still holds.
+	if _, err := f.svc.Login(t.Context(), fakeLogin, fakePassword, f.code(t, secret, 0)); err != nil {
+		t.Fatalf("Login with the unchanged password: %v", err)
+	}
+}
+
+// TestChangePassword_staleEndsNoSessions checks that a lost compare and set,
+// which certainly wrote nothing, ends no session.
+func TestChangePassword_staleEndsNoSessions(t *testing.T) {
+	t.Parallel()
+
+	f := newFixtureWith(t, func(f *fixture) { f.store.setHashErr = account.ErrNotFound })
+	id, _ := f.confirmed(t)
+
+	if err := f.svc.ChangePassword(t.Context(), id, fakePassword, fakeNewPassword); !errors.Is(err, account.ErrStale) {
+		t.Fatalf("ChangePassword = %v, want account.ErrStale", err)
 	}
 
 	for _, e := range f.events.all() {
 		if strings.HasPrefix(e, "EndSessions") {
-			t.Errorf("sessions ended although the password did not change: %v", f.events.all())
+			t.Errorf("sessions ended for a change that certainly wrote nothing: %v", f.events.all())
 		}
-	}
-
-	if _, err := f.svc.Login(t.Context(), fakeLogin, fakePassword, f.code(t, secret, 0)); err != nil {
-		t.Fatalf("Login with the unchanged password: %v", err)
 	}
 }
 
@@ -1545,9 +1596,9 @@ func TestChangePassword_endSessionsOutlivesTheRequest(t *testing.T) {
 	}
 
 	select {
-	case endCtx := <-f.endCtxs:
-		if endCtx.Err() != nil {
-			t.Errorf("EndSessions ran with an ended context: %v", endCtx.Err())
+	case err := <-f.endCtxErrs:
+		if err != nil {
+			t.Errorf("EndSessions ran with an ended context: %v", err)
 		}
 	default:
 		t.Fatal("EndSessions did not run")
