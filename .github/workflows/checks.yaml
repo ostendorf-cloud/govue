@@ -193,6 +193,27 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    # The real PostgreSQL the tests of the database package run against. Every test
+    # creates and drops a database of its own on it. The password is an obvious dummy,
+    # the server lives only as long as this job. With CI set and the variable missing,
+    # those tests fail instead of skipping.
+    services:
+      postgres:
+        # Tag only: Renovate pins the manifest list digest.
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: govue
+          POSTGRES_PASSWORD: ci-dummy-password-not-real
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U govue -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      GOVUE_TEST_DATABASE_URL: postgres://govue:ci-dummy-password-not-real@localhost:5432/postgres?sslmode=disable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d  # v5.2.9

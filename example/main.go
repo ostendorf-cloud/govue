@@ -53,6 +53,18 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// The schema is applied next to the server, not before it: a database
+	// that starts after the pod is the normal case, and readiness stays at
+	// 503 until it is done. A broken set of migration files ends the loop at
+	// once and is logged, readiness then stays at 503.
+	if a.db != nil {
+		go func() {
+			if err := a.db.MigrateUntilReady(ctx, logger, migrationFiles, migrationDir); err != nil && ctx.Err() == nil {
+				logger.ErrorContext(ctx, "apply the database schema", "error", err.Error())
+			}
+		}()
+	}
+
 	return httpserver.RunAdmin(ctx, httpserver.Config{
 		Addr:    cfg.addr,
 		Handler: a.handler(),

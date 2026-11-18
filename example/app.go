@@ -18,6 +18,7 @@ import (
 	"github.com/ostendorf-cloud/govue/appassoc"
 	"github.com/ostendorf-cloud/govue/clientip"
 	"github.com/ostendorf-cloud/govue/csrf"
+	"github.com/ostendorf-cloud/govue/database"
 	"github.com/ostendorf-cloud/govue/favicon"
 	"github.com/ostendorf-cloud/govue/health"
 	"github.com/ostendorf-cloud/govue/language"
@@ -66,6 +67,10 @@ type app struct {
 
 	health *health.Registry
 
+	// db is the PostgreSQL pool, nil unless DB_HOST is set. Its migrations
+	// are migrationFiles.
+	db *database.DB
+
 	httpMetrics    *metrics.HTTP
 	metricsHandler http.Handler
 
@@ -99,8 +104,12 @@ type app struct {
 	siteRoot *os.Root
 }
 
-// close releases the site directory. It is safe to call without SITE_DIR.
+// close releases the database pool and the site directory. It is safe to
+// call without either.
 func (a *app) close() error {
+	if a.db != nil {
+		a.db.Close()
+	}
 	if a.siteRoot == nil {
 		return nil
 	}
@@ -117,6 +126,16 @@ const themeColor = "#904769"
 //
 //go:embed all:web/public
 var publicFiles embed.FS
+
+// migrationFiles holds the example's schema, numbered NNNN_name.sql. A
+// product embeds its own the same way and hands the directory to
+// database.DB.MigrateUntilReady.
+//
+//go:embed migrations/*.sql
+var migrationFiles embed.FS
+
+// migrationDir is the directory inside migrationFiles.
+const migrationDir = "migrations"
 
 // newApp constructs every dependency from cfg. It returns every construction
 // problem at once, the same way loadConfig does, rather than stopping at the
@@ -235,6 +254,22 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 	// fail, so this check only demonstrates that readiness runs it and
 	// reports it by name.
 	a.health.Add("notes-store", 0, func(context.Context) error { return nil })
+
+	// The database is optional here, so the example runs without one. A
+	// product that has one always opens it. Open does not connect, and the
+	// check keeps readiness at 503 until the database answers and
+	// MigrateUntilReady, started in run, has applied the schema. Liveness
+	// never runs it.
+	if cfg.database != nil {
+		// newApp has no context of its own. Open uses it only while it
+		// builds the pool, it does not connect.
+		db, err := database.Open(context.Background(), *cfg.database)
+		fail(err)
+		if err == nil {
+			a.db = db
+			a.health.Add("database", 0, db.Check)
+		}
+	}
 
 	registry := metrics.NewRegistry()
 	a.httpMetrics = metrics.NewHTTP(registry)

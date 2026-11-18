@@ -14,6 +14,7 @@ import (
 
 	"github.com/ostendorf-cloud/govue/appassoc"
 	"github.com/ostendorf-cloud/govue/clientip"
+	"github.com/ostendorf-cloud/govue/database"
 	"github.com/ostendorf-cloud/govue/envconf"
 	"github.com/ostendorf-cloud/govue/logging"
 )
@@ -68,6 +69,12 @@ type config struct {
 	// siteDir is the output directory of the prerender step. Empty means the
 	// example serves no language pages and no redirect at /.
 	siteDir string
+
+	// database is the PostgreSQL connection, nil unless DB_HOST is set. The
+	// example runs without a database. When DB_HOST is set, every DB_*
+	// variable is read and checked by database.LoadConfig, verify-full
+	// with DB_SSLROOTCERT by default.
+	database *database.Config
 
 	// assoc is the content of the app association files. It is empty unless
 	// APPLE_APP_ID or ANDROID_PACKAGE is set, and an empty one mounts no
@@ -145,6 +152,12 @@ func loadConfig(getenv func(string) string) (config, error) {
 
 	cfg.assoc, err = loadAssoc(l)
 	fail(err)
+
+	if l.String(database.EnvHost, "") != "" {
+		db, err := database.LoadConfig(getenv)
+		fail(err)
+		cfg.database = &db
+	}
 
 	if err := errors.Join(append(problems, l.Err())...); err != nil {
 		return config{}, fmt.Errorf("example: load config: %w", err)

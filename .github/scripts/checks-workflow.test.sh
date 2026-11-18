@@ -65,12 +65,19 @@ assert eq '.jobs["web-install"]' null
 assert eq '[.jobs[] | select(.permissions != null and (.permissions | tag) != "!!map")] | length' 0
 assert eq '[.jobs | to_entries[] | select(.key != "web-deps-comment") | (.value.permissions // {}) | to_entries[] | select(.value != "read" and .value != "none")] | length' 0
 
-# The comment job has exactly these keys and runs on the hosted runner. No container, no
-# service container and no other runner label on any job.
+# The comment job has exactly these keys and runs on the hosted runner. No container and
+# no other runner label on any job.
 assert eq "$comment | keys | sort | join(\",\")" concurrency,if,needs,permissions,runs-on,steps
 assert eq "$comment.\"runs-on\"" ubuntu-latest
 assert eq '[.jobs[] | select(has("runs-on")) | select(."runs-on" != "ubuntu-latest")] | length' 0
-assert eq '[.jobs[] | select(has("container") or has("services"))] | length' 0
+assert eq '[.jobs[] | select(has("container"))] | length' 0
+# The one service container is the PostgreSQL server of the test job, for the tests of
+# the database package. It holds a dummy password, no secret, and the job keeps the read
+# only default.
+assert eq '[.jobs | to_entries[] | select(.value | has("services")) | .key] | join(",")' test
+assert eq '.jobs.test.services | keys | join(",")' postgres
+assert has '.jobs.test.services.postgres.image' 'postgres:'
+assert eq '.jobs.test.permissions' null
 
 # The install job holds no token of its own: no credential in the checkout, no token or
 # secret in any key of any step, and never the comment action.

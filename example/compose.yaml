@@ -1,0 +1,35 @@
+# Local development only: a PostgreSQL server for the example and for the
+# tests of the database package. Every credential here is an obvious dummy.
+#
+#   docker compose -f example/compose.yaml up -d postgres
+#
+# The tests against it:
+#   export GOVUE_TEST_DATABASE_URL='postgres://govue:dev-password-not-real@127.0.0.1:5432/postgres?sslmode=disable'
+#
+# The example against it, next to its other variables:
+#   DB_HOST=127.0.0.1 DB_NAME=govue DB_USER=govue DB_PASSWORD=dev-password-not-real DB_SSLMODE=disable
+#
+# The server has no certificate, so DB_SSLMODE=disable. A deployment keeps the
+# default verify-full with DB_SSLROOTCERT and reads the password from
+# DB_PASSWORD_FILE.
+services:
+  postgres:
+    # Tag only: Renovate pins the manifest list digest.
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "govue"
+      POSTGRES_PASSWORD: "dev-password-not-real"
+      POSTGRES_DB: "govue"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U govue -d govue"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:

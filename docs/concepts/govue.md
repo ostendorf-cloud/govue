@@ -65,10 +65,12 @@ The design of the library and the reasoning behind it.
 
 ### Small, independent, standard library
 
-- The Go side is the standard library, with two exceptions. `prometheus/client_golang` is
+- The Go side is the standard library, with three exceptions. `prometheus/client_golang` is
   confined to the `metrics` package, because the exposition format is not worth reimplementing.
   `golang.org/x/crypto` is confined to the `account` package, for Argon2id, which the standard
-  library lacks. Writing a memory hard hash by hand is the worse risk.
+  library lacks. Writing a memory hard hash by hand is the worse risk. `jackc/pgx/v5` is
+  confined to the `database` package, because the standard library has no PostgreSQL driver,
+  see "Database".
 - A package stays usable alone: taking `clientip` must not pull in `session`.
 - Handlers return an error and one `api` helper writes the single error shape, so no handler
   writes error JSON and no cause reaches a client.
@@ -1152,6 +1154,121 @@ The design of the library and the reasoning behind it.
   shows as a refused request. An application with such a flow sets `csrfToken` in
   `createClient`.
 
+### Database
+
+- Every product with state runs PostgreSQL, and the first one wrote its connection, its
+  migration runner and its readiness check itself. The next ones need the same. `database` holds
+  those parts so no product writes them again. The product keeps its schema, its queries and its
+  store types, and any boundary rule between them.
+- It is the one package that imports `github.com/jackc/pgx/v5`, the third dependency exception.
+  pgx is the maintained PostgreSQL driver for Go, with a pool, and its TLS settings follow
+  libpq's `sslmode`. `database/sql` with a driver would still need a driver, and the pool and the
+  PostgreSQL types of pgx are what a product queries with anyway. No other package imports it, so
+  `session` or `account` alone never pull it in.
+- `database/dbtest` is the test helper. It imports `database` and pgx only through it.
+- `Config` has separate fields, never one connection string, so the password stays a secret of
+  its own with a `_FILE` twin and never travels inside a URL that gets logged. `LoadConfig`
+  reads `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` or `DB_PASSWORD_FILE`,
+  `DB_SSLMODE`, `DB_SSLROOTCERT`, `DB_MAX_CONNS` and `DB_CONNECT_TIMEOUT` through `envconf` and
+  returns every problem in one error. The names carry no prefix: a product has one database, and
+  the same names everywhere keep charts and compose files alike. A product with a second database
+  builds the second `Config` in code.
+- A zero field of a `Config` written in code takes the same default as an unset variable, so the
+  secure choice does not depend on how the value was built. `Validate` checks it, and `Open` calls
+  `Validate`.
+- The password never prints. `Config` implements `fmt.Formatter`, `fmt.GoStringer`,
+  `json.Marshaler`, `encoding.TextMarshaler` and `slog.LogValuer`. `LogValue` alone was not
+  enough in the first product: a whole product config logged through a JSON handler reaches
+  `encoding/json`, which printed every field of the nested value. A missing password prints as
+  empty, a set one as `[redacted]`.
+- The DSN carries no password. The user goes through `url.User`, the host through
+  `net.JoinHostPort`, and the password is set on the parsed pgx config afterwards. A password with
+  `@`, `:` or `%` needs no escaping, and an IPv6 host stays one host.
+
+#### TLS
+
+- `sslmode` accepts `disable`, `require`, `verify-ca` and `verify-full`. The default is
+  `verify-full`. libpq's `allow` and `prefer` are refused, because both fall back to plain text
+  without telling anyone. A product that wants plain text, a local compose file or a test server,
+  says `disable`.
+- `verify-ca` and `verify-full` need `DB_SSLROOTCERT`, the PEM file of the CA that signed the
+  server's certificate, for example the CA of the cluster's database operator. A deployment that
+  sets nothing about TLS therefore does not start, and says which variable is missing. It never
+  falls back to a weaker mode on its own. The system root pool, libpq's `sslrootcert=system`, is
+  not offered yet. The products run in a cluster whose database operator signs with its own CA,
+  and `verify-ca` against the public CAs would accept any certificate they ever signed. A
+  managed database with a publicly signed certificate is an open question below.
+- `disable` and `require` refuse a root certificate. libpq and pgx turn `require` with a root
+  certificate into `verify-ca` silently, so the setting would not mean what it says.
+- The root certificate is read while the config is checked, so a wrong path or a file without a
+  certificate is one more problem in the startup error, not a failure on the first connection.
+- pgx builds the TLS configuration from `sslmode` and `sslrootcert` while it parses, the way
+  libpq does. `verify-full` sets `RootCAs` and `ServerName`. `verify-ca` sets
+  `InsecureSkipVerify` together with a `VerifyPeerCertificate` that checks the chain against the
+  root without the host name, which is libpq's meaning. `require` sets `InsecureSkipVerify` and
+  checks nothing. The tests inspect the built configuration and run a handshake against a
+  throwaway CA over `net.Pipe`, in memory: a wrong CA fails both verifying modes, a wrong host
+  name fails `verify-full`.
+- pgx also reads the `PG*` environment variables and the files under `~/.postgresql` for
+  settings `Config` does not name, such as a client certificate. Every setting `Config` names
+  wins over them, which a test pins for `PGSSLMODE`, `PGHOST` and `PGPASSWORD`. Client
+  certificates are not a field: no product authenticates that way yet.
+
+#### Pool and readiness
+
+- `Open` validates and builds the pool. It does not connect, so a database that starts after the
+  pod does not stop it. `Pool` hands the pgx pool to the product's queries.
+- Connections are recycled after thirty minutes and after five idle minutes, and the pool checks
+  them every minute. A connection kept for hours survives a failover of the cluster only as a
+  broken socket.
+- `Check` is a `health.Check`: `registry.Add("database", 0, db.Check)`. It fails while the
+  database does not answer, and with `ErrNotMigrated` until a `Migrate` in this process has
+  succeeded. `health` names the check on `/readyz` and never the cause. Liveness runs no check,
+  so a database outage never restarts a pod that would come back to the same outage.
+- The package imports neither `health` nor `logging`: the method has the `health.Check` shape,
+  and `MigrateUntilReady` takes the logger it writes to.
+
+#### Migrations
+
+- Migrations are plain SQL files a product embeds and hands over as an `fs.FS` and a directory.
+  They are named `NNNN_name.sql`. The versions start at 1 and have no gap and no repeat, which the
+  loader checks before the database is asked. Other files in the directory are ignored.
+- Each file runs in one transaction together with its row in `schema_migrations`, under the
+  advisory lock `pg_advisory_xact_lock`. A file that fails leaves nothing of itself behind, and
+  two pods starting together apply each file once. The table is created under the same lock,
+  because `create table if not exists` races on the catalogue otherwise.
+- Because of that transaction, `create index concurrently` and anything else that cannot run in
+  a transaction cannot be a migration. Such a change needs the runner extended first.
+- The table and the lock key are the ones of the first product's own runner, so its swap to this
+  package needs no data migration, and an old pod and a new one exclude each other during a
+  rollout.
+- `MigrateUntilReady` runs next to the server. A broken set of files returns at once, because
+  waiting does not fix a gap. Everything else is retried with a pause that starts at one second
+  and doubles up to thirty, and the loop ends with its context, during the pause too. It never
+  gives up on its own: a late database is the normal case in a cluster, and readiness reports
+  the gap meanwhile.
+- A migration library, `golang-migrate` or `goose`, would bring down migrations, a CLI and more
+  dependencies for a schema that is a handful of files applied forward only.
+
+#### Tests against a real database
+
+- The rules of the package that need no server, the config, the redaction, the DSN, the TLS
+  configuration, the loader, the retry loop and the readiness semantics with a fake pinger, run
+  everywhere with no socket.
+- What only a server can prove runs against a real PostgreSQL: connect, migrate, idempotence,
+  the rollback of a failed file, the advisory lock blocking a second migrator, concurrent
+  migrators, `Check` before and after the schema, a wrong password, and the database per test.
+- `dbtest.Config` and `dbtest.Open` read the server from `GOVUE_TEST_DATABASE_URL`, create a
+  fresh database per test and drop it with force afterwards. The role needs `CREATEDB`. Without
+  the variable the test is skipped with a message naming it, and `task test:go` prints a
+  warning first, because `go test` hides a skip. With `CI` set and the variable missing the test
+  fails, so the suite cannot go green by skipping. The `test` job runs a PostgreSQL service
+  container with a `pg_isready` health check and sets the variable. A product uses the same
+  helper and the same variable in its own CI.
+- These tests open a socket, in CI only. It is the one deliberate exception to "tests use no
+  socket" and is recorded under Deviations in `AGENTS.md`. A fake would prove the fake: the
+  transaction, the lock and the rollback are the server's behaviour.
+
 ### The bearer client of a native app
 
 - `createClient({ auth: { mode: 'bearer', storage, rotateAfterMs, rotation, deviceName } })` is
@@ -1681,6 +1798,12 @@ The design of the library and the reasoning behind it.
 - One wide account store with every repository a user table usually has: one interface for
   every use. Dropped because an interface that offers more than the logic needs turns the
   boundary into a convention the next consumer does not know about.
+- `database/sql` with `lib/pq` or pgx' `stdlib` adapter for the database: the standard interface.
+  Dropped because a product still needs a driver, `lib/pq` is in maintenance mode, and the
+  products query with pgx' own pool and types.
+- A connection string in one variable, `DATABASE_URL`: one setting instead of eight. Dropped
+  because the password would travel inside a URL that gets logged, and it could not have a
+  `_FILE` twin of its own.
 - Publishing the Vue package to npm: the obvious distribution path. Dropped for now because no
   registry is set up for this organisation, and a git dependency pinned to a tag needs no publish
   step and no token.
@@ -1714,6 +1837,15 @@ The design of the library and the reasoning behind it.
   back.
 - The passkey user handle: the opaque account id or a random handle per account. Next step:
   decide in the passkey work with its security review.
+- Whether `database` offers a way to mark the schema applied for a product that migrates with
+  its own tool, such as a Kubernetes job. Today `Check` stays unready until `Migrate` succeeded in
+  the same process. The owner decides when a product needs it.
+- Whether `database` accepts `DB_SSLROOTCERT=system` with `verify-full`, for a managed database
+  whose certificate a public CA signed. pgx supports it. The owner decides when a product runs on
+  one.
+- Whether `database` refuses to start when `schema_migrations` records a version newer than the
+  embedded files, a rollback to an older image. Today it applies nothing and reports ready.
+  The owner decides.
 - What the first version supports for configuration beyond the environment. Nothing reads the
   environment by itself today, and whether that stays absolute is open. The owner decides.
 

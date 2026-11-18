@@ -12,8 +12,9 @@ Two halves, one repository, one version:
   CSRF protection, rate limiting, the client IP behind a proxy, Prometheus metrics, local
   accounts with TOTP (`account`), and the server half of native apps: device token sessions
   (`session`, `session/devicehttp`), the app origin list and its CORS handler
-  (`middleware.AppOrigins`, `middleware.AppCORS`) and the app association files (`appassoc`).
-  Every package is importable on its own.
+  (`middleware.AppOrigins`, `middleware.AppCORS`) and the app association files (`appassoc`),
+  and the PostgreSQL connection with migrations and readiness (`database`, the one package that
+  imports pgx). Every package is importable on its own.
 - A Vue package with components and a design token contract, so an application themes itself by
   filling that contract instead of inventing a palette. It carries the account forms
   (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`) and the bearer client of a native
@@ -646,6 +647,29 @@ and `maxKeys` below 1 becomes 1. `burst` has no floor: zero refuses every reques
 `csrf` takes no struct: `New` takes the one required `Expected` function, and `TrustOrigin` and
 `OnRefusal` are called during setup, not through fields.
 
+### database.Config
+
+`database.LoadConfig(getenv)` reads these variables. A zero field of a `Config` written in code
+takes the same default.
+
+| Field            | Variable                              | Default                                  |
+| ---------------- | ------------------------------------- | ---------------------------------------- |
+| `Host`           | `DB_HOST`                             | none, required                           |
+| `Port`           | `DB_PORT`                             | 5432                                     |
+| `Name`           | `DB_NAME`                             | none, required                           |
+| `User`           | `DB_USER`                             | none, required                           |
+| `Password`       | `DB_PASSWORD` or `DB_PASSWORD_FILE`   | none, required, never printed            |
+| `SSLMode`        | `DB_SSLMODE`                          | `verify-full`                            |
+| `SSLRootCert`    | `DB_SSLROOTCERT`                      | none, see below                          |
+| `MaxConns`       | `DB_MAX_CONNS`                        | 10, from 1 to 100                        |
+| `ConnectTimeout` | `DB_CONNECT_TIMEOUT`                  | 5 seconds, from 1 second to 1 minute     |
+
+`verify-ca` and `verify-full` need the root certificate, a PEM file of the CA that signed the
+server's certificate. `allow` and `prefer` are refused, and `disable` and `require` refuse a root
+certificate. The
+section [Database](docs/concepts/govue.md#database) of the concept doc has the wiring, the
+migrations and the reasons.
+
 ## Development
 
 ```sh
@@ -656,6 +680,9 @@ task check
 `task setup` installs the pinned toolchain through `mise`. `task check` runs every check one
 after another, including `go vet`, `golangci-lint run` and `go test -race`; `task --list` shows
 one target per check, and CI runs one job per target.
+
+The tests of `database` against a real PostgreSQL run when `GOVUE_TEST_DATABASE_URL` is set and
+skip otherwise. `example/compose.yaml` starts a local server and names the URL to export.
 
 The `web:` targets cover the Vue half: `web:lint`, `web:format`, `web:types`, `web:test` and
 `web:build`. Each installs `web/`'s dependencies from the lockfile first, so one of them works on

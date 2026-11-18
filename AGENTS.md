@@ -40,9 +40,15 @@ repeated here.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
-- Seventeen Go packages live at the module root: `account`, `api`, `appassoc`, `clientip`,
-  `csrf`, `envconf`, `favicon`, `health`, `httpserver`, `language`, `logging`, `metrics`,
-  `middleware`, `oidc`, `ratelimit`, `session`, `themeboot`.
+- Eighteen Go packages live at the module root: `account`, `api`, `appassoc`, `clientip`,
+  `csrf`, `database`, `envconf`, `favicon`, `health`, `httpserver`, `language`, `logging`,
+  `metrics`, `middleware`, `oidc`, `ratelimit`, `session`, `themeboot`.
+- `database` holds the PostgreSQL connection of a product: `Config` and `LoadConfig` with the
+  `DB_*` variables, the pgx pool, the migration runner over an `fs.FS` and `Check` for
+  readiness. The password never prints, and the default `sslmode` is `verify-full` with
+  `DB_SSLROOTCERT`. The product keeps its schema and its queries. `database/dbtest` gives a test
+  a fresh database on the server named by `GOVUE_TEST_DATABASE_URL`, start one with
+  `docker compose -f example/compose.yaml up -d postgres`.
 - `appassoc` serves the Apple App Site Association and Android `assetlinks.json` files from a
   typed `Config`. The files hold public identifiers only, never a secret, a token or a value
   from a request. They are exact patterns, never redirect, never set a cookie and never need a
@@ -94,10 +100,13 @@ task example:build   # compile the example application
 
 ### Go
 
-- The standard library only, with two exceptions. `prometheus/client_golang` stays confined to
+- The standard library only, with three exceptions. `prometheus/client_golang` stays confined to
   the `metrics` package. `golang.org/x/crypto` stays confined to the `account` package, for
-  Argon2id, which the standard library lacks. The owner accepted it for local accounts. Another
-  dependency needs a reason in the pull request.
+  Argon2id, which the standard library lacks. The owner accepted it for local accounts.
+  `github.com/jackc/pgx/v5` stays confined to the `database` package, for the PostgreSQL
+  driver and pool the standard library lacks. `database/dbtest` reaches it only through
+  `database`. The owner accepted it
+  for the database package. Another dependency needs a reason in the pull request.
 - A package stays usable on its own. An application that wants `clientip` must not pull in
   `session` with it.
 - The secure choice is the default, never an option an application has to remember. Weakening
@@ -109,7 +118,7 @@ task example:build   # compile the example application
 - The access log and the metric labels carry the route pattern, never the raw path: a path holds
   ids and tokens.
 - Tests use no network and no socket. A test that binds a port does not run in the sandbox or in
-  CI.
+  CI. The tests of `database` against a real PostgreSQL are the one exception, see Deviations.
 - Errors wrap with `%w` and name the component.
 - Logging through `log/slog`. A package takes a logger, it never builds one.
 
@@ -167,3 +176,11 @@ task example:build   # compile the example application
   `reusable-license.yaml`, which pins `addlicense` itself and takes the `find` invocations as an
   input, so the `license` job runs no task target. `task lint:license` keeps the same invocation
   for local development, and the two are kept in step by hand.
+
+- The tests of `database` that need a server open a socket to a real PostgreSQL. They run only
+  when `GOVUE_TEST_DATABASE_URL` is set, which the `test` CI job does with its PostgreSQL
+  service container. Without it they skip loudly, and with `CI` set and the variable missing
+  they fail. A fake would prove only the fake: the transaction per file, the advisory lock and
+  the rollback are the server's behaviour. Everything else in the package is tested without a
+  socket. No other package may follow this, and `.github/scripts/checks-workflow.test.sh`
+  allows a service container on the `test` job alone.
