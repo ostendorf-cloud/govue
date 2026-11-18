@@ -451,6 +451,40 @@ func TestAppCORSUnlistedOrigin(t *testing.T) {
 	}
 }
 
+// With two Origin headers the first one decides, as in net/http's own origin
+// check, so the app policy and the protector never read different origins.
+func TestAppCORSTwoOriginHeadersFirstWins(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		origins []string
+		listed  bool
+	}{
+		{"listed first", []string{"capacitor://localhost", "https://evil.example.test"}, true},
+		{"unlisted first", []string{"https://evil.example.test", "capacitor://localhost"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var reached bool
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/x", nil)
+			for _, o := range tc.origins {
+				r.Header.Add("Origin", o)
+			}
+			appCORSHandler(t, &reached).ServeHTTP(rec, r)
+
+			got := rec.Header().Get("Access-Control-Allow-Origin")
+			if tc.listed && got != tc.origins[0] {
+				t.Errorf("allow origin = %q, want %q", got, tc.origins[0])
+			}
+			if !tc.listed && got != "" {
+				t.Errorf("allow origin = %q, want none", got)
+			}
+		})
+	}
+}
+
 // A request without an Origin header passes through, a preflight lookalike
 // from an app origin without the request method header is not a preflight.
 func TestAppCORSOptionsWithoutRequestMethodIsNotAPreflight(t *testing.T) {

@@ -259,6 +259,28 @@ func TestIssueFromAnUnlistedOriginIsRefusedByTheProtector(t *testing.T) {
 	}
 }
 
+// Another spelling of the issue path does not get the trust of the route: the
+// protector matches the escaped path and refuses an app origin on it, whatever
+// the mux makes of the spelling.
+func TestIssueRouteTrustIsKeyedOnTheEscapedPath(t *testing.T) {
+	t.Parallel()
+	a, clock := newAppModeApp(t, 1000, appEnv())
+	secret, _ := newAccount(t, a, clock, acctLogin, acctPassword)
+
+	for _, path := range []string{
+		authPrefix + "%2Ftoken", authPrefix + "%2ftoken", authPrefix + "/%74oken", "/API/V1/AUTH/TOKEN",
+	} {
+		clock.Add(time.Minute)
+		w := a.serve(t, accountCall{
+			method: http.MethodPost, path: path, site: "cross-site", origin: iosOrigin,
+			body: creds(acctLogin, acctPassword, totpNow(t, secret, clock)),
+		})
+		if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "cross origin or stale request") {
+			t.Errorf("POST %s from an app origin = %d %s, want the 403 of the protector", path, w.Code, w.Body.String())
+		}
+	}
+}
+
 // The web policy is unchanged: its origin keeps credentials and the CSRF
 // header, gets no Authorization, and an unlisted origin gets nothing. An app
 // origin gets none of the web policy.

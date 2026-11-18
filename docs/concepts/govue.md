@@ -511,13 +511,16 @@ The design of the library and the reasoning behind it.
   login, would open it to login CSRF from any site. Every other origin keeps the origin half on
   that route, and the origins of `TrustOrigin` are not added there. The method is POST, PUT,
   PATCH or DELETE: a safe method needs no origin check, so it is an error and not a silent no-op,
-  and so is `CONNECT`. The path is absolute, exact, without wildcard, variable, query or
-  trailing slash. Each origin follows the rules of `TrustOrigin`, at least one is required, and a
-  second call for the route is an error. The token half stays. A request with a session cookie
-  still needs the CSRF token, and an app has no session. The route checks the origin itself as
-  a second layer: `Issue` accepts `IssueTrustedOrigins` and no other cross origin caller. A
-  consumer that sets `IssueTrustedOrigins` calls `TrustOriginOnRoute` for the issue route with
-  the same list, and calls neither without app origins.
+  and so is `CONNECT`. The path is absolute, exact and clean: no wildcard, variable, query,
+  trailing slash, `..`, `//`, `/.` or `%`. It is matched case sensitively against the escaped
+  request path, so another case, `%2F` for a slash or `%74` for a letter does not match. The mux
+  may route such a spelling to the same handler, and the protector then refuses the app request
+  with 403, which fails closed. Each origin follows the rules of `TrustOrigin`, at least one is
+  required, and a second call for the route is an error. The token half stays. A request with a
+  session cookie still needs the CSRF token, and an app has no session. The route checks the
+  origin itself as a second layer: `Issue` accepts `IssueTrustedOrigins` and no other cross
+  origin caller. A consumer that sets `IssueTrustedOrigins` calls `TrustOriginOnRoute` for the
+  issue route with the same list, and calls neither without app origins.
 - `example/` turns the mode on with `APP_ORIGINS` and `APP_SCHEMES`, both empty by default. A
   custom scheme is an opt in, one scheme at a time: `APP_ORIGINS=capacitor://localhost` needs
   `APP_SCHEMES=capacitor`. The list goes to `Issue` as `IssueTrustedOrigins`, to the issue route

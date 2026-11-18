@@ -58,6 +58,13 @@ func TestTrustOriginOnRouteTrustsOneRouteAndTheGivenOrigins(t *testing.T) {
 		{"a trailing slash", http.MethodPost, routePath + "/", appOrigin, false},
 		{"a shorter path", http.MethodPost, "/api/v1/auth", appOrigin, false},
 		{"another route", http.MethodPost, "/notes", appOrigin, false},
+		{"an upper case path", http.MethodPost, "/API/V1/AUTH/TOKEN", appOrigin, false},
+		{"a path with one upper case letter", http.MethodPost, "/api/v1/auth/Token", appOrigin, false},
+		{"an encoded slash", http.MethodPost, "/api/v1/auth%2Ftoken", appOrigin, false},
+		{"an encoded slash in lower case", http.MethodPost, "/api/v1/auth%2ftoken", appOrigin, false},
+		{"an encoded letter", http.MethodPost, "/api/v1/auth/%74oken", appOrigin, false},
+		{"an encoded letter in upper case", http.MethodPost, "/api/v1/auth/%54oken", appOrigin, false},
+		{"a double slash", http.MethodPost, "/api/v1//auth/token", appOrigin, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -161,6 +168,14 @@ func TestTrustOriginOnRouteRefusesWhatCouldWiden(t *testing.T) {
 		{"a star", http.MethodPost, "/api/*", []string{appOrigin}},
 		{"a query", http.MethodPost, "/api?x=1", []string{appOrigin}},
 		{"a space", http.MethodPost, "/api /x", []string{appOrigin}},
+		{"a parent segment", http.MethodPost, "/a/../b", []string{appOrigin}},
+		{"a trailing parent segment", http.MethodPost, "/a/..", []string{appOrigin}},
+		{"an encoded slash", http.MethodPost, "/a%2Fb", []string{appOrigin}},
+		{"an encoded letter", http.MethodPost, "/a/%74", []string{appOrigin}},
+		{"a double slash", http.MethodPost, "//x", []string{appOrigin}},
+		{"a double slash inside", http.MethodPost, "/a//x", []string{appOrigin}},
+		{"a dot segment", http.MethodPost, "/./x", []string{appOrigin}},
+		{"a dot file", http.MethodPost, "/.x", []string{appOrigin}},
 		{"no origin", http.MethodPost, routePath, nil},
 		{"an empty origin list", http.MethodPost, routePath, []string{}},
 		{"an empty origin", http.MethodPost, routePath, []string{""}},
@@ -184,6 +199,28 @@ func TestTrustOriginOnRouteRefusesWhatCouldWiden(t *testing.T) {
 				t.Errorf("after a refused call: err = %v, want the origin refusal", err)
 			}
 		})
+	}
+}
+
+// The route is matched case sensitively: a route registered with an upper case
+// letter does not trust the lower case spelling, and the other way round.
+func TestTrustOriginOnRouteIsCaseSensitive(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	p := newProtector(t, &calls, false)
+	if err := p.TrustOriginOnRoute(http.MethodPost, "/T", []string{appOrigin}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Check(crossRequest(t, http.MethodPost, "/T", appOrigin)); err == nil ||
+		strings.Contains(err.Error(), "cross origin") {
+		t.Errorf("the exact spelling: err = %v, want the token half only", err)
+	}
+	for _, path := range []string{"/t", "/%54"} {
+		if err := p.Check(crossRequest(t, http.MethodPost, path, appOrigin)); err == nil ||
+			!strings.Contains(err.Error(), "cross origin") {
+			t.Errorf("path %q: err = %v, want the origin refusal", path, err)
+		}
 	}
 }
 

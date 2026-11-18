@@ -183,9 +183,13 @@ func (p *Protector) TrustOrigin(origin string) error {
 // method is POST, PUT, PATCH or DELETE: a safe method needs no origin check,
 // so it is an error here and not a silent no-op, and CONNECT and TRACE are
 // never a route of an API. path is an absolute path without a host, a query, a
-// wildcard, a wildcard variable, "{$}" or a trailing slash, and it is compared
-// exactly, so a neighbouring path and a path with a trailing slash keep the
-// origin check. Each origin follows the rules of TrustOrigin, at least one is
+// wildcard, a wildcard variable, "{$}", a trailing slash, "..", "//", "/." or
+// "%", so it is exact and clean. It is compared byte for byte, and case
+// sensitive, with the escaped path of the request. A neighbouring path, a path
+// with a trailing slash, another case and another escaping of the same path,
+// such as "%2F" for a slash or "%74" for a letter, keep the origin check.
+// ServeMux may route such a spelling to the same handler: the app request then
+// gets the refusal of the protector, which fails closed. Each origin follows the rules of TrustOrigin, at least one is
 // required, and it is compared byte for byte with the Origin header. A second
 // call for the same route is an error. It is meant to be called during setup
 // like TrustOrigin.
@@ -196,9 +200,10 @@ func (p *Protector) TrustOriginOnRoute(method, path string, origins []string) er
 		return fmt.Errorf("csrf: trust origin on route: method %q must be POST, PUT, PATCH or DELETE", method)
 	}
 	if !strings.HasPrefix(path, "/") || path == "/" || strings.HasSuffix(path, "/") ||
-		strings.ContainsAny(path, "{}*? #\t\r\n") {
-		return fmt.Errorf("csrf: trust origin on route: path %q must be an absolute path without a wildcard, "+
-			"a query or a trailing slash", path)
+		strings.ContainsAny(path, "{}*? #%\t\r\n") || strings.Contains(path, "..") ||
+		strings.Contains(path, "//") || strings.Contains(path, "/.") {
+		return fmt.Errorf("csrf: trust origin on route: path %q must be an absolute, exact and clean path without "+
+			"a wildcard, a query, an escape or a trailing slash", path)
 	}
 	if len(origins) == 0 {
 		return errors.New("csrf: trust origin on route: at least one origin is required")
@@ -272,7 +277,7 @@ func (p *Protector) Check(r *http.Request) error {
 		}
 	}
 	cross := p.cross
-	if route, ok := p.routes[r.Method+" "+r.URL.Path]; ok {
+	if route, ok := p.routes[r.Method+" "+r.URL.EscapedPath()]; ok {
 		cross = route
 	}
 	if err := cross.Check(r); err != nil {
