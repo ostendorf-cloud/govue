@@ -173,6 +173,21 @@ func TestExemptBearerSkipsBothHalves(t *testing.T) {
 	}
 }
 
+// TestExemptBearerTwiceStaysOn pins that the option sets, never toggles.
+func TestExemptBearerTwiceStaysOn(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	p := newProtector(t, &calls, true)
+	p.ExemptBearer()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/things", nil)
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	req.Header.Set("Authorization", "Bearer example_fake")
+	if err := p.Check(req); err != nil {
+		t.Errorf("Check after two calls = %v, want the exemption", err)
+	}
+}
+
 // TestExemptBearerSkipsNothingElse pins that the exemption follows the
 // Authorization header alone. No other header buys a skip.
 func TestExemptBearerSkipsNothingElse(t *testing.T) {

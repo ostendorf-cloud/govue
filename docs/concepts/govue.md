@@ -300,18 +300,26 @@ The design of the library and the reasoning behind it.
 - A device session carries no groups and no account attributes. `Session.In` is false for every
   group, so an allow list fails closed and a deny list fails open. A product authorises a device
   session from its own account record, looked up by `Subject`.
-- Every response produced by or behind `Manager.Middleware` for a bearer request carries
-  `Cache-Control: no-store`, whatever a handler sets. A response produced earlier in the chain,
-  such as the rate limiter's 429, a CORS refusal or a mux redirect, is outside it and carries no
-  credential data.
+- Every response produced by or behind `Manager.Middleware` for a bearer request carries exactly
+  one `Cache-Control: no-store`, whatever a handler sets and in whatever key spelling. A response
+  produced earlier in the chain, such as the rate limiter's 429, a CORS refusal or a mux redirect,
+  is outside it and carries no credential data.
+- The handler keeps `http.Flusher`, `http.Hijacker` and `io.ReaderFrom` of the writer underneath,
+  so SSE and WebSocket code that asserts them works, and `http.ResponseController` reaches it
+  through `Unwrap`. Two ways leave the guarantee, for deliberate code only: a hijacked connection
+  carries whatever its handler writes, and a write through `Unwrap` bypasses the guard.
+- `CDN-Cache-Control` and `Surrogate-Control` are not touched. A product behind a CDN that reads
+  them must not set them on a response to a bearer request.
 - With a device store, a token that does not authenticate and two headers get 401 on every route,
   through `Config.OnBearerRefusal`. The challenge is `Bearer error="invalid_token"`, and a bare
   `Bearer` for a request without a token (RFC 6750 section 3.1). A refusal callback that writes
-  nothing still ends as that 401. A device store outage passes on like a cookie store outage.
+  nothing or another status still ends as that 401, and a cookie it sets is removed. A device
+  store outage passes on like a cookie store outage.
 - On a bearer request `End` signs the device out and leaves the cookie alone. `Start` and `Rotate`
   refuse a request the middleware classified as bearer with `ErrBearerRequest`, and `Rotate`
   refuses a device session, so a token never mints a cookie session. `Codec.ReadLoginCookie`
-  neither reads nor clears the login cookie.
+  neither reads nor clears the login cookie. `Codec.SetLoginCookie` cannot see the request, so
+  keeping it off a bearer request is the caller's job.
 - No `Vary: Authorization` is added. A bearer response is never stored, so no cache can serve it
   to another request.
 - `example/` turns `ExemptBearer` on, configures a memory device store and runs the session

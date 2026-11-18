@@ -52,10 +52,16 @@ type outcome struct {
 //
 // A bearer or malformed request is different:
 //
-//   - Every response produced by or behind this middleware carries
-//     Cache-Control: no-store, whatever a handler sets. A response produced
-//     earlier in the chain, such as a rate limiter's 429, a CORS refusal or a
-//     redirect of the mux, is outside it and carries no credential data.
+//   - Every response produced by or behind this middleware carries exactly
+//     one Cache-Control: no-store, whatever a handler sets. The handler keeps
+//     [http.Flusher], [http.Hijacker] and [io.ReaderFrom] of the writer
+//     underneath. A response produced earlier in the chain, such as a rate
+//     limiter's 429, a CORS refusal or a redirect of the mux, is outside it
+//     and carries no credential data. Two exceptions belong to deliberate
+//     code only: a hijacked connection carries whatever its handler writes,
+//     and a write through the writer's Unwrap bypasses the guard.
+//     CDN-Cache-Control and Surrogate-Control are not touched, so a product
+//     behind a CDN that reads them must not set them on such a response.
 //   - With a device store, a token that does not authenticate and a request
 //     with more than one Authorization header are answered with 401 and a
 //     WWW-Authenticate challenge, through [Config.OnBearerRefusal], on every

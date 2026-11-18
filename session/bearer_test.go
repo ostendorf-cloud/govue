@@ -4,10 +4,14 @@
 package session_test
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -403,6 +407,17 @@ func TestANoOpRefusalIsStill401(t *testing.T) {
 			w.Header().Del("Cache-Control")
 			w.WriteHeader(http.StatusUnauthorized)
 		},
+		"sets a cookie": func(w http.ResponseWriter, _ *http.Request) {
+			http.SetCookie(w, &http.Cookie{Name: "x", Value: "y"})
+		},
+		"sets a cookie and writes": func(w http.ResponseWriter, _ *http.Request) {
+			http.SetCookie(w, &http.Cookie{Name: "x", Value: "y"})
+			w.WriteHeader(http.StatusUnauthorized)
+		},
+		"sets a lower case cache key": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header()["cache-control"] = []string{"public, max-age=60"}
+			w.WriteHeader(http.StatusUnauthorized)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newBearerFixture(t, true, func(cfg *session.Config) { cfg.OnBearerRefusal = refuse })
@@ -416,10 +431,185 @@ func TestANoOpRefusalIsStill401(t *testing.T) {
 			if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer error="invalid_token"` {
 				t.Errorf("WWW-Authenticate = %q", got)
 			}
-			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
-				t.Errorf("Cache-Control = %q, want no-store", got)
+			checkOneNoStore(t, rec.Result().Header)
+			if got := rec.Result().Header.Values("Set-Cookie"); len(got) != 0 {
+				t.Errorf("Set-Cookie = %q, want none on a refusal", got)
 			}
 		})
+	}
+}
+
+// checkOneNoStore asserts exactly one Cache-Control field, in any spelling,
+// and that it is no-store.
+func checkOneNoStore(t *testing.T, h http.Header) {
+	t.Helper()
+	var fields []string
+	for k, vs := range h {
+		if strings.EqualFold(k, "Cache-Control") {
+			for _, v := range vs {
+				fields = append(fields, k+": "+v)
+			}
+		}
+	}
+	if len(fields) != 1 || fields[0] != "Cache-Control: no-store" {
+		t.Errorf("Cache-Control fields = %q, want exactly Cache-Control: no-store", fields)
+	}
+}
+
+// fullWriter is a recorder that also hijacks, reads from and takes a write
+// deadline, like net/http's own writer, so a test sees which of those reach
+// it through the middleware. Hijack hands out one end of an in memory pipe.
+type fullWriter struct {
+	*httptest.ResponseRecorder
+	hijacked bool
+	readFrom bool
+	deadline time.Time
+	// peer is the other end of the pipe Hijack hands out.
+	peer net.Conn
+}
+
+func (w *fullWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.hijacked = true
+	server, client := net.Pipe()
+	w.peer = client
+	return server, bufio.NewReadWriter(bufio.NewReader(server), bufio.NewWriter(server)), nil
+}
+
+func (w *fullWriter) ReadFrom(r io.Reader) (int64, error) {
+	w.readFrom = true
+	// Through Write, so the recorder takes its header snapshot as a real
+	// first write does.
+	return io.Copy(struct{ io.Writer }{w.ResponseRecorder}, r)
+}
+
+func (w *fullWriter) SetWriteDeadline(d time.Time) error {
+	w.deadline = d
+	return nil
+}
+
+// serveBearer runs h behind the middleware on a valid bearer request.
+func serveBearer(t *testing.T, w http.ResponseWriter, h http.HandlerFunc) {
+	t.Helper()
+	f := newBearerFixture(t, true, nil)
+	token, _ := f.issue(t)
+	f.manager.Middleware(h).ServeHTTP(w, request(nil, "Bearer "+token))
+}
+
+// TestInterfacesBehindTheGuard pins that a handler behind the middleware on
+// a bearer request keeps the interfaces of the writer underneath: a type
+// assertion works, as SSE and WebSocket libraries do it, and so does
+// http.ResponseController through Unwrap.
+func TestInterfacesBehindTheGuard(t *testing.T) {
+	t.Run("a writer with every interface", func(t *testing.T) {
+		inner := &fullWriter{ResponseRecorder: httptest.NewRecorder()}
+		deadline := start.Add(time.Minute)
+		serveBearer(t, inner, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Cache-Control", "public")
+			if _, ok := w.(http.Flusher); !ok {
+				t.Error("w.(http.Flusher) fails")
+			}
+			if _, ok := w.(http.Hijacker); !ok {
+				t.Error("w.(http.Hijacker) fails")
+			}
+			rf, ok := w.(io.ReaderFrom)
+			if !ok {
+				t.Fatal("w.(io.ReaderFrom) fails")
+			}
+			if _, err := rf.ReadFrom(strings.NewReader("body")); err != nil {
+				t.Errorf("ReadFrom: %v", err)
+			}
+			if err := http.NewResponseController(w).SetWriteDeadline(deadline); err != nil {
+				t.Errorf("SetWriteDeadline through the guard: %v", err)
+			}
+		})
+		if !inner.readFrom || inner.Body.String() != "body" {
+			t.Errorf("ReadFrom reached the inner writer = %v, body %q", inner.readFrom, inner.Body.String())
+		}
+		if !inner.deadline.Equal(deadline) {
+			t.Errorf("the write deadline did not reach the inner writer: %v", inner.deadline)
+		}
+		checkOneNoStore(t, inner.Result().Header)
+	})
+
+	t.Run("a hijack through a type assertion", func(t *testing.T) {
+		inner := &fullWriter{ResponseRecorder: httptest.NewRecorder()}
+		serveBearer(t, inner, func(w http.ResponseWriter, _ *http.Request) {
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("w.(http.Hijacker) fails")
+			}
+			conn, _, err := hijacker.Hijack()
+			if err != nil {
+				t.Fatalf("Hijack: %v", err)
+			}
+			_ = conn.Close()
+		})
+		if !inner.hijacked {
+			t.Fatal("the hijack did not reach the inner writer")
+		}
+		_ = inner.peer.Close()
+	})
+
+	t.Run("a writer without hijack and read from", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		serveBearer(t, rec, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Cache-Control", "public")
+			hijacker, okHijack := w.(http.Hijacker)
+			readerFrom, okRead := w.(io.ReaderFrom)
+			if !okHijack || !okRead {
+				t.Fatalf("assertions: Hijacker %v ReaderFrom %v", okHijack, okRead)
+			}
+			if _, _, err := hijacker.Hijack(); !errors.Is(err, http.ErrNotSupported) {
+				t.Errorf("Hijack = %v, want http.ErrNotSupported", err)
+			}
+			if _, err := readerFrom.ReadFrom(strings.NewReader("copied")); err != nil {
+				t.Errorf("ReadFrom: %v", err)
+			}
+		})
+		if rec.Body.String() != "copied" {
+			t.Errorf("body = %q, want the copied body", rec.Body.String())
+		}
+		checkOneNoStore(t, rec.Result().Header)
+	})
+}
+
+// TestServerSentEventsBehindTheGuard is the SSE shape: a type asserted
+// flusher, events written and flushed, a cache header the handler sets.
+func TestServerSentEventsBehindTheGuard(t *testing.T) {
+	rec := httptest.NewRecorder()
+	serveBearer(t, rec, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("w.(http.Flusher) fails")
+		}
+		flusher.Flush()
+		_, _ = w.Write([]byte("data: one\n\n"))
+		flusher.Flush()
+	})
+	if !rec.Flushed || rec.Body.String() != "data: one\n\n" {
+		t.Errorf("flushed %v body %q", rec.Flushed, rec.Body.String())
+	}
+	checkOneNoStore(t, rec.Result().Header)
+}
+
+// TestNoStoreReplacesEverySpelling pins exactly one Cache-Control field,
+// whatever key spelling a handler used, and that the CDN headers are left
+// alone, as documented.
+func TestNoStoreReplacesEverySpelling(t *testing.T) {
+	rec := httptest.NewRecorder()
+	serveBearer(t, rec, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header()["cache-control"] = []string{"public, max-age=60"}
+		w.Header()["CACHE-CONTROL"] = []string{"public"}
+		w.Header().Set("CDN-Cache-Control", "max-age=3600")
+		w.Header().Set("Surrogate-Control", "max-age=3600")
+		w.WriteHeader(http.StatusOK)
+	})
+	h := rec.Result().Header
+	checkOneNoStore(t, h)
+	if h.Get("CDN-Cache-Control") != "max-age=3600" || h.Get("Surrogate-Control") != "max-age=3600" {
+		t.Errorf("CDN headers = %q %q, want them untouched", h.Get("CDN-Cache-Control"), h.Get("Surrogate-Control"))
 	}
 }
 

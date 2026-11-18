@@ -198,10 +198,11 @@ func (a *app) loginCallback(w http.ResponseWriter, r *http.Request) error {
 // logout ends the session the request carries. It is an unsafe method, so
 // the route chain's CSRF check already ran: a logout a page cannot forge is
 // exactly as much a state change as any other. A bearer request signs its
-// device out and leaves the cookie alone.
+// device out and leaves the cookie alone. Without a device store a bearer
+// request has no device to sign out, which is a 401, not a server error.
 func (a *app) logout(w http.ResponseWriter, r *http.Request) error {
 	if err := a.sessions.End(r.Context(), w, r); err != nil {
-		if errors.Is(err, session.ErrDeviceToken) {
+		if errors.Is(err, session.ErrDeviceToken) || errors.Is(err, session.ErrDevicesDisabled) {
 			return api.Unauthenticated("the token is not valid")
 		}
 		return api.Internal(err)

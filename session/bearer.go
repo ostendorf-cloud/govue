@@ -4,18 +4,25 @@
 package session
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"strings"
 
 	"github.com/ostendorf-cloud/govue/internal/bearer"
 )
 
 // A request is a bearer request when it carries one Authorization header with
 // the Bearer scheme, and a malformed one when it carries more than one. On
-// both this package never reads the session cookie or the login cookie, and
-// never sets or clears either, whether a device store is configured or not.
+// both this package never reads or clears the session cookie or the login
+// cookie, whether a device store is configured or not. Behind
+// [Manager.Middleware], [Manager.Start] and [Manager.Rotate] refuse to set
+// the session cookie. [Codec.SetLoginCookie] cannot see the request, so it
+// is the caller's to keep off a bearer request.
 // With a device store they authenticate by the device token only. Without one
 // they are anonymous, so a product's own gateway or JWT keeps working. ADR
 // 0001 records why. csrf.Protector.ExemptBearer skips the CSRF check for the
@@ -140,8 +147,8 @@ func (m *Manager) endDevice(ctx context.Context, kind bearer.Kind, token string)
 
 // refuseBearer answers a bearer request whose token does not authenticate.
 // The headers are set before every write, so a custom refusal cannot drop
-// them, and a refusal that writes nothing or another status still ends as a
-// 401.
+// them or set a cookie, and a refusal that writes nothing or another status
+// still ends as a 401.
 func (m *Manager) refuseBearer(w http.ResponseWriter, r *http.Request, noToken bool) {
 	challenge := challengeInvalid
 	if noToken {
@@ -149,7 +156,8 @@ func (m *Manager) refuseBearer(w http.ResponseWriter, r *http.Request, noToken b
 	}
 	headers := func(h http.Header) {
 		h.Set("WWW-Authenticate", challenge)
-		h.Set("Cache-Control", "no-store")
+		h.Del("Set-Cookie")
+		noStore(h)
 	}
 	headers(w.Header())
 	if m.cfg.OnBearerRefusal != nil {
@@ -164,14 +172,29 @@ func (m *Manager) refuseBearer(w http.ResponseWriter, r *http.Request, noToken b
 }
 
 // noStore keeps a response out of every cache, as RFC 6749 section 5.1 does
-// for a token response.
+// for a token response. A non canonical spelling of the key is removed
+// first, so exactly one Cache-Control field is sent. CDN-Cache-Control and
+// Surrogate-Control are not touched: a product behind a CDN that reads them
+// must not set them on a response to a bearer request.
 func noStore(h http.Header) {
+	for k := range h {
+		if k != "Cache-Control" && strings.EqualFold(k, "Cache-Control") {
+			delete(h, k)
+		}
+	}
 	h.Set("Cache-Control", "no-store")
 }
 
 // guardWriter applies before to the headers on every status it writes, so a
 // handler cannot override them, and replaces a final status with status when
 // that is set.
+//
+// It keeps the interfaces of net/http's own writer: a type assertion for
+// [http.Flusher], [http.Hijacker] or [io.ReaderFrom] works behind it, and
+// [http.ResponseController] reaches the writer underneath through Unwrap.
+// Two ways leave the guarantee on purpose and belong to deliberate code
+// only: a hijacked connection carries whatever its handler writes, and a
+// write through Unwrap bypasses the guard.
 type guardWriter struct {
 	http.ResponseWriter
 	before func(http.Header)
@@ -209,6 +232,31 @@ func (w *guardWriter) FlushError() error {
 		w.WriteHeader(http.StatusOK)
 	}
 	return http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+// Flush is [guardWriter.FlushError] for code that asserts [http.Flusher].
+// A writer underneath that cannot flush makes it a no-op, as net/http does.
+func (w *guardWriter) Flush() { _ = w.FlushError() }
+
+// Hijack hands the connection to the handler, through the writer underneath.
+// It is [http.ErrNotSupported] when that writer cannot hijack. No header is
+// applied: after a hijack the header map is never sent, and whatever the
+// handler writes on the connection is outside the no-store guarantee.
+func (w *guardWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return http.NewResponseController(w.ResponseWriter).Hijack()
+}
+
+// ReadFrom writes the status first when nothing has, then copies through the
+// writer underneath, with its own ReadFrom when it has one.
+func (w *guardWriter) ReadFrom(r io.Reader) (int64, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	// The writer underneath has no ReadFrom, so io.Copy uses its Write.
+	return io.Copy(w.ResponseWriter, r)
 }
 
 // Unwrap lets [http.ResponseController] reach the writer underneath.

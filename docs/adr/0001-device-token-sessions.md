@@ -216,7 +216,7 @@ reuses the reasoning that already rejected a signed cookie for the web session.
   does for token responses). So does every response to a bearer request that is produced by or
   behind `session.Middleware`, whatever a handler sets. A response produced earlier in the chain,
   such as a rate limiter's 429, a CORS refusal or a mux redirect, is outside it and carries no
-  credential data.
+  credential data. A hijacked connection is outside it too, see the amendment.
 - App origins are a separate list with their own CORS policy: `Authorization` allowed,
   credentials off. The web policy is unchanged.
 - The app origin list never reaches `csrf.TrustOrigin`. Startup fails when an origin is both an
@@ -271,7 +271,11 @@ bearer request without a device store was refused. The owner settled four change
   request without a token (RFC 6750 section 3.1). This tells a caller no more than whether it
   sent a token.
 - The no-store rule covers every response produced by or behind `session.Middleware`, as the
-  section on responses now says.
+  section on responses now says. A hijacked connection is the exception: it carries whatever its
+  handler writes. A write through the guard's `Unwrap` bypasses it too. Both are for deliberate
+  code only. `CDN-Cache-Control` and `Surrogate-Control` are not touched, so a product behind a
+  CDN that reads them must not set them on a response to a bearer request.
+- A refusal callback cannot set a cookie: the refusal removes any `Set-Cookie` before it writes.
 
 ### Confirmation
 
