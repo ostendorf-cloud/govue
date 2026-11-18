@@ -473,6 +473,209 @@ describe('an unsupported browser', () => {
   })
 })
 
+function gate(): { wait: Promise<void>; release: () => void } {
+  let release: () => void = () => undefined
+  const wait = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  return { wait, release }
+}
+
+describe('one ceremony per page', () => {
+  it('refuses an enrolment of a second instance while one runs', async () => {
+    const held = gate()
+    const { passkey, client, fetchMock } = setup({
+      ...happy,
+      'POST /account/passkeys/register/begin': async () => {
+        await held.wait
+        return answer(200, { public_key: { challenge: CHALLENGE } })
+      },
+    })
+    const other = usePasskey({ client })
+
+    const running = passkey.enrol()
+    await expect(other.enrol()).rejects.toMatchObject({ code: 'busy' })
+    await expect(other.login()).rejects.toMatchObject({ code: 'busy' })
+    held.release()
+    await running
+
+    // One begin, not three: a second begin would replace the challenge cookie.
+    expect(fetchMock.mock.calls.filter(([url]) => (url as string).endsWith('/begin'))).toHaveLength(
+      1,
+    )
+    expect(other.status.value).toBe('idle')
+  })
+
+  it('lets a conditional login yield to a modal ceremony without a request', async () => {
+    const held = gate()
+    const { passkey, client, fetchMock } = setup({
+      ...happy,
+      'POST /account/passkeys/register/begin': async () => {
+        await held.wait
+        return answer(200, { public_key: { challenge: CHALLENGE } })
+      },
+    })
+    const other = usePasskey({ client })
+
+    const running = passkey.enrol()
+    await expect(other.login({ conditional: true })).resolves.toBeUndefined()
+    held.release()
+    await running
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).not.toContain(
+      '/api/v1/account/passkeys/login/begin',
+    )
+    expect(stubs.get).not.toHaveBeenCalled()
+  })
+
+  it('ends a conditional login that waits for the autofill UI when enrol starts', async () => {
+    let seen: AbortSignal | undefined
+    stubs.get.mockImplementationOnce(
+      (args: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          seen = args.signal
+          args.signal.addEventListener('abort', () => {
+            reject(domError('AbortError'))
+          })
+        }),
+    )
+    const { passkey, client } = setup(happy)
+    const other = usePasskey({ client })
+
+    const waiting = other.login({ conditional: true })
+    await vi.waitFor(() => expect(seen).toBeDefined())
+    const enrolled = await passkey.enrol()
+
+    expect(seen?.aborted).toBe(true)
+    await expect(waiting).resolves.toBeUndefined()
+    expect(enrolled).toEqual(PASSKEY)
+  })
+
+  it('ends a conditional login that is still in its begin request when enrol starts', async () => {
+    let beginSignal: AbortSignal | undefined
+    const { passkey, client, fetchMock } = setup({
+      ...happy,
+      'POST /account/passkeys/login/begin': (_body, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          beginSignal = init?.signal ?? undefined
+          init?.signal?.addEventListener('abort', () => {
+            reject(domError('AbortError'))
+          })
+        }),
+    })
+    const other = usePasskey({ client })
+
+    const waiting = other.login({ conditional: true })
+    await vi.waitFor(() => expect(beginSignal).toBeDefined())
+    await passkey.enrol()
+
+    // The abort reached the request and was not taken for a failure.
+    await expect(waiting).resolves.toBeUndefined()
+    expect(beginSignal?.aborted).toBe(true)
+    expect(stubs.get).not.toHaveBeenCalled()
+    expect(fetchMock.mock.calls.some(([url]) => (url as string).endsWith('/login/finish'))).toBe(
+      false,
+    )
+  })
+})
+
+describe('a passkey with a device token client', () => {
+  it('refuses both ceremonies without a request', async () => {
+    const fetchMock = vi.fn<typeof globalThis.fetch>()
+    const client = createClient({ fetch: fetchMock, auth: { mode: 'bearer' } })
+    const passkey = usePasskey({ client })
+
+    await expect(passkey.enrol()).rejects.toMatchObject({ code: 'bearer_unsupported' })
+    await expect(passkey.login()).rejects.toMatchObject({ code: 'bearer_unsupported' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('a new ceremony', () => {
+  it('clears the error of the one before', async () => {
+    let refuse = true
+    const { passkey } = setup({
+      ...happy,
+      'POST /account/passkeys/login/finish': () =>
+        refuse ? failure(401, 'invalid_credentials') : answer(200, { login: 'person@example.com' }),
+    })
+
+    await passkey.login().catch(() => undefined)
+    expect(passkey.error.value).toBeDefined()
+    refuse = false
+    await passkey.login()
+
+    expect(passkey.error.value).toBeUndefined()
+    expect(passkey.status.value).toBe('done')
+  })
+
+  it('takes a null credential for a cancel', async () => {
+    stubs.create.mockResolvedValueOnce(null)
+    const { passkey, fetchMock } = setup(happy)
+
+    await expect(passkey.enrol()).resolves.toBeUndefined()
+
+    expect(passkey.status.value).toBe('cancelled')
+    expect(passkey.error.value).toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('what an operator can tell', () => {
+  it('keeps the name of a browser error as the reason, and no message', async () => {
+    stubs.create.mockRejectedValueOnce(domError('SecurityError'))
+    const { passkey } = setup(happy)
+
+    const caught = (await passkey.enrol().catch((e: unknown) => e)) as PasskeyError
+
+    expect(caught.code).toBe('failed')
+    expect(caught.reason).toBe('SecurityError')
+    expect(JSON.stringify([caught.message, caught.reason])).not.toContain(CHALLENGE)
+  })
+
+  it('reduces a name outside the fixed set to other', async () => {
+    stubs.create.mockRejectedValueOnce(domError(`Custom ${CHALLENGE}`))
+    const { passkey } = setup(happy)
+
+    const caught = (await passkey.enrol().catch((e: unknown) => e)) as PasskeyError
+
+    expect(caught.reason).toBe('other')
+  })
+
+  it('has no reason for a failure that is not the browser', async () => {
+    const { passkey } = setup({
+      ...happy,
+      'POST /account/passkeys/register/finish': () => failure(400, 'invalid_passkey'),
+    })
+
+    const caught = (await passkey.enrol().catch((e: unknown) => e)) as PasskeyError
+
+    expect(caught.reason).toBe('')
+  })
+
+  it('maps an excluded authenticator to already_registered on enrol only', async () => {
+    stubs.get.mockRejectedValueOnce(domError('InvalidStateError'))
+    const { passkey } = setup(happy)
+
+    await expect(passkey.login()).rejects.toMatchObject({
+      code: 'failed',
+      reason: 'InvalidStateError',
+    })
+  })
+
+  it('takes a plain text 403 of the CSRF middleware for a refused request', async () => {
+    const { passkey } = setup({
+      'POST /account/passkeys/register/begin': () =>
+        new Response('Forbidden', { status: 403, headers: { 'Content-Type': 'text/plain' } }),
+    })
+
+    await expect(passkey.enrol()).rejects.toMatchObject({
+      code: 'permission_denied',
+      status: 403,
+    })
+  })
+})
+
 describe('double submit', () => {
   it('shares one ceremony between two enrol calls', async () => {
     let release: () => void = () => undefined

@@ -154,6 +154,8 @@ describe('GovuePasskeyButton', () => {
     expect(document.querySelector('[aria-live="polite"]')).toHaveTextContent(
       'Waiting for your passkey',
     )
+    // Announced once: the live region has it, the button's own text does not.
+    expect(screen.getAllByText('Waiting for your passkey')).toHaveLength(1)
     // A second click on the disabled button starts nothing.
     await user.click(button)
     expect(browser.get).toHaveBeenCalledTimes(1)
@@ -192,7 +194,8 @@ describe('GovuePasskeyButton', () => {
     await user.click(screen.getByRole('button', { name: 'Log in with a passkey' }))
 
     const text = await screen.findByText('The passkey could not be verified.')
-    expect(text.closest('[aria-live="polite"]')).not.toBeNull()
+    // A failure is an alert, as in the account forms.
+    expect(text.closest('[role="alert"]')).not.toBeNull()
     expect(document.body).not.toHaveTextContent(CHALLENGE)
     expect(emitted().error).toHaveLength(1)
     expect(emitted().success).toBeUndefined()
@@ -236,5 +239,60 @@ describe('GovuePasskeyButton', () => {
     await user.click(screen.getByRole('button', { name: 'Log in with a passkey' }))
 
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('shows no old error text after a retry went through', async () => {
+    const user = userEvent.setup()
+    let refuse = true
+    await setup(
+      {
+        ...routes,
+        'POST /account/passkeys/login/finish': () =>
+          refuse
+            ? answer(401, { error: { code: 'invalid_credentials', message: 'x' } })
+            : answer(200, { login: 'person@example.com' }),
+      },
+      { mode: 'login' },
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Log in with a passkey' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be verified')
+    refuse = false
+    await user.click(screen.getByRole('button', { name: 'Log in with a passkey' }))
+
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  })
+
+  it('is not offered to a client with a device token', async () => {
+    const fetchMock = vi.fn<typeof globalThis.fetch>()
+    const client = createClient({ fetch: fetchMock, auth: { mode: 'bearer' } })
+    render(GovuePasskeyButton, { props: { client, mode: 'login' } })
+    await nextTick()
+
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('gives the focus back to the button when the ceremony is over', async () => {
+    const user = userEvent.setup()
+    let release: () => void = () => undefined
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    browser.get.mockImplementationOnce(async () => {
+      await held
+      return { toJSON: () => ({}) }
+    })
+    const { emitted } = await setup(routes, { mode: 'login' })
+    const button = screen.getByRole('button', { name: 'Log in with a passkey' })
+
+    await user.click(button)
+    await waitFor(() => expect(button).toBeDisabled())
+    // A browser drops the focus of a button that turns disabled.
+    button.blur()
+    expect(document.body).toHaveFocus()
+    release()
+    await waitFor(() => expect(emitted().success).toHaveLength(1))
+
+    await waitFor(() => expect(button).toHaveFocus())
   })
 })

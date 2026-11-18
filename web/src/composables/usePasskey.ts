@@ -30,7 +30,24 @@ export type PasskeyErrorCode =
   | 'network'
   | 'already_registered'
   | 'busy'
+  | 'bearer_unsupported'
   | 'failed'
+
+/**
+ * The names of the browser errors that `reason` can carry. A name outside
+ * this fixed set becomes `other`, so `reason` is never free text.
+ */
+const REASONS = new Set([
+  'SecurityError',
+  'NotSupportedError',
+  'ConstraintError',
+  'InvalidStateError',
+  'UnknownError',
+  'DataError',
+  'EncodingError',
+  'NotReadableError',
+  'TypeError',
+])
 
 /**
  * The one failure type of usePasskey. The message is a fixed English text per
@@ -43,13 +60,24 @@ export class PasskeyError extends Error {
   readonly status: number
   /** The id the server log line of this failure carries. */
   readonly requestId: string
+  /**
+   * For an operator: the name of the browser error behind a `failed`, such as
+   * `SecurityError` for a wrong RP id or domain. One of a fixed set or
+   * `other`, never the browser's message. Empty when the browser was not the
+   * source.
+   */
+  readonly reason: string
 
-  constructor(code: PasskeyErrorCode, init: { status?: number; requestId?: string } = {}) {
+  constructor(
+    code: PasskeyErrorCode,
+    init: { status?: number; requestId?: string; reason?: string } = {},
+  ) {
     super(MESSAGES[code])
     this.name = 'PasskeyError'
     this.code = code
     this.status = init.status ?? 0
     this.requestId = init.requestId ?? ''
+    this.reason = init.reason === undefined ? '' : REASONS.has(init.reason) ? init.reason : 'other'
   }
 }
 
@@ -68,6 +96,7 @@ const MESSAGES: Record<PasskeyErrorCode, string> = {
   network: 'No connection to the server.',
   already_registered: 'This device already holds a passkey for the account.',
   busy: 'Another passkey ceremony is running.',
+  bearer_unsupported: 'A client with a device token cannot run a passkey ceremony.',
   failed: 'The passkey ceremony failed.',
 }
 
@@ -90,10 +119,17 @@ export interface PasskeyLoginOptions {
    * Ask for the browser's autofill UI (`mediation: 'conditional'`) instead of
    * a modal prompt. It needs a form field with `autocomplete="... webauthn"`.
    * A conditional login leaves `status`, `busy` and `error` alone, so it can
-   * wait in the background while the rest of the page works.
+   * wait in the background while the rest of the page works. It yields to a
+   * modal ceremony: it resolves with undefined, like a cancel, and sends no
+   * request while one runs, and a modal `enrol` or `login` that starts ends
+   * it the same way. The product restarts it when it wants it again.
    */
   conditional?: boolean
-  /** Ends the ceremony early. A conditional one the app no longer wants. */
+  /**
+   * Ends the ceremony early. A conditional one the app no longer wants. It
+   * aborts the begin request and the browser step, not the finish request,
+   * which runs to its answer once the browser step has returned.
+   */
   signal?: AbortSignal
 }
 
@@ -107,7 +143,9 @@ export interface PasskeyState {
   /**
    * Registers a passkey for the signed in account. Resolves with the passkey,
    * or with undefined when the person dismissed the prompt. Rejects with a
-   * PasskeyError. A second call while one runs gets the same promise.
+   * PasskeyError. A second call of this instance while its own `enrol` runs
+   * gets the same promise. Any other call while a ceremony runs on the page,
+   * through this or another instance, rejects with `busy`.
    */
   enrol: (name?: string) => Promise<Passkey | undefined>
   /**
@@ -155,13 +193,34 @@ interface Begin<T> {
   public_key?: T
 }
 
+/**
+ * isBearerClient tells a client of a native app with a device token from the
+ * cookie client: only `createClient({ auth: { mode: 'bearer' } })` returns
+ * `signIn` and `signOut`. Such a client sends no cookie, so the challenge
+ * cookie of a begin answer never comes back, and a passkey login starts a
+ * cookie session, not a device token.
+ */
+export function isBearerClient(client: ApiClient): boolean {
+  return 'signIn' in client && 'signOut' in client
+}
+
+/**
+ * The ceremony state of the page. There is one challenge cookie per browser
+ * and a new begin replaces it, so one ceremony may run per page, whatever the
+ * number of usePasskey instances and buttons. `modal` is the enrolment or the
+ * login with a prompt. `waiting` is a conditional login that waits for the
+ * autofill UI, and it yields to every modal ceremony.
+ */
+let modal: { owner: object; kind: 'enrol' | 'login'; promise: Promise<unknown> } | undefined
+let waiting: AbortController | undefined
+
 export function usePasskey(options: PasskeyOptions): PasskeyState {
   const supported = ref(isPasskeySupported())
   const status = ref<PasskeyStatus>('idle')
   const error = ref<PasskeyError | undefined>()
   const busy = computed(() => status.value === 'busy')
-  let active: { kind: 'enrol' | 'login'; promise: Promise<unknown> } | undefined
-  let conditional: AbortController | undefined
+  // The identity of this instance: it may share the promise of its own call.
+  const owner = {}
 
   const client = () => toValue(options.client)
   const base = () => toValue(options.path) ?? DEFAULT_PASSKEY_PATH
@@ -176,9 +235,10 @@ export function usePasskey(options: PasskeyOptions): PasskeyState {
     path: string,
     body: unknown,
     ownAnswer: boolean,
+    signal?: AbortSignal,
   ): Promise<T> {
     try {
-      const requestOptions = { skipUnauthenticatedHook: ownAnswer }
+      const requestOptions = { skipUnauthenticatedHook: ownAnswer, signal }
       return method === 'get'
         ? await client().get<T>(`${base()}${path}`, requestOptions)
         : await client().post<T>(`${base()}${path}`, body, requestOptions)
@@ -188,18 +248,23 @@ export function usePasskey(options: PasskeyOptions): PasskeyState {
   }
 
   function requireSupported(): void {
+    if (isBearerClient(client())) {
+      throw new PasskeyError('bearer_unsupported')
+    }
     if (!isPasskeySupported()) {
       throw new PasskeyError('unsupported')
     }
   }
 
   function exclusive<T>(kind: 'enrol' | 'login', work: () => Promise<T>): Promise<T | undefined> {
-    if (active) {
-      if (active.kind === kind) {
-        return active.promise as Promise<T | undefined>
+    if (modal) {
+      if (modal.owner === owner && modal.kind === kind) {
+        return modal.promise as Promise<T | undefined>
       }
       return Promise.reject(new PasskeyError('busy'))
     }
+    // A prompt the person asked for ends the autofill ceremony that waits.
+    waiting?.abort()
     status.value = 'busy'
     error.value = undefined
     const promise = (async () => {
@@ -217,10 +282,10 @@ export function usePasskey(options: PasskeyOptions): PasskeyState {
         status.value = 'error'
         throw failure
       } finally {
-        active = undefined
+        modal = undefined
       }
     })()
-    active = { kind, promise }
+    modal = { owner, kind, promise }
     return promise
   }
 
@@ -238,7 +303,9 @@ export function usePasskey(options: PasskeyOptions): PasskeyState {
     } catch {
       throw new PasskeyError('failed')
     }
-    const credential = await ceremonyStep(() => navigator.credentials.create({ publicKey }))
+    const credential = await ceremonyStep('enrol', () =>
+      navigator.credentials.create({ publicKey }),
+    )
     const body: { credential: unknown; name?: string } = { credential: credentialJson(credential) }
     if (name !== undefined) {
       body.name = name
@@ -265,6 +332,7 @@ export function usePasskey(options: PasskeyOptions): PasskeyState {
       '/login/begin',
       {},
       true,
+      loginOptions.signal,
     )
     let publicKey: PublicKeyCredentialRequestOptions
     try {
@@ -272,7 +340,7 @@ export function usePasskey(options: PasskeyOptions): PasskeyState {
     } catch {
       throw new PasskeyError('failed')
     }
-    const credential = await ceremonyStep(() =>
+    const credential = await ceremonyStep('login', () =>
       navigator.credentials.get({
         publicKey,
         ...(loginOptions.conditional ? { mediation: 'conditional' as const } : {}),
@@ -297,28 +365,34 @@ export function usePasskey(options: PasskeyOptions): PasskeyState {
 
   async function login(loginOptions: PasskeyLoginOptions = {}): Promise<LoginResult | undefined> {
     if (loginOptions.conditional) {
+      // A modal ceremony owns the challenge cookie: the autofill one yields
+      // and resolves as cancelled, without a request.
+      if (modal) {
+        return undefined
+      }
       // A second conditional ceremony replaces the first one.
-      conditional?.abort()
+      waiting?.abort()
       const own = new AbortController()
-      conditional = own
+      waiting = own
       const signal = loginOptions.signal
         ? AbortSignal.any([own.signal, loginOptions.signal])
         : own.signal
       try {
         return await loginCeremony({ ...loginOptions, signal })
       } catch (caught) {
-        if (caught instanceof Cancelled) {
+        // Ended from outside: by a modal ceremony, a newer conditional one
+        // or the caller's signal. That is a cancel, whatever the abort
+        // broke, the begin request included.
+        if (caught instanceof Cancelled || signal.aborted) {
           return undefined
         }
         throw toPasskeyError(caught)
       } finally {
-        if (conditional === own) {
-          conditional = undefined
+        if (waiting === own) {
+          waiting = undefined
         }
       }
     }
-    // A prompt the person asked for ends the autofill one that waits.
-    conditional?.abort()
     return exclusive('login', () => loginCeremony(loginOptions))
   }
 
@@ -332,7 +406,7 @@ export function usePasskey(options: PasskeyOptions): PasskeyState {
   }
 
   function reset(): void {
-    if (!active) {
+    if (status.value !== 'busy') {
       status.value = 'idle'
       error.value = undefined
     }
@@ -362,19 +436,26 @@ function credentialJson(credential: Credential): unknown {
  * throws. A dismissed prompt is Cancelled. Nothing the browser says is kept:
  * its messages may quote the options.
  */
-async function ceremonyStep(call: () => Promise<Credential | null>): Promise<Credential> {
+async function ceremonyStep(
+  kind: 'enrol' | 'login',
+  call: () => Promise<Credential | null>,
+): Promise<Credential> {
   let credential: Credential | null
   try {
     credential = await call()
   } catch (caught) {
-    switch (errorName(caught)) {
+    const name = errorName(caught)
+    switch (name) {
       case 'NotAllowedError':
       case 'AbortError':
         throw new Cancelled()
       case 'InvalidStateError':
-        throw new PasskeyError('already_registered')
+        // Only create throws it for an excluded authenticator.
+        throw new PasskeyError(kind === 'enrol' ? 'already_registered' : 'failed', {
+          reason: name,
+        })
       default:
-        throw new PasskeyError('failed')
+        throw new PasskeyError('failed', { reason: name })
     }
   }
   if (credential === null) {
@@ -422,7 +503,9 @@ function fromApiError(caught: unknown): PasskeyError {
     case ErrorCode.unavailable:
       return new PasskeyError('unavailable', init)
     default:
-      return new PasskeyError('failed', init)
+      // The CSRF middleware answers 403 as plain text, so the client has no
+      // code for it. It is the refusal of a cross origin request.
+      return new PasskeyError(caught.status === 403 ? 'permission_denied' : 'failed', init)
   }
 }
 

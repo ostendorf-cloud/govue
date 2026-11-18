@@ -38,7 +38,12 @@ export { ApiError, ErrorCode, isApiError } from './api/errors'
 export type { ApiErrorPayload, ErrorCodeValue } from './api/errors'
 export type { Enrolment, LoginResult, Passkey, SignupResult } from './api/account'
 
-export { isPasskeySupported, PasskeyError, usePasskey } from './composables/usePasskey'
+export {
+  isBearerClient,
+  isPasskeySupported,
+  PasskeyError,
+  usePasskey,
+} from './composables/usePasskey'
 export type {
   PasskeyErrorCode,
   PasskeyLoginOptions,

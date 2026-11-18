@@ -1081,14 +1081,48 @@ The design of the library and the reasoning behind it.
   contract (`reauthentication_required`, `invalid_passkey`, `invalid_credentials`,
   `last_factor`, `not_found`), `unsupported`, or one of the client's own: `unauthenticated`,
   `invalid_argument`, `permission_denied`, `rate_limited`, `unavailable`, `network`,
-  `already_registered`, `busy`, `failed`. The error has a fixed English message per code and no
-  cause, so no challenge, credential or server text ends up in it. The button shows the text of
-  its code from both catalogues under `govue.passkey`.
-- One ceremony runs at a time, because the challenge cookie is one per browser. A second
-  `enrol` while one runs gets the same promise, a `login` during an `enrol` rejects with `busy`,
-  and the button is disabled while it waits. A conditional login (`login({ conditional: true })`,
-  for the autofill UI) leaves the status alone and ends when a prompt the person asked for
-  starts.
+  `already_registered`, `busy`, `bearer_unsupported`, `failed`. The error has a fixed English
+  message per code and no cause, so no challenge, credential or server text ends up in it. The
+  button shows the text of its code from both catalogues under `govue.passkey`.
+- A browser failure that is not a dismissal is `failed`, with `reason` set to the name of the
+  browser error from a fixed set (`SecurityError` for a wrong RP id or domain,
+  `NotSupportedError`, `ConstraintError`, `InvalidStateError`, and a few more) or `other`. It is
+  never the browser's message, so an operator can tell a misconfigured RP id from a broken answer
+  without a secret in the error. The visitor sees the generic text. `InvalidStateError` is
+  `already_registered` on enrolment, where it means an excluded authenticator, and `failed` on a
+  login. The CSRF middleware answers 403 as plain text, which the client turns into the code
+  `internal`. `usePasskey` reads the status and maps a 403 to `permission_denied`, which asks
+  for a reload. The account forms do not look at the status and show their generic text.
+- The failure text is an alert, as in the account forms. The busy text and the note of a
+  dismissed prompt are in a polite live region, and the busy text is announced once: the
+  button's own loading text is emptied. A button that turns disabled drops the focus, which is
+  the pattern of `GovueButton` in the forms too. The passkey button gives the focus back when
+  the ceremony is over and nothing else has it.
+- One ceremony runs at a time per page, because the challenge cookie is one per browser and a
+  new begin replaces it. The lock is module level, so it holds across every `usePasskey` instance
+  and every button on the page. A second `enrol` of the same instance while its own runs gets the
+  same promise. Any other call while a ceremony runs rejects with `busy`, and the button is
+  disabled while it waits.
+- A conditional login (`login({ conditional: true })`, for the autofill UI) leaves the status
+  alone. It yields to a modal ceremony in both directions. Started while one runs, it resolves
+  with `undefined`, as a cancel, and sends no request. A modal `login()` or `enrol()` that starts
+  while it waits aborts it, its begin request included, and it resolves with `undefined` too. The
+  product restarts it when it wants it again. A conditional login that has already returned from
+  the browser and waits for its finish answer is not stopped by a modal ceremony that starts
+  then. That window is short, and the loser answers `invalid_credentials`.
+- A conditional begin made at page load expires with the challenge lifetime of the server, 300
+  seconds by default. A person who picks a passkey from the autofill UI later gets
+  `invalid_credentials` from the finish. The product restarts the conditional login, for
+  example on that error or on a timer.
+- The `signal` option aborts the begin request and the browser step, and not the finish request,
+  which runs to its answer once the browser step has returned.
+- A client with a device token cannot run a ceremony. The challenge cookie of a begin answer
+  never comes back, because that client sends `credentials: 'omit'`, and a passkey login starts a
+  cookie session through `StartSession`, not a device token. `usePasskey` recognises such a
+  client (`isBearerClient`: only the bearer client has `signIn` and `signOut`) and rejects both
+  ceremonies with `bearer_unsupported` without a request. The button does not render for it.
+  This is the same host only cookie limit as below: a native app with a device token signs in
+  through `signIn`, not through a passkey.
 - The login routes set `skipUnauthenticatedHook`, since a 401 there is the answer to the
   ceremony. Enrolment does not, so a lost session still reaches `onUnauthenticated`. A person
   whose login is older than the server's window gets `reauthentication_required` and logs in

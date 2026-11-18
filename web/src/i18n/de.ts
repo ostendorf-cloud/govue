@@ -63,7 +63,8 @@ const de: MessageTree = {
         not_found: 'Dieser Passkey existiert nicht mehr.',
         unsupported: 'Dieser Browser unterstützt keine Passkeys.',
         unauthenticated: 'Du bist nicht angemeldet. Bitte melde dich an und versuche es erneut.',
-        invalid_argument: 'Der Name ist nicht gültig.',
+        invalid_argument:
+          'Die Anfrage war nicht gültig. Bitte prüfe deine Eingabe und versuche es erneut.',
         permission_denied:
           'Die Anfrage wurde abgelehnt. Bitte lade die Seite neu und versuche es erneut.',
         rate_limited: 'Zu viele Versuche. Bitte warte einen Moment und versuche es erneut.',
@@ -71,6 +72,7 @@ const de: MessageTree = {
         network: 'Keine Verbindung zum Server. Bitte prüfe dein Netzwerk und versuche es erneut.',
         already_registered: 'Dieses Gerät hat bereits einen Passkey für dein Konto.',
         busy: 'Eine andere Passkey-Abfrage ist offen.',
+        bearer_unsupported: 'Passkeys sind in dieser App nicht verfügbar.',
         failed: 'Etwas ist schiefgegangen. Bitte versuche es erneut.',
       },
     },
