@@ -1059,6 +1059,61 @@ The design of the library and the reasoning behind it.
   shows as a refused request. An application with such a flow sets `csrfToken` in
   `createClient`.
 
+### The bearer client of a native app
+
+- `createClient({ auth: { mode: 'bearer', storage, rotateAfterMs, deviceName } })` is the client of
+  a native app. It returns a `BearerClient`: the same `get`, `post`, `put`, `patch` and `del`, plus
+  `signIn` and `signOut`. The default is `auth: { mode: 'cookie' }`, and its requests are
+  byte for byte what they were. The option is one object, not flags, so the modes cannot mix.
+  Bearer mode refuses the `credentials` and `csrfToken` options at construction, since both belong
+  to the cookie.
+- A bearer request carries `Authorization: Bearer <token>`, uses `credentials: 'omit'`, sends no
+  CSRF header and never reads `document.cookie`. The client owns the `Authorization`, `Cookie` and
+  `X-CSRF-Token` headers: a caller's copy is dropped. The token is read from the storage at send
+  time, never kept in a queue. A request without a stored token goes out without an
+  `Authorization` header and is never a reason to rotate.
+- `TokenStorage` has three async methods, `get`, `set` and `clear`. It holds ONE opaque string. The
+  client writes a small JSON record in it, `{"v":1,"token":"...","at":<ms>}`, where `at` is the
+  time the token was issued or last rotated. The interval check needs `at`, and a second storage
+  key would let the two drift apart. An adapter stores and returns the string unchanged and never
+  logs it. A value the client cannot read is a failure, not an empty storage.
+- govue ships the in memory adapter, `createMemoryTokenStorage`, and nothing persistent. A product
+  that keeps the sign in across app starts supplies an adapter backed by the platform keychain.
+  govue has no Capacitor dependency and does not ship a plugin.
+- Rotation follows ADR 0001. The client rotates on the first use after the app start and whenever
+  the stored token is older than `rotateAfterMs`, 24 hours by default. A rotation is one call to
+  `POST /auth/token/rotate` with a random nonce, single flight: concurrent requests share the one
+  in flight. The new token is written to the storage before any request uses it. A request that
+  waits for a rotation sends the new token.
+- A network error or a 5xx on the rotation keeps the old token. The next request tries again with
+  the same nonce, as the server allows within its rotate timeout. A 409 `rotation_refused` is quiet:
+  the token stays, nothing is signed out, and the client waits five minutes before it asks again.
+  A 401 clears the storage and calls `onUnauthenticated` once, however many requests wait. A 401
+  on an ordinary request does the same, unless that request set `skipUnauthenticatedHook`.
+- `signIn(credentials, { deviceName })` posts `login`, `password`, `code` and `device_name` to
+  `POST /auth/token`, stores the token and answers `{ deviceId, expiresAt }`. The token is not in
+  the answer. It sends no `Authorization` header, so a stale token cannot make the server refuse
+  valid credentials, and it replaces a stored token without ending that device on the server. The
+  device name is checked before anything is sent: at most 64 bytes, no control or format
+  characters. These are the rules of the server, and a bad name costs no verification there.
+- `signOut()` calls `DELETE /auth/token` and clears the storage whatever the call answered. A 401
+  counts as done. Any other failure is thrown after the clear, so the app knows the server side
+  may still be live and can revoke the device from another one.
+- A storage that throws fails closed. The client throws an `ApiError` with code `token_storage`
+  and sends nothing, so a broken keychain never turns into an unauthenticated request. The error
+  carries no cause, since the adapter's own error may quote the value.
+- A sign in, a sign out or a clear moves a generation counter, and a rotation or a 401 that
+  started before the move is dropped. So a sign out that overtakes a rotation is not undone by the
+  late answer, and a late 401 of the old token does not clear the new one.
+- The token appears in no URL, no header but `Authorization`, no error message and no console
+  output. A transport error is thrown without its cause, since a failed `fetch` may quote the
+  request. The client object has no method that returns the token.
+- Not shipped: the fallback of ADR 0001 for a pending token that gets a 401 (the client does not
+  keep the previous token and retry it, a 401 signs out), a cleanup of the device that a failed
+  storage write leaves behind after an issue, and a persistent adapter.
+- A native app also needs the server half: `AppOrigins`, `AppCORS` and `TrustOriginOnRoute`, see
+  "Token handlers". The web view of the app sends its own origin, which the server must list.
+
 ### Theming through a published token contract
 
 - `web/src/styles/base.css` registers every role token as a Tailwind v4 theme variable with a

@@ -9,7 +9,7 @@ export interface ApiErrorPayload {
   request_id?: string
 }
 
-/** The codes the Go api package defines, plus the two this client adds. */
+/** The codes the Go api package defines, plus the three this client adds. */
 export const ErrorCode = {
   invalidArgument: 'invalid_argument',
   unauthenticated: 'unauthenticated',
@@ -25,6 +25,8 @@ export const ErrorCode = {
   network: 'network',
   /** The request was given up on before an answer arrived. */
   timeout: 'timeout',
+  /** The bearer client could not read, write or clear its token storage. */
+  tokenStorage: 'token_storage',
 } as const
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode]
