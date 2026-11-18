@@ -382,6 +382,89 @@ func TestVerifyTOTPCode_128BitSecret(t *testing.T) {
 	}
 }
 
+// nonCanonicalSecret is 26 base32 characters, 130 bits for a 128 bit
+// secret. Its last character B carries the bits 00001, so the two bits the
+// decoder drops are not zero, and re-encoding the key gives A in that place.
+const nonCanonicalSecret = "AAAAAAAAAAAAAAAAAAAAAAAAAB"
+
+// TestTOTPSecretBounds checks the length bounds and the canonical spelling
+// of a stored secret through every exported function that takes one.
+func TestTOTPSecretBounds(t *testing.T) {
+	t.Parallel()
+
+	at := time.Unix(1_800_000_000, 0)
+	enc := base32.StdEncoding.WithPadding(base32.NoPadding)
+
+	// The two bits are really non zero: the canonical spelling differs.
+	raw, err := enc.DecodeString(nonCanonicalSecret)
+	if err != nil || len(raw) != 16 || enc.EncodeToString(raw) == nonCanonicalSecret {
+		t.Fatalf("nonCanonicalSecret is not a non canonical 128 bit spelling: %d bytes, %v", len(raw), err)
+	}
+
+	tests := []struct {
+		name    string
+		secret  string
+		wantErr error
+	}{
+		{name: "512 bits", secret: enc.EncodeToString([]byte(strings.Repeat("f", 64)))},
+		{name: "520 bits", secret: enc.EncodeToString([]byte(strings.Repeat("f", 65))), wantErr: ErrTOTPSecretInvalid},
+		{name: "128 bits, canonical", secret: enc.EncodeToString(raw)},
+		{name: "128 bits, non zero trailing bits", secret: nonCanonicalSecret, wantErr: ErrTOTPSecretInvalid},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			code, err := TOTPCode(tt.secret, at)
+			if !errors.Is(err, tt.wantErr) || (tt.wantErr == nil && err != nil) {
+				t.Fatalf("TOTPCode = %v, want %v", err, tt.wantErr)
+			}
+
+			_, uriErr := TOTPProvisioningURI("Example", "alice", tt.secret)
+			if !errors.Is(uriErr, tt.wantErr) || (tt.wantErr == nil && uriErr != nil) {
+				t.Fatalf("TOTPProvisioningURI = %v, want %v", uriErr, tt.wantErr)
+			}
+
+			if tt.wantErr != nil {
+				// The code of the key the secret decodes to must not pass.
+				key, err := enc.DecodeString(tt.secret)
+				if err != nil {
+					t.Fatalf("decode: %v", err)
+				}
+				code = hotp(key, uint64(counterAt(at)), 6)
+			}
+
+			_, ok := VerifyTOTPCode(tt.secret, code, at)
+			if ok != (tt.wantErr == nil) {
+				t.Fatalf("VerifyTOTPCode ok = %v, want %v", ok, tt.wantErr == nil)
+			}
+		})
+	}
+
+	// The 512 bit secret is 103 characters, the longest accepted spelling.
+	if n := len(enc.EncodeToString(make([]byte, 64))); n != maxTOTPSecretChars {
+		t.Fatalf("a 512 bit secret has %d characters, maxTOTPSecretChars is %d", n, maxTOTPSecretChars)
+	}
+}
+
+// TestDecodeTOTPSecret_boundBeforeAllocating refuses an over long secret
+// without allocating for it, so a huge stored value costs nothing to refuse.
+// It does not run in parallel: AllocsPerRun counts the allocations of the
+// whole process, and parallel tests wait until the serial ones are done.
+func TestDecodeTOTPSecret_boundBeforeAllocating(t *testing.T) {
+	long := strings.Repeat("A", 1<<20)
+
+	allocs := testing.AllocsPerRun(10, func() {
+		if _, err := decodeTOTPSecret(long); !errors.Is(err, ErrTOTPSecretInvalid) {
+			t.Fatalf("decodeTOTPSecret(1 MiB) = %v, want ErrTOTPSecretInvalid", err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("refusing a 1 MiB secret allocated %v times, want 0", allocs)
+	}
+}
+
 // TestVerifyTOTPCode_shortSecretCode makes sure a secret below 128 bits is
 // refused even with the code it really produces.
 func TestVerifyTOTPCode_shortSecretCode(t *testing.T) {

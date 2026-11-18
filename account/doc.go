@@ -18,17 +18,22 @@
 // [Hasher] writes Argon2id in the PHC string format and reads the parameters
 // of a stored hash back from it, so a later parameter change keeps older
 // hashes verifiable and [PasswordCheck.NeedsRehash] says when to rewrite one.
-// Every [Hasher.VerifyPassword] call runs one derivation at today's cost,
-// also for an unknown account, which passes the empty string. At most
-// [HasherConfig.MaxConcurrentHashes] derivations run at once. A caller that
-// finds no slot within [DefaultHashWait] gets [ErrHashingBusy].
+// Every [Hasher.VerifyPassword] call runs one derivation, also for an unknown
+// account, which passes the empty string.
+//
+// The cap on concurrent derivations is global to the Hasher: one slot by
+// default, [HasherConfig.MaxConcurrentHashes], with a wait of
+// [DefaultHashWait]. Sustained login traffic from anyone answers
+// [ErrHashingBusy] for everyone. Put a per client rate limit in front of the
+// login route, as the example application does with the ratelimit package
+// and middleware.NewRateLimit.
 //
 // # TOTP
 //
 // [VerifyTOTPCode] accepts one step either side of now and returns the
-// counter of the matched step. The caller consumes it with
-// [Store.AdvanceTOTPCounter], and only that conditional write refuses a
-// replayed code.
+// counter of the matched step, the highest if a code matches two. The caller
+// consumes it with [Store.AdvanceTOTPCounter], and only that conditional
+// write refuses a replayed code.
 //
 // # One identity, whatever the path
 //

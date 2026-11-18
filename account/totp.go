@@ -42,6 +42,11 @@ const (
 	// anyway.
 	maxTOTPSecretBytes = 64
 
+	// maxTOTPSecretChars is the length of a 512 bit secret in base32
+	// without padding, ceil(512 / 5). A longer string is refused before
+	// anything is allocated for it.
+	maxTOTPSecretChars = 103
+
 	// maxTOTPIssuer and maxTOTPAccountName bound the label. 254 bytes is the
 	// longest address RFC 5321 allows, and a QR code of the URI stays a
 	// size a phone camera reads.
@@ -132,8 +137,13 @@ func TOTPCode(secret string, at time.Time) (string, error) {
 
 // VerifyTOTPCode reports whether code is valid for secret at time at, within
 // one step either side of the step that holds at, and returns the counter of
-// the step that matched. If more than one step matches, the highest counter
-// is returned.
+// the step that matched.
+//
+// If one code is valid for two steps of the window, the highest counter is
+// returned. Two adjacent steps share a six digit code with a chance of about
+// one in a million. Returning the lower counter would let the same code pass
+// Store.AdvanceTOTPCounter a second time, one step later, while the higher
+// step is still in the window.
 //
 // The check is not complete without the counter. A code stays valid for its
 // whole window, so the caller has to consume it with
@@ -149,6 +159,15 @@ func TOTPCode(secret string, at time.Time) (string, error) {
 // account with no secret costs what a known one does. The comparison is
 // constant time, and every step of the window is computed whatever matches.
 func VerifyTOTPCode(secret, code string, at time.Time) (counter int64, ok bool) {
+	return verifyTOTPCode(hmacSHA1, secret, code, at)
+}
+
+// macFunc is the signature of hmacSHA1. Tests pass a recording wrapper to
+// assert the work of every path, as Hasher.derive does for Argon2id.
+type macFunc func(key []byte, counter uint64) []byte
+
+// verifyTOTPCode is VerifyTOTPCode over the given HMAC.
+func verifyTOTPCode(mac macFunc, secret, code string, at time.Time) (int64, bool) {
 	key, err := decodeTOTPSecret(secret)
 	secretOK := err == nil
 	if !secretOK {
@@ -158,13 +177,15 @@ func VerifyTOTPCode(secret, code string, at time.Time) (counter int64, ok bool) 
 	now := counterAt(at)
 	matched := int64(0)
 
+	// The loop runs from the oldest step to the newest, so a later match
+	// overwrites an earlier one and the highest counter wins.
 	for offset := -totpSkewSteps; offset <= totpSkewSteps; offset++ {
 		candidate := now + int64(offset)
 
 		// A candidate below one is computed like any other, for the same
 		// work, and then never accepted. The conversion of a negative
 		// candidate wraps, which is harmless for a value thrown away.
-		want := hotp(key, uint64(candidate), totpDigits)
+		want := hotpWith(mac, key, uint64(candidate), totpDigits)
 		equal := subtle.ConstantTimeCompare([]byte(want), []byte(code))
 
 		if equal == 1 && candidate >= 1 {
@@ -196,12 +217,17 @@ func counterAt(at time.Time) int64 {
 // counter, dynamically truncated and reduced to digits decimal digits.
 // digits is at most nine, so 10^digits fits a uint32.
 func hotp(key []byte, counter uint64, digits int) string {
+	return hotpWith(hmacSHA1, key, counter, digits)
+}
+
+// hotpWith is hotp over the given HMAC.
+func hotpWith(mac macFunc, key []byte, counter uint64, digits int) string {
 	mod := uint32(1)
 	for range digits {
 		mod *= 10
 	}
 
-	return fmt.Sprintf("%0*d", digits, truncate(hmacSHA1(key, counter))%mod)
+	return fmt.Sprintf("%0*d", digits, truncate(mac(key, counter))%mod)
 }
 
 // hmacSHA1 is the HMAC-SHA-1 of the eight byte big endian counter.
@@ -228,6 +254,10 @@ func truncate(sum []byte) uint32 {
 // and the digits 2 to 7 only, no padding, no whitespace, no non zero
 // trailing bits, and 128 to 512 bits long.
 func decodeTOTPSecret(secret string) ([]byte, error) {
+	if len(secret) > maxTOTPSecretChars {
+		return nil, ErrTOTPSecretInvalid
+	}
+
 	upper := make([]byte, len(secret))
 	for i := range len(secret) {
 		c := secret[i]

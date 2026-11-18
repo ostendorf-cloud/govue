@@ -196,6 +196,9 @@ func TestCheckPassword(t *testing.T) {
 		{name: "twelve characters", input: strings.Repeat("x", 12)},
 		{name: "eleven multibyte characters in 22 bytes", input: strings.Repeat("ä", 11), wantErr: ErrPasswordTooShort},
 		{name: "twelve multibyte characters", input: strings.Repeat("ä", 12)},
+		{name: "twelve NUL bytes count as twelve", input: strings.Repeat("\x00", 12)},
+		{name: "twelve invalid UTF-8 bytes count as twelve", input: strings.Repeat("\xff", 12)},
+		{name: "decomposed characters are not normalised", input: strings.Repeat("ä", 6)},
 		{name: "maximum length in bytes", input: strings.Repeat("x", MaxPasswordLength)},
 		{name: "one byte over the maximum", input: strings.Repeat("x", MaxPasswordLength+1), wantErr: ErrPasswordTooLong},
 		{name: "multibyte over the maximum in bytes", input: strings.Repeat("ä", MaxPasswordLength/2+1), wantErr: ErrPasswordTooLong},
@@ -573,6 +576,28 @@ func TestHasher_VerifyPassword_equalWork(t *testing.T) {
 
 			assertDummyWork(t, rec)
 		})
+	}
+}
+
+// TestHasher_VerifyPassword_maximumLength makes sure a password of exactly
+// MaxPasswordLength bytes, which HashPassword accepts, also logs in.
+func TestHasher_VerifyPassword_maximumLength(t *testing.T) {
+	t.Parallel()
+
+	h, rec := newTestHasher(t)
+	longest := strings.Repeat("f", MaxPasswordLength)
+
+	encoded, err := h.HashPassword(t.Context(), longest)
+	if err != nil {
+		t.Fatalf("HashPassword(%d bytes): %v", MaxPasswordLength, err)
+	}
+
+	got, err := h.VerifyPassword(t.Context(), encoded, longest)
+	if err != nil || !got.Match {
+		t.Fatalf("VerifyPassword(%d bytes) = %+v, %v, want a match", MaxPasswordLength, got, err)
+	}
+	if d := rec.last(t); d.password != longest {
+		t.Fatal("the verification did not hash the password itself")
 	}
 }
 

@@ -66,9 +66,13 @@ const (
 )
 
 // MinPasswordLength is the fewest characters a new password may have,
-// counted as Unicode code points. NIST SP 800-63B asks for at least eight
-// and no composition rules. Twelve is the longer minimum both existing
-// implementations already use.
+// counted as Unicode code points, as NIST SP 800-63B-4 section 3.1.1.2 asks.
+// That section requires at least eight characters for a password used with
+// a second factor, which TOTP is, and 15 for a password used alone. Twelve
+// is what both existing implementations use, counted in bytes there. Code
+// points are stricter for non ASCII input. Only [CheckPassword] and
+// [Hasher.HashPassword] apply it, never [Hasher.VerifyPassword], so an
+// adopted account with a shorter password still logs in.
 const MinPasswordLength = 12
 
 // MaxPasswordLength is the most bytes a password may have. Argon2id reads the
@@ -81,18 +85,29 @@ const MaxPasswordLength = 1024
 // DefaultMaxConcurrentHashes is how many Argon2id derivations run at once
 // when [HasherConfig.MaxConcurrentHashes] is zero.
 //
+// The cap is global to the [Hasher], not per client. With the default of one,
+// every login, signup and password change in the process queues for the
+// same slot. Sustained traffic from anyone therefore answers
+// [ErrHashingBusy] for everyone, including people with the right password.
+// The login route needs a per client rate limit in front of it, so one
+// client cannot hold the slot. The example application wires the ratelimit
+// package with middleware.NewRateLimit, keyed by the client address from
+// clientip. A per client limit does not stop traffic spread over many
+// addresses.
+//
 // One derivation holds 64 MiB for its whole run, and a finished block stays
-// resident until the next garbage collection. Measured in the application
-// this code comes from, the heap peaks at about twice the cap times 64 MiB:
-// 129 MiB at a cap of one, 257 MiB at two. One therefore fits a 256 MiB
-// container with room for everything else. Logins then serialise at a few per
-// second, which a small deployment does not notice. Raise the cap together
-// with the container's memory limit, never alone.
+// resident until the next garbage collection. Measured in calbridge, the
+// application this code comes from, on darwin/arm64 and not in this
+// repository, the heap peaked at about twice the cap times 64 MiB: 129 MiB at
+// a cap of one, 257 MiB at two. One therefore fits a 256 MiB container with
+// room for everything else. The login throughput this allows was not
+// measured. Raise the cap together with the container's memory limit, never
+// alone.
 const DefaultMaxConcurrentHashes = 1
 
 // DefaultHashWait is how long a caller waits for a free derivation slot
-// before it gets [ErrHashingBusy]. A rate limit burst of ten clears in about
-// three seconds at a cap of one, and a waiting caller holds no memory.
+// before it gets [ErrHashingBusy]. A waiting caller holds no memory, only its
+// goroutine.
 const DefaultHashWait = 5 * time.Second
 
 var (
@@ -179,8 +194,16 @@ func NewHasher(cfg HasherConfig) (*Hasher, error) {
 // are no composition rules. [Hasher.HashPassword] applies it too, so a
 // caller may use it alone to answer a form before any hashing.
 //
-// It does not normalise Unicode. A password is hashed as the bytes given, the
-// same as the existing implementations, so their hashes keep verifying.
+// It applies no Unicode normalisation, and neither does the hashing. A
+// password is hashed as the bytes given, the same as the existing
+// implementations, so their hashes keep verifying. NIST SP 800-63B-4 section
+// 3.1.1.2 says a verifier SHOULD normalise before hashing. Without it, the
+// same password typed as composed and as decomposed characters gives two
+// different hashes. Adding it later means verifying both forms until every
+// stored hash has been rewritten.
+//
+// The length counts code points of the string as given. A NUL byte counts
+// as one, and each byte of invalid UTF-8 counts as one. Neither is refused.
 func CheckPassword(password string) error {
 	if len(password) > MaxPasswordLength {
 		return ErrPasswordTooLong
@@ -241,11 +264,14 @@ func (h *Hasher) HashPassword(ctx context.Context, password string) (string, err
 // verifies and reports [PasswordCheck.NeedsRehash].
 //
 // Pass the empty string as encoded for a login that found no account, or an
-// account without a password. Every call runs exactly one derivation at
-// today's cost whatever the outcome: a match, a mismatch, no hash, an invalid
-// hash or a password above [MaxPasswordLength]. A login for an unknown
-// account thus costs the same work as a wrong password. The one exception is
-// a stored hash with weaker parameters, which costs what its parameters say.
+// account without a password. Every call runs exactly one derivation. No
+// hash, an invalid hash and a password above [MaxPasswordLength] run it at
+// today's parameters. A valid stored hash runs it at its own parameters, so
+// a login for an unknown account costs the same work as a wrong password for
+// an account hashed today. A stored hash with other parameters costs what
+// they say. A weaker one costs less. The strongest the parser accepts, 16
+// passes over at most 64 MiB, costs about five times today's three passes.
+// More lanes do not add work, they spread it.
 //
 // The comparison is constant time. An empty encoded answers no match and a
 // nil error. An invalid hash answers [ErrPasswordHashInvalid], a password

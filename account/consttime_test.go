@@ -16,7 +16,7 @@ import (
 // computed code with what a caller supplied.
 var secretComparers = map[string]string{
 	"VerifyPassword": "password.go",
-	"VerifyTOTPCode": "totp.go",
+	"verifyTOTPCode": "totp.go",
 }
 
 // variableTimeCalls return early on the first differing byte or compare in
@@ -31,12 +31,13 @@ var variableTimeCalls = map[string]bool{
 	"strings.EqualFold": true,
 }
 
-// TestConstantTimeCompare enforces in the source what a test cannot measure
-// reliably: a hash and a code are compared with
-// subtle.ConstantTimeCompare and never with ==, != or a variable time
-// helper. Inside a comparer every == and != has a literal, nil or the
-// ConstantTimeCompare call on one side, so a raw compare of two values
-// fails here.
+// TestConstantTimeCompare is a tripwire in the source for what a test cannot
+// measure reliably. It catches the obvious regressions, not every one. It
+// checks three things: no variable time helper from the list above is called
+// anywhere in the package, each comparer calls subtle.ConstantTimeCompare,
+// and inside a comparer every == and != has a literal, nil or that call on
+// one side. A compare moved into another helper function, or a switch on a
+// converted string, passes it. Review stays responsible for those.
 func TestConstantTimeCompare(t *testing.T) {
 	t.Parallel()
 
