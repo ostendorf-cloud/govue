@@ -65,8 +65,10 @@ The design of the library and the reasoning behind it.
 
 ### Small, independent, standard library
 
-- The Go side is the standard library. `prometheus/client_golang` is the one exception, confined
-  to the `metrics` package, because the exposition format is not worth reimplementing.
+- The Go side is the standard library, with two exceptions. `prometheus/client_golang` is
+  confined to the `metrics` package, because the exposition format is not worth reimplementing.
+  `golang.org/x/crypto` is confined to the `account` package, for Argon2id, which the standard
+  library lacks. Writing a memory hard hash by hand is the worse risk.
 - A package stays usable alone: taking `clientip` must not pull in `session`.
 - Handlers return an error and one `api` helper writes the single error shape, so no handler
   writes error JSON and no cause reaches a client.
@@ -411,6 +413,80 @@ The design of the library and the reasoning behind it.
   rather than replacing it. Losing one device must not lock somebody out of their records.
 - Recovery codes are not part of the first version. Losing both the TOTP device and every
   passkey then locks the account, and the documentation has to say so.
+
+#### Password hashing
+
+- `Hasher` writes Argon2id in the PHC string both existing applications already write:
+  `$argon2id$v=19$m=65536,t=3,p=4$<salt>$<hash>`, with a 16 byte random salt and a 32 byte key.
+  Their stored hashes verify unchanged.
+- The parameters are fixed: three passes over 64 MiB with four lanes, the lower memory
+  recommendation of RFC 9106. A deployment does not tune its own hashing cost by accident.
+- `VerifyPassword` reads the parameters, the salt and the key length from the stored hash, so a
+  later parameter change keeps every older hash verifiable. It reports `NeedsRehash` when a hash
+  matched but would be written differently today. It never reports it without a match, so a
+  failed login cannot cause a write.
+- A stored hash is read from the consumer's database, and its parameters set the cost of a
+  login. So the parser is strict and bounded: version 19 only, the parameters in the order
+  `m`, `t`, `p` as canonical decimals, at most 64 MiB, 16 passes and 16 lanes, salt of 8 to 64
+  bytes and key of 16 to 64 bytes in canonical unpadded base64. A corrupted or planted value
+  answers `ErrPasswordHashInvalid` rather than a gigabyte allocation.
+- Every `VerifyPassword` call runs exactly one derivation, whatever the outcome. The login logic
+  passes an empty hash for an unknown account. No hash, an invalid hash and an over long
+  password run it at today's parameters, so they cost what a wrong password for an account
+  hashed today costs. A valid stored hash runs at its own parameters. A weaker one costs less,
+  and the strongest the parser accepts, 16 passes, costs about five times today's three. The
+  hashes of the existing applications use today's parameters.
+- The comparison is constant time. A test reads the source as a tripwire: it refuses variable
+  time helpers and a raw `==` of two values inside the comparers. A compare moved into another
+  helper or a `switch` on a converted string passes it, so review stays responsible.
+- The cap on concurrent derivations is `HasherConfig.MaxConcurrentHashes`, default 1. One
+  derivation holds 64 MiB, and a finished block stays resident until the next collection.
+  Measured in calbridge, not here, the heap peaked near twice the cap times 64 MiB, so one fits
+  a 256 MiB container. A caller waits at most five seconds for a slot, then gets
+  `ErrHashingBusy`, also when its context ends first. A handler answers that with 503, never
+  with a failed login.
+- The cap is one global slot per `Hasher`, not one per client. Sustained login traffic from
+  anyone answers `ErrHashingBusy` for everyone, including people with the right password. The
+  login route needs a per client rate limit in front of it: `ratelimit` with
+  `middleware.NewRateLimit`, keyed by `clientip`, as `example/app.go` wires it. That does not
+  stop traffic spread over many addresses. The login throughput one slot allows was not
+  measured.
+- A new password has at least 12 characters, counted as code points, and at most 1024 bytes.
+  NIST SP 800-63B-4 section 3.1.1.2 counts code points, asks for at least eight characters
+  where a second factor stands behind the password, and forbids composition rules. The
+  existing applications count 12 bytes, so the code point minimum is stricter for non ASCII
+  input. `VerifyPassword` does not apply the minimum, so an adopted account with a shorter
+  password still logs in. The upper bound bounds the work on an unauthenticated route.
+- No Unicode normalisation is applied, as in the existing applications, so their hashes keep
+  verifying. The same NIST section says a verifier SHOULD normalise before hashing. Without it,
+  a password typed once with composed and once with decomposed characters does not match.
+  `CheckPassword` counts a NUL byte and each byte of invalid UTF-8 as one code point and refuses
+  neither.
+
+#### TOTP
+
+- TOTP follows RFC 6238 on the standard library: HMAC-SHA-1, six digits, a 30 second step and
+  one step either side of now. A secret is 160 random bits as 32 base32 characters without
+  padding. A stored secret of 128 to 512 bits is accepted.
+- `VerifyTOTPCode` returns the counter of the matched step. When one code is valid for two
+  steps of the window, it returns the higher one. The lower one would let the same code pass
+  `AdvanceTOTPCounter` again one step later. The code is consumed only when the
+  caller hands that counter to `AdvanceTOTPCounter`, or to `ConfirmTOTP` during enrolment, and
+  the conditional write succeeds. Comparing it with a counter read earlier is not replay
+  protection.
+- A step whose counter is below one never matches. Counter zero means an unconfirmed secret in
+  the store, so a code of that step must never reach it. The step counter rounds down for a time
+  before 1970 as well.
+- An invalid secret runs the same three HMACs against a dummy key and is refused, so an empty
+  secret for an unknown account costs what a real one does. A test counts the HMACs through an
+  injected function. A secret longer than 103 characters, the base32 length of 512 bits, is
+  refused before anything is allocated for it.
+- `TOTPProvisioningURI` takes the issuer as a parameter and percent encodes the issuer and the
+  account name, with a space as `%20`. Both are refused when empty, too long, not printable or
+  holding the colon the label format reserves. The secret is validated and written in upper
+  case.
+- Both checks are pure functions without the store. The login logic that combines them with
+  the store is the next step and not built yet.
 
 ### Theming through a published token contract
 
