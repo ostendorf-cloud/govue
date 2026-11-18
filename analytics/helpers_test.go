@@ -218,6 +218,14 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	}
 }
 
+// routed registers h under "GET /" of a mux, so the request meets a route
+// pattern like a real product's does.
+func routed(h http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("GET /", h)
+	return mux
+}
+
 var testAddr = netip.MustParseAddr("203.0.113.7")
 
 func htmlPage(w http.ResponseWriter, _ *http.Request) {

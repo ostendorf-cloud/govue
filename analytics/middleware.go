@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"path"
 	"regexp"
 	"strings"
 )
@@ -49,9 +48,15 @@ var languageTag = regexp.MustCompile(`^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8}){0,3}$`)
 //
 // Like middleware.AccessLog it reads the route pattern the mux sets on the
 // request, so it wraps the mux, or sits on the handler inside it, with no
-// middleware between that replaces the request. Without a pattern it reports
-// the cleaned path, which may hold an id, so a product serves its pages
-// through a ServeMux with the pattern of each page.
+// middleware between that replaces the request. A view with no route pattern
+// is not counted, because the path may hold an id or a token. One warning is
+// logged per client. A product registers every page, its fallback too,
+// through a ServeMux, or sets Options.URL for pages it knows.
+//
+// Known limits of the response wrapper: it has no ReadFrom, so a handler that
+// copies a file loses the sendfile fast path on a counted GET, and a direct
+// w.(http.Hijacker) assertion fails. http.ResponseController reaches Hijack
+// and every other capability through Unwrap.
 func (c *Client) Middleware(next http.Handler) http.Handler {
 	if !c.enabled {
 		return next
@@ -67,8 +72,8 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 		if rec.status != http.StatusOK || !isHTML(rec.contentType) {
 			return
 		}
-		route := c.route(r)
-		if excludedPaths[route] {
+		route, ok := c.route(r)
+		if !ok || excludedPaths[route] {
 			return
 		}
 		v := View{
@@ -91,7 +96,7 @@ func (c *Client) eligible(r *http.Request) (netip.Addr, bool) {
 	if r.Method != http.MethodGet || excludedPaths[r.URL.Path] || (c.skip != nil && c.skip(r)) {
 		return netip.Addr{}, false
 	}
-	if strings.TrimSpace(r.Header.Get("DNT")) == "1" || strings.TrimSpace(r.Header.Get("Sec-GPC")) == "1" {
+	if signalled(r.Header, "DNT") || signalled(r.Header, "Sec-GPC") {
 		return netip.Addr{}, false
 	}
 	if prefetch(r.Header) || notDocument(r.Header) {
@@ -108,17 +113,48 @@ func (c *Client) eligible(r *http.Request) (netip.Addr, bool) {
 	return ip, true
 }
 
-// route is the URL reported: the pattern of the route that answered, or the
-// cleaned path when the request met no pattern.
-func (c *Client) route(r *http.Request) string {
+// signalled reports whether any line of the header, or any comma separated
+// part of a line, is "1". A visitor who sent the signal anywhere is not
+// counted. Other values, "0" or "yes", are no signal.
+func signalled(h http.Header, name string) bool {
+	for _, line := range h.Values(name) {
+		for _, part := range strings.Split(line, ",") {
+			if strings.TrimSpace(part) == "1" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// route is the URL reported: the pattern of the route that answered. Without
+// a pattern the path is never sent. Options.URL may name the URL then, and
+// when it does not, or is not set, the view is not counted and one warning
+// says so.
+func (c *Client) route(r *http.Request) (string, bool) {
 	if r.Pattern != "" {
-		return patternPath(r.Pattern)
+		return patternPath(r.Pattern), true
 	}
-	p := r.URL.Path
-	if p == "" {
-		return "/"
+	if c.urlFn != nil {
+		u := cleanURL(c.urlFn(r))
+		return u, u != ""
 	}
-	return truncate(path.Clean("/"+p), maxPath)
+	c.noPattern.Do(func() {
+		c.logger.Warn("no route pattern, view not counted")
+	})
+	return "", false
+}
+
+// cleanURL keeps the path of what Options.URL returned: a query or a fragment
+// is cut off, and anything that is not an absolute path is refused.
+func cleanURL(u string) string {
+	if i := strings.IndexAny(u, "?#"); i >= 0 {
+		u = u[:i]
+	}
+	if !strings.HasPrefix(u, "/") {
+		return ""
+	}
+	return truncate(u, maxPath)
 }
 
 // patternPath turns a ServeMux pattern such as "GET example.test/notes/{id}"
@@ -249,7 +285,9 @@ func (w *pageWriter) Write(b []byte) (int, error) {
 	if w.status == 0 {
 		w.WriteHeader(http.StatusOK)
 	}
-	if w.contentType == "" && !w.sniffed {
+	// net/http sniffs at the first byte it sends, so an empty write decides
+	// nothing.
+	if w.contentType == "" && !w.sniffed && len(b) > 0 {
 		w.sniffed = true
 		w.contentType = http.DetectContentType(b)
 	}
@@ -258,11 +296,13 @@ func (w *pageWriter) Write(b []byte) (int, error) {
 
 // Flush passes through to the real writer, which is what a handler that
 // asserts http.Flusher expects. A flush sends the header, so it records the
-// implicit 200 first.
+// implicit 200 first. net/http sends no sniffed Content-Type for a flush
+// before any body, so a later write does not set one here either.
 func (w *pageWriter) Flush() {
 	if w.status == 0 {
 		w.WriteHeader(http.StatusOK)
 	}
+	w.sniffed = true
 	_ = http.NewResponseController(w.ResponseWriter).Flush()
 }
 

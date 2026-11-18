@@ -5,7 +5,16 @@ package analytics
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
+	"log/slog"
+	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -291,11 +300,209 @@ func TestCloseDeadlineAbortsAndCountsTheRest(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Close = %v, want the deadline error", err)
 	}
-	waitFor(t, "the queued views to be counted lost", func() bool { return r.c.Stats().Dropped == 5-workers })
+	// The counts are final when Close returns, with no waiting here.
+	if got := r.c.Stats(); got.Dropped != 5-workers || got.Failed != workers || got.Sent != 0 {
+		t.Errorf("stats at return = %+v, want %d dropped and %d failed", got, 5-workers, workers)
+	}
 	if got := r.drops.Load(); got != 5-workers {
 		t.Errorf("OnDrop called %d times, want %d", got, 5-workers)
 	}
+	classes := map[any]bool{}
+	for _, line := range r.logs.lines(t) {
+		classes[line["class"]] = true
+	}
+	if !classes["canceled"] || !classes["shutdown"] {
+		t.Errorf("log at return lacks canceled or shutdown: %s", r.logs.String())
+	}
 	waitForGoroutines(t, before)
+}
+
+func TestCloseCountsAreFinalWhenItReturns(t *testing.T) {
+	r := newRig(t, func(cfg *Config, _ *Options, f *fakeUmami) {
+		cfg.QueueSize = 200
+		f.status = http.StatusServiceUnavailable
+	})
+	for range 150 {
+		r.c.Track(View{URL: "/", UserAgent: testUA, IP: testAddr})
+	}
+	r.drain(t)
+	first := r.c.Stats()
+	if first.Failed != 150 {
+		t.Fatalf("stats at return = %+v, want 150 failed", first)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if r.c.Stats() != first {
+		t.Errorf("counts moved after Close: %+v then %+v", first, r.c.Stats())
+	}
+}
+
+func TestDoubleCloseIsSafe(t *testing.T) {
+	t.Run("sequential and concurrent", func(t *testing.T) {
+		r := newRig(t, nil)
+		for range 5 {
+			r.c.Track(View{URL: "/", UserAgent: testUA, IP: testAddr})
+		}
+		errs := make(chan error, 10)
+		for range 10 {
+			go func() { errs <- r.c.Close(context.Background()) }()
+		}
+		for range 10 {
+			if err := <-errs; err != nil {
+				t.Errorf("Close: %v", err)
+			}
+		}
+		if err := r.c.Close(context.Background()); err != nil {
+			t.Errorf("Close after Close: %v", err)
+		}
+		if got := r.c.Stats(); got.Sent != 5 || got.Dropped != 0 {
+			t.Errorf("stats = %+v, want 5 sent", got)
+		}
+	})
+	t.Run("after a deadline", func(t *testing.T) {
+		r := newRig(t, func(_ *Config, _ *Options, f *fakeUmami) {
+			f.block = make(chan struct{})
+			f.entered = make(chan struct{}, 4)
+		})
+		r.c.Track(View{URL: "/", UserAgent: testUA, IP: testAddr})
+		<-r.fake.entered
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+		if err := r.c.Close(ctx); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("first Close = %v", err)
+		}
+		if err := r.c.Close(context.Background()); err != nil {
+			t.Errorf("second Close = %v, want nil", err)
+		}
+	})
+}
+
+func TestVisitorDataIsNeverLogged(t *testing.T) {
+	r := newRig(t, func(cfg *Config, o *Options, f *fakeUmami) {
+		cfg.QueueSize = 2
+		o.FullIP = true
+		f.err = &url.Error{Op: "Post", URL: "https://203.0.113.7/x", Err: errors.New("dial 203.0.113.7: refused")}
+	})
+	h := r.c.Middleware(siteMux())
+	for range 6 {
+		serve(h, request(http.MethodGet, "/about", nil))
+	}
+	waitFor(t, "failures", func() bool { return r.c.Stats().Failed > 0 })
+	r.drain(t)
+	serve(h, request(http.MethodGet, "/about", nil)) // after Close: the shutdown class
+	out := r.logs.String()
+	if out == "" {
+		t.Fatal("nothing was logged, the test proves nothing")
+	}
+	for _, leak := range []string{"203.0.113", "Firefox", "Mozilla", "de-DE", "/about", "refused"} {
+		if strings.Contains(out, leak) {
+			t.Errorf("log holds %q: %s", leak, out)
+		}
+	}
+}
+
+func TestWebsiteIDIsLoweredByNew(t *testing.T) {
+	r := newRig(t, func(cfg *Config, _ *Options, _ *fakeUmami) { cfg.WebsiteID = strings.ToUpper(testID) })
+	serve(r.c.Middleware(siteMux()), request(http.MethodGet, "/about", nil))
+	posts := r.drain(t)
+	if len(posts) != 1 || view(t, posts[0])["website"] != testID {
+		t.Fatalf("posts = %d", len(posts))
+	}
+}
+
+// asyncConn queues writes, because net.Pipe has no buffer: a client that stops
+// reading to send an alert would otherwise deadlock against a server still
+// writing its handshake.
+type asyncConn struct {
+	net.Conn
+	out chan []byte
+}
+
+func newAsyncConn(c net.Conn) *asyncConn {
+	a := &asyncConn{Conn: c, out: make(chan []byte, 64)}
+	go func() {
+		for b := range a.out {
+			if _, err := c.Write(b); err != nil {
+				return
+			}
+		}
+	}()
+	return a
+}
+
+func (a *asyncConn) Write(b []byte) (int, error) {
+	a.out <- append([]byte(nil), b...)
+	return len(b), nil
+}
+
+// selfSigned returns a TLS server config with a certificate no root vouches
+// for.
+func selfSigned(t *testing.T) *tls.Config {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "umami.example.test"},
+		DNSNames:     []string{"umami.example.test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
+}
+
+func TestDefaultClientVerifiesTLSAndIgnoresProxyVariables(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://proxy.example.test:3128")
+	t.Setenv("HTTP_PROXY", "http://proxy.example.test:3128")
+	c, err := New(Config{URL: testURL, WebsiteID: testID}, Options{
+		Hostname: testHost, Logger: slog.New(slog.DiscardHandler),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
+
+	tr, ok := c.http.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport is %T", c.http.Transport)
+	}
+	if tr.Proxy != nil {
+		t.Error("the default client takes a proxy from the environment")
+	}
+	if tr.TLSClientConfig != nil && tr.TLSClientConfig.InsecureSkipVerify {
+		t.Error("the default client skips TLS verification")
+	}
+	if c.http.Jar != nil {
+		t.Error("the default client keeps cookies")
+	}
+	if err := c.http.CheckRedirect(nil, nil); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Errorf("CheckRedirect = %v, redirects must be refused", err)
+	}
+
+	// A real handshake over a pipe against a certificate no root vouches for.
+	server := selfSigned(t)
+	tr.DialContext = func(context.Context, string, string) (net.Conn, error) {
+		client, srv := net.Pipe()
+		go func() {
+			_ = tls.Server(newAsyncConn(srv), server).HandshakeContext(context.Background())
+			_ = srv.Close()
+		}()
+		return client, nil
+	}
+	err = c.send(t.Context(), View{URL: "/", UserAgent: testUA, IP: testAddr})
+	// The error type depends on the platform verifier, so the test pins the
+	// kind, a failed verification, and not the x509 detail.
+	var verify *tls.CertificateVerificationError
+	if !errors.As(err, &verify) {
+		t.Fatalf("send = %v (cause %v), want a certificate verification failure", err, errors.Unwrap(err))
+	}
 }
 
 func TestTrackAfterCloseDropsWithoutPanic(t *testing.T) {

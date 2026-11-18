@@ -5,6 +5,7 @@ package analytics
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"net/netip"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ostendorf-cloud/govue/clientip"
@@ -51,7 +53,7 @@ func TestPayloadIsExact(t *testing.T) {
 	}
 	want := `{"type":"event","payload":{"website":"` + testID + `","hostname":"` + testHost +
 		`","url":"/notes/{id}","title":"A note","referrer":"https://search.example.org/",` +
-		`"language":"de-DE","ip":"203.0.113.7","userAgent":"` + testUA + `"}}`
+		`"language":"de-DE","ip":"203.0.113.0","userAgent":"` + testUA + `"}}`
 	if string(p.Body) != want {
 		t.Errorf("body =\n%s\nwant\n%s", p.Body, want)
 	}
@@ -139,6 +141,13 @@ func TestDoNotTrackAndGlobalPrivacyControl(t *testing.T) {
 		{"Sec-GPC 1", map[string]string{"Sec-GPC": "1"}, false},
 		{"Sec-GPC 0", map[string]string{"Sec-GPC": "0"}, true},
 		{"both", map[string]string{"DNT": "1", "Sec-GPC": "1"}, false},
+		{"DNT 1 comma 1", map[string]string{"DNT": "1, 1"}, false},
+		{"DNT 0 comma 1", map[string]string{"DNT": "0, 1"}, false},
+		{"GPC 0 comma 1", map[string]string{"Sec-GPC": "0,1"}, false},
+		{"DNT yes", map[string]string{"DNT": "yes"}, true},
+		{"DNT true", map[string]string{"DNT": "true"}, true},
+		{"DNT empty", map[string]string{"DNT": ""}, true},
+		{"DNT 10", map[string]string{"DNT": "10"}, true},
 		{"DNT 0 and GPC 1", map[string]string{"DNT": "0", "Sec-GPC": "1"}, false},
 		{"DNT 1 and GPC 0", map[string]string{"DNT": "1", "Sec-GPC": "0"}, false},
 	}
@@ -155,6 +164,82 @@ func TestDoNotTrackAndGlobalPrivacyControl(t *testing.T) {
 				t.Errorf("counted = %v, want %v", got, tt.counted)
 			}
 		})
+	}
+}
+
+func TestSignalOnAnyHeaderLineCountsNobody(t *testing.T) {
+	for _, name := range []string{"DNT", "Sec-GPC"} {
+		for _, lines := range [][]string{{"0", "1"}, {"1", "0"}, {"0", "0", "1"}, {"0", "1, 0"}} {
+			t.Run(name+" "+strings.Join(lines, "|"), func(t *testing.T) {
+				r := newRig(t, nil)
+				serve(r.c.Middleware(siteMux()), request(http.MethodGet, "/about", func(req *http.Request) {
+					for _, l := range lines {
+						req.Header.Add(name, l)
+					}
+				}))
+				if got := len(r.drain(t)); got != 0 {
+					t.Errorf("%d views counted", got)
+				}
+			})
+		}
+	}
+	r := newRig(t, nil)
+	serve(r.c.Middleware(siteMux()), request(http.MethodGet, "/about", func(req *http.Request) {
+		req.Header.Add("DNT", "0")
+		req.Header.Add("DNT", "0")
+	}))
+	if got := len(r.drain(t)); got != 1 {
+		t.Errorf("two DNT 0 lines: counted %d, want 1", got)
+	}
+}
+
+func TestAddressIsMaskedByDefault(t *testing.T) {
+	tests := []struct {
+		name   string
+		peer   string
+		fullIP bool
+		want   string
+	}{
+		{"ipv4 masked to /24", "203.0.113.77:4000", false, "203.0.113.0"},
+		{"ipv4 mapped into ipv6 masked as ipv4", "[::ffff:203.0.113.77]:4000", false, "203.0.113.0"},
+		{"ipv6 masked to /48", "[2001:db8:1234:5678:9abc:def0:1234:5678]:4000", false, "2001:db8:1234::"},
+		{"ipv4 whole with FullIP", "203.0.113.77:4000", true, "203.0.113.77"},
+		{"ipv4 mapped whole with FullIP", "[::ffff:203.0.113.77]:4000", true, "203.0.113.77"},
+		{"ipv6 whole with FullIP", "[2001:db8:1234:5678:9abc:def0:1234:5678]:4000", true, "2001:db8:1234:5678:9abc:def0:1234:5678"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRig(t, func(_ *Config, o *Options, _ *fakeUmami) { o.FullIP = tt.fullIP })
+			serve(r.c.Middleware(siteMux()), request(http.MethodGet, "/about", func(req *http.Request) {
+				req.RemoteAddr = tt.peer
+			}))
+			posts := r.drain(t)
+			if len(posts) != 1 {
+				t.Fatalf("got %d posts", len(posts))
+			}
+			if got := view(t, posts[0])["ip"]; got != tt.want {
+				t.Errorf("ip = %v, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMaskAlsoCoversViewsHandedToTrack(t *testing.T) {
+	r := newRig(t, nil)
+	r.c.Track(View{URL: "/", UserAgent: testUA, IP: netip.MustParseAddr("203.0.113.99")})
+	r.c.Track(View{URL: "/", UserAgent: testUA})
+	posts := r.drain(t)
+	if len(posts) != 2 {
+		t.Fatalf("got %d posts", len(posts))
+	}
+	for _, p := range posts {
+		ip, has := view(t, p)["ip"]
+		if has && ip != "203.0.113.0" {
+			t.Errorf("ip = %v", ip)
+		}
+		if !has && strings.Contains(string(p.Body), "invalid") {
+			t.Errorf("an invalid address was written: %s", p.Body)
+		}
 	}
 }
 
@@ -190,19 +275,114 @@ func TestNeverSendsQueryOrId(t *testing.T) {
 	}
 }
 
-func TestPathWithoutPatternIsCleanedWithoutQuery(t *testing.T) {
+type replacedKey struct{}
+
+// replaceRequest is a middleware that, like RequestID, hands the next handler
+// a copy of the request. The mux then sets its pattern on the copy, and the
+// middleware outside never sees it.
+func replaceRequest(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), replacedKey{}, 1)))
+	})
+}
+
+func TestViewWithoutRoutePatternIsNotCounted(t *testing.T) {
+	tests := []struct {
+		name   string
+		build  func(*Client) http.Handler
+		target string
+	}{
+		{"plain handler with no mux", func(c *Client) http.Handler { return c.Middleware(http.HandlerFunc(htmlPage)) }, "/reset/abc123token"},
+		{"request replaced between middleware and mux", func(c *Client) http.Handler {
+			return c.Middleware(replaceRequest(siteMux()))
+		}, "/notes/4711-secret-slug"},
+		{"file server style fallback", func(c *Client) http.Handler {
+			return c.Middleware(http.StripPrefix("/files", http.HandlerFunc(htmlPage)))
+		}, "/files/a//b/../c?x=1&token=zz"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRig(t, nil)
+			h := tt.build(r.c)
+			for range 3 {
+				serve(h, request(http.MethodGet, tt.target, nil))
+			}
+			if posts := r.drain(t); len(posts) != 0 {
+				t.Fatalf("%d views counted without a pattern: %s", len(posts), posts[0].Body)
+			}
+			lines := r.logs.lines(t)
+			if len(lines) != 1 || lines[0]["msg"] != "no route pattern, view not counted" {
+				t.Fatalf("log lines = %v, want one warning", lines)
+			}
+			for _, leak := range []string{"secret", "abc123", "4711", "token", "reset"} {
+				if strings.Contains(r.logs.String(), leak) {
+					t.Errorf("log holds %q", leak)
+				}
+			}
+		})
+	}
+}
+
+func TestFallbackRegisteredThroughTheMuxIsCounted(t *testing.T) {
 	r := newRig(t, nil)
-	h := r.c.Middleware(http.HandlerFunc(htmlPage))
-	serve(h, request(http.MethodGet, "/a//b/../c?x=1&token=zz", nil))
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", htmlPage)
+	serve(r.c.Middleware(mux), request(http.MethodGet, "/reset/abc123token?x=1", nil))
 	posts := r.drain(t)
-	if len(posts) != 1 {
-		t.Fatalf("got %d posts", len(posts))
+	if len(posts) != 1 || view(t, posts[0])["url"] != "/" {
+		t.Fatalf("posts = %d, want one view of /", len(posts))
 	}
-	if got := view(t, posts[0])["url"]; got != "/a/c" {
-		t.Errorf("url = %v, want /a/c", got)
+	if strings.Contains(string(posts[0].Body), "abc123") {
+		t.Error("the path reached Umami")
 	}
-	if strings.Contains(string(posts[0].Body), "token") {
-		t.Error("the query reached Umami")
+}
+
+func TestURLOptionNamesViewsWithoutPattern(t *testing.T) {
+	tests := []struct {
+		name    string
+		answer  string
+		want    string
+		counted bool
+	}{
+		{"fixed page", "/de/impressum", "/de/impressum", true},
+		{"query cut off", "/page?x=1&token=zz", "/page", true},
+		{"fragment cut off", "/page#frag", "/page", true},
+		{"empty", "", "", false},
+		{"relative", "page", "", false},
+		{"only a query", "?x=1", "", false},
+		{"absolute url", "https://evil.example/x", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRig(t, func(_ *Config, o *Options, _ *fakeUmami) {
+				o.URL = func(*http.Request) string { return tt.answer }
+			})
+			serve(r.c.Middleware(http.HandlerFunc(htmlPage)), request(http.MethodGet, "/x/4711", nil))
+			posts := r.drain(t)
+			if (len(posts) == 1) != tt.counted {
+				t.Fatalf("counted = %v, want %v", len(posts) == 1, tt.counted)
+			}
+			if tt.counted {
+				if got := view(t, posts[0])["url"]; got != tt.want {
+					t.Errorf("url = %v, want %q", got, tt.want)
+				}
+				if strings.Contains(string(posts[0].Body), "token") {
+					t.Error("a query reached Umami")
+				}
+			}
+		})
+	}
+}
+
+func TestURLOptionIsNotAskedWhenThereIsAPattern(t *testing.T) {
+	var asked atomic.Int64
+	r := newRig(t, func(_ *Config, o *Options, _ *fakeUmami) {
+		o.URL = func(*http.Request) string { asked.Add(1); return "/wrong" }
+	})
+	serve(r.c.Middleware(siteMux()), request(http.MethodGet, "/notes/4711", nil))
+	posts := r.drain(t)
+	if asked.Load() != 0 || len(posts) != 1 || view(t, posts[0])["url"] != "/notes/{id}" {
+		t.Errorf("asked %d times, posts %d", asked.Load(), len(posts))
 	}
 }
 
@@ -375,7 +555,7 @@ func TestClientAddressComesFromTheResolver(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := newRig(t, func(_ *Config, o *Options, _ *fakeUmami) { o.ClientIP = tt.resolver })
+			r := newRig(t, func(_ *Config, o *Options, _ *fakeUmami) { o.ClientIP, o.FullIP = tt.resolver, true })
 			serve(r.c.Middleware(siteMux()), request(http.MethodGet, "/about", func(req *http.Request) {
 				req.RemoteAddr = tt.peer
 				req.Header.Set("X-Forwarded-For", tt.xff)
@@ -487,7 +667,7 @@ func TestWrapperPassesFlushAndHijackThrough(t *testing.T) {
 	t.Run("http.Flusher assertion", func(t *testing.T) {
 		r := newRig(t, nil)
 		rec := httptest.NewRecorder()
-		h := r.c.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		h := r.c.Middleware(routed(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			f, ok := w.(http.Flusher)
 			if !ok {
 				t.Error("the wrapper is no http.Flusher")
@@ -497,7 +677,7 @@ func TestWrapperPassesFlushAndHijackThrough(t *testing.T) {
 			_, _ = w.Write([]byte("<html>"))
 			f.Flush()
 			_, _ = w.Write([]byte("</html>"))
-		}))
+		})))
 		h.ServeHTTP(rec, request(http.MethodGet, "/", nil))
 		if !rec.Flushed {
 			t.Error("Flush did not reach the real writer")
@@ -509,12 +689,12 @@ func TestWrapperPassesFlushAndHijackThrough(t *testing.T) {
 	t.Run("flush before any write", func(t *testing.T) {
 		r := newRig(t, nil)
 		rec := httptest.NewRecorder()
-		h := r.c.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		h := r.c.Middleware(routed(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
-		}))
+		})))
 		h.ServeHTTP(rec, request(http.MethodGet, "/", nil))
 		if !rec.Flushed {
 			t.Error("Flush did not reach the real writer")
@@ -523,16 +703,43 @@ func TestWrapperPassesFlushAndHijackThrough(t *testing.T) {
 			t.Errorf("counted %d times", got)
 		}
 	})
+	t.Run("flush before the body with no content type", func(t *testing.T) {
+		// net/http sends no sniffed type for a flush before any body, so
+		// the response is no HTML page for the visitor's browser to read as
+		// one, and it is not counted.
+		r := newRig(t, nil)
+		h := r.c.Middleware(routed(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = http.NewResponseController(w).Flush()
+			_, _ = w.Write([]byte("<!doctype html><html></html>"))
+		})))
+		serve(h, request(http.MethodGet, "/", nil))
+		if got := len(r.drain(t)); got != 0 {
+			t.Errorf("counted %d times", got)
+		}
+	})
+	t.Run("empty write first then html", func(t *testing.T) {
+		r := newRig(t, nil)
+		h := r.c.Middleware(routed(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte{})
+			_, _ = w.Write([]byte("<!doctype html><html></html>"))
+		})))
+		// A real server sniffs the type from the first byte it sends, and an
+		// empty write sends none, so the page is HTML.
+		serve(h, request(http.MethodGet, "/", nil))
+		if got := len(r.drain(t)); got != 1 {
+			t.Errorf("counted %d times, want 1", got)
+		}
+	})
 	t.Run("ResponseController flush", func(t *testing.T) {
 		r := newRig(t, nil)
 		rec := httptest.NewRecorder()
-		h := r.c.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		h := r.c.Middleware(routed(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
 			_, _ = w.Write([]byte("<html>"))
 			if err := http.NewResponseController(w).Flush(); err != nil {
 				t.Errorf("Flush: %v", err)
 			}
-		}))
+		})))
 		h.ServeHTTP(rec, request(http.MethodGet, "/", nil))
 		if !rec.Flushed {
 			t.Error("Flush did not reach the real writer")

@@ -52,7 +52,9 @@ repeated here.
 - `analytics` counts page views on the server and posts them to Umami. It is off unless
   `UMAMI_URL` and `UMAMI_WEBSITE_ID` are both set, and one of them alone is a startup error. It
   sets no cookie, honours Do Not Track and Global Privacy Control, and never sends a query
-  string or an id: the URL is the route pattern. It imports `clientip` only. A change to what
+  string or an id: the URL is the route pattern, and a view with no pattern is not counted. The
+  client address is masked to /24 or /48 unless `Options.FullIP` is set. It imports `clientip`
+  only. A change to what
   the payload holds is a change to every product's privacy text and needs a reason in the pull
   request and an update of the checklist in the concept doc.
 - `appassoc` serves the Apple App Site Association and Android `assetlinks.json` files from a

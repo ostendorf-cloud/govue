@@ -84,6 +84,20 @@ type Options struct {
 	// address too. It is for a development run. By default such a client is
 	// the cluster, a VPN or a probe, not a visitor.
 	AllowPrivateClients bool
+	// URL names the URL of a view that met no route pattern, for a product
+	// that serves static pages and knows what it sends. Nil, or an empty
+	// answer, means such a view is not counted. The answer must be a fixed
+	// path of a page the product chose, such as "/de/impressum", and never
+	// anything built from the request path, the query, a header or a cookie:
+	// an id or a token in it leaves the process. A query or fragment in the
+	// answer is cut off, and an answer that is no absolute path counts
+	// nothing. A request with a pattern never asks it.
+	URL func(*http.Request) string
+	// FullIP sends the whole client address. By default the address is
+	// masked before it is sent, to its /24 for IPv4 and its /48 for IPv6,
+	// which keeps the country and usually the region and costs some city
+	// accuracy.
+	FullIP bool
 }
 
 // Stats counts what happened to the views handed to a Client.
@@ -132,6 +146,12 @@ type Client struct {
 	title    func(*http.Request) string
 	onDrop   func()
 	private  bool
+	urlFn    func(*http.Request) string
+	fullIP   bool
+
+	// noPattern makes the warning about a view without a route pattern
+	// appear once.
+	noPattern sync.Once
 
 	// mu makes close(queue) and the sends on it exclusive.
 	mu     sync.RWMutex
@@ -194,7 +214,7 @@ func New(cfg Config, opts Options) (*Client, error) {
 		enabled:   true,
 		endpoint:  base.JoinPath("api", "send").String(),
 		host:      base.Host,
-		websiteID: cfg.WebsiteID,
+		websiteID: strings.ToLower(cfg.WebsiteID),
 		hostname:  opts.Hostname,
 		timeout:   timeout,
 		http:      opts.HTTPClient,
@@ -205,13 +225,13 @@ func New(cfg Config, opts Options) (*Client, error) {
 		title:     opts.Title,
 		onDrop:    opts.OnDrop,
 		private:   opts.AllowPrivateClients,
+		urlFn:     opts.URL,
+		fullIP:    opts.FullIP,
 		queue:     make(chan View, size),
 		classes:   map[string]*classState{},
 	}
 	if c.http == nil {
-		c.http = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		}}
+		c.http = defaultHTTPClient()
 	}
 	if c.now == nil {
 		c.now = time.Now
@@ -254,10 +274,34 @@ func (c *Client) Track(v View) {
 	}
 }
 
+// defaultHTTPClient posts with the standard transport settings, with no proxy
+// from the environment, so an HTTP_PROXY never sees a visitor address. It
+// verifies TLS, keeps no cookies and refuses redirects, so an address never
+// follows a redirect to another host.
+func defaultHTTPClient() *http.Client {
+	transport := &http.Transport{}
+	if std, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = std.Clone()
+	}
+	transport.Proxy = nil
+	return &http.Client{
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+// closeGrace is how long Close waits for the workers after its context ended
+// and the posts in flight were cancelled. A client that honours the context
+// returns at once.
+const closeGrace = time.Second
+
 // Close stops accepting views and waits for the queued ones to be posted. When
-// ctx ends first, the posts in flight are cancelled, the rest are counted as
-// dropped and Close returns the context error without waiting for the
-// workers. It is safe to call more than once.
+// ctx ends first, the posts in flight are cancelled and counted as failed
+// with class canceled, the rest are counted as dropped, and Close returns the
+// context error. Close returns after the workers stopped, so Stats and the log
+// are final then. It is safe to call more than once.
 func (c *Client) Close(ctx context.Context) error {
 	if !c.enabled {
 		return nil
@@ -274,16 +318,20 @@ func (c *Client) Close(ctx context.Context) error {
 		c.wg.Wait()
 		close(done)
 	}()
+	var err error
 	select {
 	case <-done:
-		c.cancel()
-		c.flushLog()
-		return nil
 	case <-ctx.Done():
+		err = fmt.Errorf("analytics: close before the queue drained: %w", ctx.Err())
 		c.cancel()
-		c.flushLog()
-		return fmt.Errorf("analytics: close before the queue drained: %w", ctx.Err())
+		select {
+		case <-done:
+		case <-time.After(closeGrace):
+		}
 	}
+	c.cancel()
+	c.flushLog()
+	return err
 }
 
 func (c *Client) worker() {
@@ -337,7 +385,7 @@ type payload struct {
 	Title     string `json:"title,omitempty"`
 	Referrer  string `json:"referrer,omitempty"`
 	Language  string `json:"language,omitempty"`
-	IP        string `json:"ip"`
+	IP        string `json:"ip,omitempty"`
 	UserAgent string `json:"userAgent"`
 }
 
@@ -349,7 +397,7 @@ func (c *Client) send(ctx context.Context, v View) error {
 		Title:     v.Title,
 		Referrer:  v.Referrer,
 		Language:  v.Language,
-		IP:        v.IP.String(),
+		IP:        c.address(v.IP),
 		UserAgent: v.UserAgent,
 	}})
 	if err != nil {
@@ -373,6 +421,34 @@ func (c *Client) send(ctx context.Context, v View) error {
 		return &sendError{class: "status_" + strconv.Itoa(resp.StatusCode/100) + "xx", err: errors.New("unexpected status")}
 	}
 	return nil
+}
+
+// Mask lengths of the address sent to Umami unless Options.FullIP is set.
+const (
+	maskBitsV4 = 24
+	maskBitsV6 = 48
+)
+
+// address is the client address as it goes to Umami: masked to its /24 or
+// /48 by default, whole with FullIP, empty when a is not an address. An IPv4
+// address mapped into IPv6 counts as IPv4.
+func (c *Client) address(a netip.Addr) string {
+	a = a.Unmap()
+	if !a.IsValid() {
+		return ""
+	}
+	if c.fullIP {
+		return a.String()
+	}
+	bits := maskBitsV6
+	if a.Is4() {
+		bits = maskBitsV4
+	}
+	prefix, err := a.Prefix(bits)
+	if err != nil {
+		return ""
+	}
+	return prefix.Addr().String()
 }
 
 // classify names the failure of a post without any detail of the URL.

@@ -40,7 +40,13 @@ const (
 
 // websiteIDPattern is the lowercase UUID Umami names a website by. Anything
 // else is a copied wrong value, and counting would silently go nowhere.
-var websiteIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+// Upper case is accepted and lowered by LoadConfig and New, which is safe: a
+// UUID is case insensitive.
+var websiteIDPattern = regexp.MustCompile(`^(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// numericHost matches a single label that an address parser may read as a
+// number: decimal, or hexadecimal with a 0x prefix.
+var numericHost = regexp.MustCompile(`^(?i)([0-9]+|0x[0-9a-f]*)$`)
 
 // Config is the connection to one Umami website.
 //
@@ -70,7 +76,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	l := envconf.New(getenv)
 	cfg := Config{
 		URL:       strings.TrimRight(l.String(EnvURL, ""), "/"),
-		WebsiteID: l.String(EnvWebsiteID, ""),
+		WebsiteID: strings.ToLower(l.String(EnvWebsiteID, "")),
 		Timeout:   l.Duration(EnvTimeout, DefaultTimeout, minTimeout, maxTimeout),
 		QueueSize: l.Int(EnvQueueSize, DefaultQueueSize, 1, maxQueueSize),
 	}
@@ -138,17 +144,27 @@ func checkURL(raw string) string {
 }
 
 // trustedPlainHost reports whether visitor addresses may travel over plain
-// HTTP to host: the machine itself, or a name only a cluster resolves, which
-// is a single label such as "umami" or ends in .svc or .svc.cluster.local.
+// HTTP to host: exactly localhost, a loopback address, or a name only a
+// cluster resolves, which is a single label such as "umami" or ends in .svc
+// or .svc.cluster.local. A single label that reads as a number ("2130706433",
+// "0x7f000001") and an internationalised label ("xn--...") are refused: the
+// first can name any address and the second can imitate another name. So is
+// "foo.localhost", which a resolver may send elsewhere.
 func trustedPlainHost(host string) bool {
 	host = strings.ToLower(host)
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+	if host == "localhost" {
 		return true
 	}
 	if addr, err := netip.ParseAddr(host); err == nil {
 		return addr.IsLoopback()
 	}
-	return !strings.Contains(host, ".") ||
-		strings.HasSuffix(host, ".svc") ||
-		strings.HasSuffix(host, ".svc.cluster.local")
+	for _, label := range strings.Split(host, ".") {
+		if strings.HasPrefix(label, "xn--") {
+			return false
+		}
+	}
+	if !strings.Contains(host, ".") {
+		return host != "" && !numericHost.MatchString(host)
+	}
+	return strings.HasSuffix(host, ".svc") || strings.HasSuffix(host, ".svc.cluster.local")
 }
