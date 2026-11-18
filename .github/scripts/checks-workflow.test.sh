@@ -58,6 +58,18 @@ assert eq "$deps.permissions | keys | join(\",\")" contents
 assert eq "$deps.permissions.contents" read
 assert eq '.jobs["web-install"]' null
 
+# Every permissions block is a map, so a string such as write-all cannot widen a job. No
+# job but the comment job holds a write permission of any kind.
+assert eq '[.jobs[] | select(.permissions != null and (.permissions | tag) != "!!map")] | length' 0
+assert eq '[.jobs | to_entries[] | select(.key != "web-deps-comment") | (.value.permissions // {}) | to_entries[] | select(.value != "read" and .value != "none")] | length' 0
+
+# The comment job has exactly these keys and runs on the hosted runner. No container, no
+# service container and no other runner label on any job.
+assert eq "$comment | keys | sort | join(\",\")" concurrency,if,needs,permissions,runs-on,steps
+assert eq "$comment.\"runs-on\"" ubuntu-latest
+assert eq '[.jobs[] | select(has("runs-on")) | select(."runs-on" != "ubuntu-latest")] | length' 0
+assert eq '[.jobs[] | select(has("container") or has("services"))] | length' 0
+
 # The install job holds no token of its own: no credential in the checkout, no token or
 # secret in any key of any step, and never the comment action.
 assert eq "$deps.steps[0].with.\"persist-credentials\"" false
@@ -131,6 +143,10 @@ assert eq "$post | keys | sort | join(\",\")" uses,with
 # The secret and the variable appear once in the whole workflow, in the token step of the
 # comment job and nowhere else. No job passes secrets on, and no step prints one.
 assert eq '[.. | select(tag == "!!str" and test("secrets\\."))] | length' 1
+# Any use of the secrets context counts, with or without the dot: toJSON(secrets), a
+# secrets["x"] index. Only the private key reference may remain. The task name
+# lint:secrets is no use of the context.
+assert eq '[.. | select(tag == "!!str" and test("secrets") and (test("lint:secrets") | not))] | length' 1
 assert eq '[.. | select(tag == "!!str" and test("vars\\."))] | length' 1
 assert eq '[.. | select(tag == "!!str" and test("GH_APP_DEPENDENCIES"))] | length' 2
 assert eq '[.jobs | to_entries | .[] | select(.value | tojson | test("secrets\\.")) | .key] | join(",")' web-deps-comment

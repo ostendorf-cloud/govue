@@ -255,11 +255,14 @@ jobs:
   # The only job with a write token or a secret. It runs on a fresh runner after the install
   # job, so nothing the install did is here: no tool, no changed file, no stored credential.
   # It checks out nothing. It mints a token as the dependencies app, so the comment comes
-  # from the app. The private key is readable by every workflow of every branch, so this is
-  # acceptable only while the owner alone has write access. With a second writer, revert it
-  # to github.token. The shared action downloads the log and hands the token to its own
-  # script step alone. The log is data, the script reads only strictly matched text from
-  # it. A fork pull request has no secret and is skipped.
+  # from the app. This adds no new reader of the key. Any writer of any repository the org
+  # secret is visible to can already read it, this repository included through
+  # renovate.yaml. The condition is org wide: the owner alone has write access to every
+  # repository in the secret's visibility. The lever is limiting that visibility to the
+  # repositories that need the key, which belongs in the infrastructure repository. The
+  # shared action downloads the log and hands the token to its own script step alone. The
+  # log is data, the script reads only strictly matched text from it. A fork pull request
+  # has no secret and is skipped.
   web-deps-comment:
     needs: web-deps
     if: >-
