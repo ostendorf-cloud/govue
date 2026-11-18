@@ -313,9 +313,11 @@ The design of the library and the reasoning behind it.
   `appassoc.AndroidPath`. `example/` reads `APPLE_APP_ID`, `APPLE_APP_PATHS`,
   `APPLE_APP_EXCLUDE_PATHS`, `APPLE_WEBCREDENTIALS`, `ANDROID_PACKAGE`, `ANDROID_CERT_SHA256` and
   `ANDROID_LOGIN_CREDS`. See "App association files".
-- Step 6, the Vue client. Call `createClient({ baseUrl, auth: { mode: 'bearer', storage } })`,
-  with a `TokenStorage` adapter that the product writes. Exactly one context per storage keeps
-  `rotation: 'owner'`, the default. Every other context sets `rotation: 'none'`. Sign in with
+- Step 6, the Vue client. Call
+  `createClient({ baseUrl, auth: { mode: 'bearer', storage, rotation: 'owner' } })`, with a
+  `TokenStorage` adapter that the product writes. A client with its own storage must state its
+  `rotation`. Exactly one context per storage is the `'owner'`. Every other context sets
+  `rotation: 'none'`. Sign in with
   `signIn` and out with `signOut`. `baseUrl` defaults to `/api/v1`, which is relative to the
   bundled origin of the app, so an app names its API there. Assumed, not tested. See "The bearer
   client of a native app".
@@ -353,8 +355,9 @@ The design of the library and the reasoning behind it.
   app", the bullet "Differences from ADR 0001, all of them".
 - Two contexts that both rotate one storage revoke the device. See "The bearer client of a
   native app", the bullet "One context owns the storage".
-- `rotation` defaults to `'owner'`. Whether a custom storage must state it is open, see "Open
-  questions".
+- A custom storage must state its `rotation`, `'owner'` or `'none'`, with no default. Only the
+  default in memory storage is an `'owner'` without saying so. The owner decided this on
+  2026-11-18. See "The bearer client of a native app".
 - The Capacitor defaults were verified on 2026-11-18 against the Capacitor and Ionic pages. The
   exact `Origin` header, `Sec-Fetch-Site` and the native HTTP plugin were not. See "App origins".
 - No `Access-Control-Expose-Headers`, so a page cannot read `Retry-After`. No
