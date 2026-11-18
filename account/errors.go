@@ -5,13 +5,13 @@ package account
 
 import "errors"
 
-// ErrNotFound is what a [Store] returns, wrapped or not, in three cases. From
+// ErrNotFound is what a [Store] returns, wrapped or not, in two cases. From
 // a lookup it means no account matched. From a conditional write,
-// [Store.AdvanceTOTPCounter], [Store.ConfirmTOTP] or [Store.ReplaceTOTPSecret],
-// it means the write did not happen: the counter was not advanced or the
-// secret not confirmed or replaced, because the code was replayed, the
-// account was in the wrong state or the account is missing. From
-// [Store.SetPasswordHash] it means the account is missing. This package
+// [Store.AdvanceTOTPCounter], [Store.ConfirmTOTP], [Store.ReplaceTOTPSecret]
+// or [Store.SetPasswordHash], it means the write did not happen: the counter
+// was not advanced, the secret not confirmed or replaced or the hash not
+// replaced, because the code was replayed, the hash changed meanwhile, the
+// account was in the wrong state or the account is missing. This package
 // treats ErrNotFound from a conditional write as a refusal, never as proof
 // that the account is gone.
 var ErrNotFound = errors.New("account: not found")

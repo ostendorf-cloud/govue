@@ -36,7 +36,9 @@ repeated here.
   `favicon`, `health`, `httpserver`, `language`, `logging`, `metrics`, `middleware`, `oidc`,
   `ratelimit`, `session`, `themeboot`.
 - `account` holds local accounts against the consumer's own tables: the contract, Argon2id
-  password hashing and TOTP. Its `Store` interface
+  password hashing, TOTP and `Service` with signup, TOTP confirmation, login and password
+  change. `account/accounttest` holds the conformance suite every adapter runs and an in memory
+  store. `Store.SetPasswordHash` is a compare and set on the old hash. Its `Store` interface
   carries only the calls its logic makes for login, TOTP enrolment and password change. A new
   method needs a reason in the pull request, because what the interface lacks is what the
   package cannot reach.

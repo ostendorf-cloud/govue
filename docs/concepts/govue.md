@@ -436,7 +436,8 @@ The design of the library and the reasoning behind it.
   adapter only with the counter mapping below.
 - `Store` has six methods, taken from the calls the logic makes. `FindByLogin`, `Create` and
   `AdvanceTOTPCounter` serve signup and login. `ConfirmTOTP` and `ReplaceTOTPSecret` serve TOTP
-  enrolment, and `SetPasswordHash` serves a password change. It has no method for a provider
+  enrolment, and `SetPasswordHash`, a compare and set on the old hash, serves a password change
+  and the rehash after a login. It has no method for a provider
   identity, a connected account, a tenant or a list of accounts.
 - That absence is the guarantee. Code in `account` cannot reach what the interface does not
   offer, so a login can never be matched against a provider account somebody connected for
@@ -487,19 +488,65 @@ The design of the library and the reasoning behind it.
   between verify and confirm then makes the confirm fail, instead of confirming a secret the
   person never saw.
 - `AdvanceTOTPCounter` refuses an unconfirmed account, so a login can never confirm a secret.
-- The conformance suite in `account/accounttest`, planned with the login logic, checks every
-  guard an adapter has to hold:
+- The conformance suite `accounttest.Run` checks every guard an adapter has to hold. Each
+  product runs it against its own storage:
   - the conditional counter write, and that `AdvanceTOTPCounter` refuses a counter of zero
+  - that racing calls of `AdvanceTOTPCounter` with one counter succeed exactly once, and that
+    racing calls with rising counters never move it back
   - that `ConfirmTOTP` refuses an account without a secret, a counter at or below zero and a
-    secret that is not the stored one
+    secret that is not the stored one, and that racing confirms succeed exactly once
   - the unconfirmed guard of `ReplaceTOTPSecret`
   - an ignored caller supplied id and counter on `Create`
-  - that a disabled or pending account cannot be found for login
+  - that racing signups of one login create exactly one account
+  - that `FindByLogin` and `Create` agree on letter case. The adapter declares whether it folds
+    case. Folding, a case variant finds the account and conflicts with it. Not folding, it is a
+    separate account
+  - that `SetPasswordHash` changes only the hash, and that no write reaches another account
+  - that `SetPasswordHash` is a compare and set: it refuses an old hash that is not the stored
+    one and changes nothing then, refuses an account without a password, and of racing writes
+    from one old hash exactly one succeeds
+  - that a disabled or pending account cannot be found for login, through a `Disable` function
+    the adapter supplies
+  - that `FindByLogin` matches exactly: `%` and `_` are no wildcards, and a prefix or an
+    extension of an existing login finds nothing
+- Each race check starts 32 calls at once behind a start barrier and repeats that 1000 times,
+  `accounttest.DefaultRacers` and `DefaultRounds`. Both are `Harness` fields as well. A store
+  that reads, compares in Go and then writes has a window of a few instructions and passes a
+  single round most of the time.
+- The defaults were measured, not argued. Five such stores without any sleep, one per race
+  check, ran through their check 200 times each, with and without the race detector, on one
+  15 core machine. With the earlier 16 racers and 10 rounds they escaped up to 178 of 200 runs
+  without the race detector and up to 59 with it. With 32 racers and 200 rounds one escaped
+  once. With the defaults every run caught every store. Without the start barrier, 200 rounds
+  let one escape in 63 of 200 runs. The whole suite takes about half a second against
+  `MemoryStore`, a few seconds under the race detector.
+- That is still a measurement and not a proof. A test shows only the races it hits, and another
+  machine or store latency hits them less often. Load lowers it as well: next to the CPU heavy
+  Argon2 tests in the same `go test` run, such a store escaped the defaults in one of ten runs.
+  An adapter that keeps its state in Go memory raises `Harness.Rounds`. A SQL adapter that reads
+  and then writes has a window of a round trip and is far easier to catch. The meta test runs
+  its broken stores with ten times the default rounds for that reason, and a separate test pins
+  the defaults. The suite is a safety net. What proves a SQL
+  adapter atomic is its statement, one conditional `UPDATE` with the comparison in its `WHERE`
+  clause, checked by reading it. A product runs the suite with the race detector as well.
+- With `GOMAXPROCS` 1 the racers take turns on one processor and a narrow race is never hit: at
+  `go test -cpu=1` a read then write store passed every one of 200 runs. The race checks raise
+  `GOMAXPROCS` to at least four while they run and restore it afterwards. The checks of one
+  `Run` are not parallel tests, and other tests running at that time only get more processors.
+- More processors than CPUs do not help on a machine with one CPU, where the threads take turns
+  as well. There a race check fails with a message instead of passing, since a green suite that
+  cannot see a race proves nothing. A product runs the suite on at least two CPUs.
+- A test runs the suite in a child process against 39 stores that each break one guard, and
+  expects the matching check to fail. Four of them run with `-test.cpu=1`. The read then write
+  stores in it have no sleep, so the races they show are as narrow as in a real adapter.
+- `accounttest.MemoryStore` is an in memory store that passes the suite, for tests of code
+  built on `account`.
 - Password and TOTP are checked in one login call, as before. A two step login needs somewhere
   to keep a half authenticated state, which is a second session to design and expire.
 - Every refused login answers `ErrInvalidCredentials`, and a login against an unknown account
-  pays the same hashing cost as a wrong password, so neither the answer nor the time tells which
-  part of a guess was right.
+  pays one derivation, as a wrong password does, so neither the answer nor the work tells which
+  part of a guess was right. The service section below says where the cost of that derivation
+  differs.
 - Passkeys are meant to follow in a separate `passkey` package with its own store, beside TOTP
   rather than replacing it. Losing one device must not lock somebody out of their records.
 - Recovery codes are not part of the first version. Losing both the TOTP device and every
@@ -576,8 +623,111 @@ The design of the library and the reasoning behind it.
   account name, with a space as `%20`. Both are refused when empty, too long, not printable or
   holding the colon the label format reserves. The secret is validated and written in upper
   case.
-- Both checks are pure functions without the store. The login logic that combines them with
-  the store is the next step and not built yet.
+- Both checks are pure functions without the store. `account.Service` combines them with the
+  store.
+
+#### The service
+
+- `account.Service` has `SignUp`, `ConfirmTOTP`, `Login` and `ChangePassword`, built on `Store`
+  and `Hasher`. HTTP handlers and Vue forms follow in a later step.
+- `SignUp` validates the login, applies the password policy, then generates the secret, hashes
+  and calls `Create`. The secret starts unconfirmed. The login must be printable, at most 254
+  bytes, without a colon and without a leading or trailing space. Whether it must be an email
+  address is the application's check.
+- The service does not normalise logins. Letter case, Unicode composed and decomposed forms and
+  confusable characters, a Cyrillic `а` for a Latin `a`, are the adapter's or the application's
+  to handle, the same way before `SignUp` and before `Login`. Without that, `josé` typed composed
+  and decomposed are two accounts.
+- The service never trims a login or a password. calbridge's login trimmed the login before the
+  lookup. A product adopting `account` keeps trimming in its handler where it did before, or a
+  login typed with a leading space no longer finds its account.
+- `Login` and `ConfirmTOTP` never send a login to the store that `SignUp` would refuse as a
+  label: empty, too long, not valid UTF-8, not printable or holding a colon. Such a login is
+  refused like an unknown one, after the same work. A Postgres text column answers a NUL byte
+  with an error, which would otherwise turn the refusal into a store failure without the equal
+  work. An adopted account whose login holds a colon cannot log in, and needs its login
+  changed.
+- `ConfirmTOTP` takes the login, the password and a code. No session exists before the first
+  login, so the password gates it. It writes through `Store.ConfirmTOTP`, so the confirming code
+  is consumed and cannot log in afterwards. It returns the `Identity`, and the application may
+  start a session with it.
+- `Login` checks the login, the password and the code in one call. A secret that is not
+  confirmed cannot log in. The service checks that itself, and `AdvanceTOTPCounter` refuses it
+  as well.
+- `AdvanceTOTPCounter` is the only replay guard. The service never compares the code's counter
+  with one it read. A test lets several logins read the account before any of them writes, and
+  exactly one gets through. Over a store that reads and then writes, more than one does, which
+  shows the race in the test is real.
+- Every refusal of `Login` and `ConfirmTOTP` answers `ErrInvalidCredentials`, unwrapped, after
+  one Argon2id derivation and three HMACs over the window. That holds for an unknown login, a
+  disabled account, an account without a hash or a secret, a wrong password, a wrong, missing
+  or replayed code and an unconfirmed secret. Tests count the work through injected functions,
+  not wall time. The conditional counter write runs only after both factors matched, so its
+  time tells nothing to whoever does not hold both already.
+- The derivation runs at today's parameters when there is no usable hash: no account, no
+  password, a corrupted hash. For an existing account with a valid hash it runs at the
+  parameters stored in that hash. Today every hash uses today's parameters, so all refusals cost
+  the same. After a parameter change, a wrong password for an account still on the old
+  parameters costs what those say, so the time can tell such an account from an unknown login
+  until a successful login rehashes it.
+- A corrupted stored hash is logged at debug level with the account id only. Anyone can reach
+  that path without credentials, so a warning per request would let them flood the log.
+- A login that could not be decided is not a refusal. `ErrHashingBusy` and a failing store
+  answer their own errors, and neither consumes the code.
+- A login whose hash is outdated rewrites it at today's parameters. That is best effort: a
+  failure is logged with the account id and the cause, never with a password, a hash, a secret
+  or a code, and the login still succeeds. A password below today's policy, kept by an adopted
+  account, keeps its old hash.
+- `SetPasswordHash` is a compare and set. It writes only when the stored hash is not empty and
+  equals the old hash the caller read and verified, in one statement, and answers `ErrNotFound`
+  otherwise. Without it, a password change landing between a login's lookup and its rehash
+  write would be overwritten with the old password, and of two racing password changes both
+  would report success while one is lost.
+- The rehash writes from the hash the login verified. A change that landed meanwhile makes the
+  write fail, the change stands, and the rehash is dropped with a debug log line.
+- Refusing an empty stored hash means `account` can never give a password to an account that
+  has none, such as one created through OIDC alone.
+- `ChangePassword` checks the new password against the policy first, then looks the account up
+  by the identity's login and refuses when the record's id is not the identity's id. It verifies
+  the current password, hashes the new one, stores it with `SetPasswordHash` from the verified
+  hash and then calls the `EndSessions` callback the application supplies. `account` imports
+  nothing from `session`.
+- Of two password changes racing from the same password, exactly one wins. The other answers
+  `ErrStale`, writes nothing and ends no session, since the winner already ended them. A
+  rehash of a login with the same password landing in between yields `ErrStale` as well, since
+  it rewrites the hash. The caller asks the person to try again.
+- The order is the rule of the device sessions above: commit the new credential first, then end
+  the sessions. Ending them first leaves a window in which a session started with the old
+  password, which still verifies, survives the change. A test records the order. The
+  application's callback ends the device sessions as well, for example through `EndAll` with a
+  device store configured.
+- `EndSessions` runs with a context detached from the request's cancellation but keeping its
+  values, so a client that hangs up after the commit does not keep its old sessions and an
+  adapter still finds its tenant. `ServiceConfig.EndSessionsTimeout`, 30 seconds by default,
+  bounds it, so a hung callback cannot hold the call forever. A timeout below one second is
+  refused, since it would end the callback before it can run. A long one is accepted.
+- Once the current password is verified, `ChangePassword` has four outcomes:
+  - nil: the password changed and every session ended
+  - `ErrSessionsNotEnded` with the cause: the password changed, ending the sessions failed or
+    timed out. The change stands and is not rolled back. The caller retries ending the sessions
+    and does not tell the person the change failed
+  - `ErrStale`: the compare and set was refused, nothing changed and no session ended. The
+    caller asks the person to try again
+  - another error, the store's: whether the write committed is not known, since a driver can
+    commit and still report the context ending. The sessions are ended anyway, since ending them
+    once too often is harmless and a changed password with live old sessions is not. When ending
+    fails as well, its error is joined in without `ErrSessionsNotEnded`, which would claim the
+    password changed. The caller tells the person the change may not have happened
+- `ErrSessionsNotEnded` is only returned when the write is known to have succeeded. A handler
+  that follows its doc and reports success must never do so for a write that did not happen.
+- `SignUp` answers `ErrConflict` for a taken login. With this flow an account existence oracle
+  exists: signing up with a login tells whether an account exists. Answering `ErrConflict`
+  like a success does not hide it, since the confirm step tells again: the enrolment shown
+  confirms for a fresh login and is refused for a taken one. Both existing applications accept
+  the oracle. A product that must hide account existence has to defer creating the account
+  until the person proved control of the address, for example with a mailed link, and
+  `SignUp` does not support that. The work is the same either way, one derivation before the
+  store is asked. The signup route needs the same per client rate limit as the login route.
 
 ### Theming through a published token contract
 

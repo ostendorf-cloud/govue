@@ -140,7 +140,19 @@ type Store interface {
 	// mapping described on [Record.TOTPCounter].
 	ReplaceTOTPSecret(ctx context.Context, id, secret string) error
 
-	// SetPasswordHash replaces the account's password hash and nothing else,
-	// or returns ErrNotFound for an account the store does not hold.
-	SetPasswordHash(ctx context.Context, id, hash string) error
+	// SetPasswordHash replaces the account's password hash with newHash and
+	// nothing else. It is a compare and set: it writes only when the stored
+	// hash is not empty and equals oldHash, the hash the caller read and
+	// verified, in one statement, a conditional UPDATE in SQL. It returns
+	// ErrNotFound when no row changed: the hash moved since the caller read
+	// it, the account has no password, or the account is missing.
+	//
+	// That is what keeps a concurrent password change from being lost. Of two
+	// writes from the same old hash, exactly one succeeds, so two racing
+	// password changes cannot both win, and a rehash after a login never puts
+	// back a password that was changed meanwhile. Writing the hash without
+	// the comparison cannot do that. Refusing an empty stored hash means this
+	// package can never give a password to an account that has none, such as
+	// one created through OIDC alone.
+	SetPasswordHash(ctx context.Context, id, oldHash, newHash string) error
 }
