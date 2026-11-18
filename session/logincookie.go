@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/ostendorf-cloud/govue/internal/bearer"
 )
 
 // Defaults for the login cookie. Each is the value a left zero [CodecConfig]
@@ -63,7 +65,14 @@ func (c *Codec) SetLoginCookie(w http.ResponseWriter, value any) error {
 // Every failure is [ErrInvalid], including a missing and an empty cookie. A
 // caller cannot tell the two apart on purpose: there is nothing it could do
 // differently, and one code path is one place to get the refusal right.
+//
+// A bearer request, or one with more than one Authorization header, is
+// [ErrInvalid] without reading or clearing the cookie: such a request carries
+// no cookie credential, see [Manager.Read].
 func (c *Codec) ReadLoginCookie(w http.ResponseWriter, r *http.Request, into any) error {
+	if kind, _ := bearer.Classify(r.Header); kind != bearer.None {
+		return fmt.Errorf("session: login cookie on a bearer request: %w", ErrInvalid)
+	}
 	c.ClearLoginCookie(w)
 
 	cookie, err := r.Cookie(c.loginCookieName)

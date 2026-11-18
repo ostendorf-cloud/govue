@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -63,15 +64,16 @@ func (s *noteStore) add(subject, text string) note {
 	return n
 }
 
-// requireSession reads the session a request carries, or returns the api
-// error a handler can return unchanged: unauthenticated without one, and
-// unavailable when the store itself could not answer, so an outage is never
-// reported as a logged out user.
+// requireSession returns the session the route chain's session middleware
+// read, or the api error a handler can return unchanged: unauthenticated
+// without one, and unavailable when the store itself could not answer, so an
+// outage is never reported as a logged out user. The session is a cookie
+// session or a device session, and s.Subject is the account either way.
 func (a *app) requireSession(r *http.Request) (session.Session, error) {
-	s, ok, err := a.sessions.Read(r.Context(), r)
-	if err != nil {
+	if err := session.ErrorFromContext(r.Context()); err != nil {
 		return session.Session{}, api.Unavailable("session store is unavailable")
 	}
+	s, ok := session.FromContext(r.Context())
 	if !ok {
 		return session.Session{}, api.Unauthenticated("log in first")
 	}
@@ -233,9 +235,13 @@ func clearLoginCookie(w http.ResponseWriter, allowPlainHTTP bool) {
 
 // logout ends the session the request carries. It is an unsafe method, so
 // the route chain's CSRF check already ran: a logout a page cannot forge is
-// exactly as much a state change as any other.
+// exactly as much a state change as any other. A bearer request signs its
+// device out and leaves the cookie alone.
 func (a *app) logout(w http.ResponseWriter, r *http.Request) error {
 	if err := a.sessions.End(r.Context(), w, r); err != nil {
+		if errors.Is(err, session.ErrDeviceToken) {
+			return api.Unauthenticated("the token is not valid")
+		}
 		return api.Internal(err)
 	}
 	api.NoContent(w)

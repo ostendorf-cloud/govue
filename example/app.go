@@ -115,8 +115,18 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 	}
 
 	sessions, err := session.New(session.Config{
-		Store:          session.NewMemoryStore(nil, maxSessions),
+		Store:          session.NewMemoryStore(cfg.now, maxSessions),
 		AllowPlainHTTP: cfg.allowPlainHTTP,
+		Now:            cfg.now,
+		// Device sessions are on, so a bearer request authenticates by its
+		// token. The memory store signs every app out on a restart. A
+		// product with apps writes a shared store.
+		Devices: session.DeviceConfig{Store: session.NewMemoryDeviceStore(cfg.now, maxSessions)},
+		// A failed bearer request gets this application's one error shape.
+		// The middleware has already set WWW-Authenticate and no-store.
+		OnBearerRefusal: func(w http.ResponseWriter, r *http.Request) {
+			api.WriteError(w, r, api.Unauthenticated("the token is not valid"))
+		},
 	})
 	fail(err)
 	a.sessions = sessions
@@ -248,8 +258,14 @@ func (a *app) handler() http.Handler {
 	// r.Pattern on this request: ahead of the mux, in the outer chain
 	// below, the same answer would be logged and counted as "unmatched"
 	// instead.
+	//
+	// The session middleware sits after the csrf protector, so a cookie
+	// request is checked exactly as before it is read. It answers a failed
+	// bearer request with 401 on every route, and the csrf protector lets a
+	// bearer request through only because of that: such a request never
+	// authenticates by the cookie.
 	route := func(h http.Handler) http.Handler {
-		return middleware.Chain(h, a.cors.Middleware, a.rateLimit.Middleware, a.protector.Middleware)
+		return middleware.Chain(h, a.cors.Middleware, a.rateLimit.Middleware, a.protector.Middleware, a.sessions.Middleware)
 	}
 
 	mux.Handle("GET /app", route(api.Handle(a.home)))

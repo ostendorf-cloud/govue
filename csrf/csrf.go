@@ -18,6 +18,9 @@
 // is worthless in another. A caller supplies the expected token through an
 // Expected function, which is why this package never imports a session
 // package: it only ever sees a session id as a string.
+//
+// A bearer request is not checked at all, see [Protector.Check]. ADR 0001
+// records why.
 package csrf
 
 import (
@@ -29,6 +32,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/ostendorf-cloud/govue/internal/bearer"
 )
 
 // HeaderName is where a fetch sends the token; FieldName is where a form does.
@@ -176,7 +181,19 @@ func (p *Protector) Middleware(next http.Handler) http.Handler {
 // Check reports why a request is refused, or nil when it is accepted. The
 // origin signals are checked first, then the token, so a cross origin request
 // is refused whatever token it carries.
+//
+// A request with an Authorization header of the Bearer scheme, or with more
+// than one Authorization header, skips both halves, and Expected is not
+// called for it. A browser never attaches such a header by itself, and a
+// cross site page cannot add one without a CORS preflight. The session layer
+// authenticates such a request by its token only and never by a cookie, so
+// there is no ambient credential to borrow. A request with no Authorization
+// header or another scheme keeps both halves. The classification is the
+// module's one shared predicate, the same one the session package uses.
 func (p *Protector) Check(r *http.Request) error {
+	if kind, _ := bearer.Classify(r.Header); kind != bearer.None {
+		return nil
+	}
 	if err := p.cross.Check(r); err != nil {
 		return fmt.Errorf("csrf: cross origin check: %w", err)
 	}

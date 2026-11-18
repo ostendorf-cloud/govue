@@ -47,6 +47,10 @@ type config struct {
 	// siteDir is the output directory of the prerender step. Empty means the
 	// example serves no language pages and no redirect at /.
 	siteDir string
+
+	// now is the clock of the session and device stores. It is not read
+	// from the environment. Nil is time.Now, and tests replace it.
+	now func() time.Time
 }
 
 // loadConfig reads every setting through envconf, so a misconfigured

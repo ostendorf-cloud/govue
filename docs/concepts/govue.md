@@ -173,8 +173,10 @@ The design of the library and the reasoning behind it.
   middleware and the access log, both of which read `r.Pattern` and so have to sit directly
   outside the mux with nothing in between that replaced the request.
 - The route chain is applied to every handler registered on the mux, outermost first: CORS, the
-  rate limiter, then the CSRF protector, then the application handler. The rate limiter's 429 and
-  the CSRF protector's 403 answer on the exact route they refuse: each wraps one specific
+  rate limiter, the CSRF protector, the session middleware, then the application handler. The
+  session middleware sits after the CSRF protector, so a cookie request is checked before it is
+  read. The rate limiter's 429, the CSRF protector's 403 and the session middleware's 401 for a
+  failed bearer request answer on the exact route they refuse: each wraps one specific
   registered handler, so its answer carries that handler's real route label once the mux has
   already set `r.Pattern`. A CORS preflight is different: no `OPTIONS` pattern is registered for
   any route, so ServeMux matches the catch-all `"/"` instead, and the preflight's 204 is logged
@@ -275,8 +277,30 @@ The design of the library and the reasoning behind it.
   `Config.Devices`.
 - It is off while `DeviceConfig.Store` is nil. With a store, `EndAll` also ends the account's
   device sessions.
-- Nothing reads a bearer header yet, no route issues a token, and `csrf` and CORS are unchanged.
-  Later steps of #117 add them.
+- No route issues a token yet, and CORS is unchanged. Later steps of #117 add them.
+- `internal/bearer` holds the one predicate both `session` and `csrf` import. It reads every
+  `Authorization` value and answers none, bearer or malformed. Bearer is one value with the scheme
+  `Bearer` in any ASCII case. One or more spaces separate it from the token, as RFC 9110 allows.
+  Malformed is more than one value. Everything else is none. A test parses both packages and
+  fails when either stops using it or names the header itself.
+- `csrf.Protector.Check` skips both halves for bearer and malformed, and does not call
+  `Expected` then. None keeps both halves exactly as before.
+- `Manager.Read` authenticates a bearer request by the device token only. It never reads the
+  cookie on a bearer or malformed request, with or without a device store. A request with both
+  authenticates as the token's subject. `Session.Credential` says which credential it was, and
+  `Session.DeviceID` names the device.
+- `Manager.Middleware` sets `Cache-Control: no-store` on every bearer response. A token that does
+  not authenticate, two headers and a bearer request without a device store get 401 with
+  `WWW-Authenticate: Bearer` on every route, through `Config.OnBearerRefusal`. A device store
+  outage passes on like a cookie store outage.
+- On a bearer request `End` signs the device out and leaves the cookie alone. `Rotate` refuses a
+  device session, so a token never mints a cookie session. `Codec.ReadLoginCookie` neither reads
+  nor clears the login cookie.
+- No `Vary: Authorization` is added. A bearer response is never stored, so no cache can serve it
+  to another request.
+- `example/` configures a memory device store and runs the session middleware after the CSRF
+  protector. A contract test sends the cross product of credentials, methods, origins and the CSRF
+  token through that chain.
 - The token is a prefix, 32 random bytes in base64url and a CRC-32 checksum. The store keeps only
   its SHA-256. A malformed token never reaches the store.
 - The default prefix `device` is neutral. A product sets its own, so secret scanning finds a
@@ -317,9 +341,11 @@ The design of the library and the reasoning behind it.
   `net/http`, and nothing in the module imports `session`, so there is no cycle either way.
 - `csrf` is unaffected and still imports nothing from `session`: it is the application's
   `csrf.Expected` closure that reads the session.
-- The middleware refuses nothing and writes no response. It is not an authorisation gate: a public
-  route behind the same chain must not start answering 503 because a cookie could not be read, and
-  nothing is lost by that, because `FromContext` reports false for a store that could not answer.
+- For a cookie request the middleware refuses nothing and writes no response. It is not an
+  authorisation gate: a public route behind the same chain must not start answering 503 because a
+  cookie could not be read, and nothing is lost by that, because `FromContext` reports false for a
+  store that could not answer. A bearer request whose token fails is the one exception, see
+  "Device sessions for native apps".
 - `FromContext` is false for a request the middleware never ran on, so a handler mounted without it
   looks logged out rather than logged in as somebody.
 - `ErrorFromContext` keeps the distinction `Read` draws between a logged-out request and a store

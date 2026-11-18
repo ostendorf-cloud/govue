@@ -6,6 +6,8 @@ package session
 import (
 	"context"
 	"net/http"
+
+	"github.com/ostendorf-cloud/govue/internal/bearer"
 )
 
 // contextKey is unexported and a struct type, so nothing outside this package
@@ -36,17 +38,34 @@ type outcome struct {
 // before the change for the rest of that request. The handler already holds
 // what those methods returned.
 //
-// This middleware refuses nothing and writes no response. It is not an
-// authorisation gate, and making it one would be wrong twice over: a public
-// route behind the same chain would start answering 503 because of a middleware
-// whose only job was to read a cookie, and the gate belongs where the
-// application knows what a route requires. Nothing is lost by that, because
-// [FromContext] reports false for a store that could not answer, so an
-// application's own check is fail closed whether it reads the error or not.
+// For a cookie request this middleware refuses nothing and writes no
+// response. It is not an authorisation gate, and making it one would be wrong
+// twice over: a public route behind the same chain would start answering 503
+// because of a middleware whose only job was to read a cookie, and the gate
+// belongs where the application knows what a route requires. Nothing is lost
+// by that, because [FromContext] reports false for a store that could not
+// answer, so an application's own check is fail closed whether it reads the
+// error or not.
+//
+// A bearer request is different. Its response carries Cache-Control: no-store.
+// A token that does not authenticate, a request with more than one
+// Authorization header, and any bearer request without a device store are
+// answered with 401 and WWW-Authenticate: Bearer, through
+// [Config.OnBearerRefusal], on every route: the app has to learn that its
+// token failed, and the request never reaches a handler that might read the
+// cookie on its own. A device store that could not answer is passed on like a
+// cookie store outage.
 func (m *Manager) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s, ok, err := m.Read(r.Context(), r)
-		ctx := context.WithValue(r.Context(), contextKey{}, outcome{session: s, ok: ok, err: err})
+		res := m.read(r.Context(), r)
+		if res.kind != bearer.None {
+			noStore(w)
+		}
+		if res.refused {
+			m.refuseBearer(w, r)
+			return
+		}
+		ctx := context.WithValue(r.Context(), contextKey{}, outcome{session: res.session, ok: res.ok, err: res.err})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
