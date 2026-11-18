@@ -39,6 +39,12 @@ export interface RequestOptions {
   query?: Record<string, string | number | boolean | undefined | null>
   headers?: Record<string, string>
   signal?: AbortSignal
+  /**
+   * Do not call `onUnauthenticated` when this request is answered with 401.
+   * Default false. For a request whose 401 is its own answer and not a lost
+   * session, such as a failed login.
+   */
+  skipUnauthenticatedHook?: boolean
 }
 
 export interface ApiClient {
@@ -110,7 +116,7 @@ export function createClient(options: ClientOptions = {}): ApiClient {
       throw transportError(cause, timeout)
     }
 
-    if (response.status === 401) {
+    if (response.status === 401 && !requestOptions.skipUnauthenticatedHook) {
       options.onUnauthenticated?.()
     }
     if (!response.ok) {

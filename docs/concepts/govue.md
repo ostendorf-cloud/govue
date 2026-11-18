@@ -639,7 +639,7 @@ The design of the library and the reasoning behind it.
 #### The service
 
 - `account.Service` has `SignUp`, `ConfirmTOTP`, `Login` and `ChangePassword`, built on `Store`
-  and `Hasher`. HTTP handlers and Vue forms follow in a later step.
+  and `Hasher`. The HTTP handlers and the Vue forms on top of it are the next section.
 - `SignUp` validates the login, applies the password policy, then generates the secret, hashes
   and calls `Create`. The secret starts unconfirmed. The login must be printable, at most 254
   bytes, without a colon and without a leading or trailing space. Whether it must be an email
@@ -738,6 +738,128 @@ The design of the library and the reasoning behind it.
   until the person proved control of the address, for example with a mailed link, and
   `SignUp` does not support that. The work is the same either way, one derivation before the
   store is asked. The signup route needs the same per client rate limit as the login route.
+
+#### HTTP handlers and Vue forms
+
+- `account.NewHandlers` returns one `http.Handler` per step: `Signup`, `ConfirmTOTP`, `Login`,
+  `ChangePassword` and `Logout`. A product mounts the ones it offers on POST routes. Registration
+  policy is the product's: it mounts the signup handler or not, and an optional
+  `AllowSignup func(*http.Request) error` decides per request. A returned `*api.Error` is
+  answered as it is, any other error as 403 without its text.
+- The handlers take callbacks like `oidc.HandlerConfig`, so `account` imports nothing from
+  `session`. `StartSession` turns a verified `Identity` into a session, `EndSession` ends the one
+  session of a logout, and `CurrentIdentity` reads the account of a request for the password
+  change. The service's `EndSessions` ends every session after a password change. All four are
+  required. In `example/` they are `Manager.Start`, `Manager.End`, the session in the request
+  context and `Manager.EndAll`, with the account id as the session's subject.
+- `account` imports `api` and `logging`, for the error shape and the strict decoder. A second error
+  shape for the account routes would be worth more than the import only if a product wanted one,
+  and `api` imports nothing but `logging`, so it pulls no session code in.
+- One login call checks the password and the code, as the service does. There is no half logged
+  in state between two requests. The confirm handler starts a session as well: it proved both
+  factors, the service says the caller may, and without it the person would have to wait for the
+  next code, since the confirming code is consumed. A product that wants no session there has no
+  switch for it yet. Whether it should is open.
+- Bodies and answers are JSON objects with named fields, never a bare value. The request types
+  are `SignupRequest`, `CredentialsRequest` and `PasswordChangeRequest`, the answers
+  `SignupResult`, `LoginResult` and `PasswordChangeResult`. Fields may be added to an answer in a
+  later release, so a client ignores names it does not know. That is the room for the token mode
+  of the bearer sessions: a `token` field next to `login`, with no change to what exists. A request
+  refuses a field the type does not name. The Vue types carry an index signature for the same
+  reason.
+- A body has to be `application/json`, one object, at most 16 KiB by default, with no unknown
+  field. `api.DecodeLimit` accepts a missing content type, because a form post is caught by the
+  decoder anyway. The handlers refuse it with 415, since a cross site form can post a body that
+  parses as JSON under `text/plain`, and this check is one more thing it has to get past.
+- Every handler checks the method, then the origin with `net/http.CrossOriginProtection`, then the
+  body. The origin check lives in the handler because a login is the one request that has no
+  session to bind a token to, and mounting it behind a middleware somebody forgot must not leave it
+  open to a cross site form. `Sec-Fetch-Site` of `cross-site` or `same-site`, and an `Origin` that
+  is not this host or one of `TrustedOrigins`, are refused with 403, with or without a session. A
+  request with neither header passes, as it does for `csrf`: that is every client that is not a
+  browser, which is also why a login still needs the rate limit. The session bound token of
+  `csrf` stays in the application's chain, so password change and logout carry both.
+- A refused login and a refused confirmation answer 401 with code `invalid_credentials` and one
+  message, for an unknown login, a wrong password, a wrong, missing or replayed code, an
+  unconfirmed secret and a disabled account. A table test compares the whole answer, status,
+  headers and body, across every cause. Only `request_id`, added by the request id middleware,
+  differs per request. A request that is not a request of this shape, such as a missing field,
+  is not special cased: it runs through the service and gets the same answer.
+- `ErrHashingBusy` answers 503 with `Retry-After: 2` and the message of `api.Unavailable`, marked
+  `Exposed`, since the server chose it. It is no failed login, and a 401 would tell a person with
+  the right password that it is wrong.
+- A client that treats every 401 as a lost session, as `createClient`'s `onUnauthenticated`
+  does, sees a failed login as one. The forms opt out per request, see below.
+- A password change answers the four outcomes of the service. 200 with
+  `{"password_changed": true, "sessions_ended": true}` is the clean one. 200 with
+  `sessions_ended` false is a change that stands with `EndSessions` failed, logged, and the
+  application retries ending them. 409 `stale` says nothing changed and the person tries again.
+  500 `password_change_unknown` carries a message on purpose, `Exposed`, since the person must
+  hear that the change may not have happened and that logging in with the new password tells.
+  A wrong current password is 403 `invalid_credentials`, not 401, so a client that logs out on a
+  401 does not log a person out for a typo. A new password below the policy is 400 with
+  `new_password` in the details as `too_short` or `too_long`.
+- The change ends every session of the account, the caller's own included, and the handler
+  starts none. The person logs in again. A product that wants to keep the caller in starts a
+  session in its own handler after the change.
+- No password, code, secret, hash or enrolment URI is logged or put into an error. A test runs
+  every flow with failures injected into the store, the session callbacks and the context, at
+  debug level, and searches the log for each value.
+- `example/` mounts the handlers under `/api/v1/account`, over the in memory store of
+  `accounttest`, behind the same chain as every other route. Login, TOTP confirmation, password
+  change and signup sit behind a second rate limiter, `AUTH_RATE_LIMIT_BURST` and
+  `AUTH_RATE_LIMIT_PER`, a burst of five refilled over a minute by default, because a guess
+  costs an Argon2id derivation and the hasher has one slot by default. TOTP confirmation and password
+  change are included since both check a password. Signup is mounted only with
+  `ALLOW_SIGNUP=true`. The in memory store is the conformance fake, so every account is gone on a
+  restart.
+- Three Vue components take a `client` from `createClient` and never assume a cookie.
+  `GovueLoginForm` and `GovueSignupForm` post to `/account/login` and `/account/signup` under the
+  client's base URL, `path` overrides it. `GovueTotpEnrolment` shows the secret and the
+  provisioning URI in read only inputs, a link that opens an authenticator app when the URI is an
+  `otpauth` one, and asks for the password and a code to confirm. No QR code: that is a library,
+  and the secret and the link work without one.
+- The forms show their own texts from both catalogues under `govue.account`. The server's message
+  is never shown: it is English, and the code and the field details decide the text. Every
+  field has a label, a failure is announced, a request in flight disables the fields and the
+  button, and a `disabled` prop does the same. A password and a used code are cleared once a
+  request went through, and kept after a failure, so a retry costs one field.
+- `GovueTotpEnrolment` asks for the password again instead of receiving it from the signup form,
+  so no secret travels through the parent, and a reload between the two steps costs only one
+  field. It also holds a visually hidden read only input with `autocomplete="username"` and the
+  login, so a password manager saves the password under the right name. The parent drops the
+  enrolment secret after `confirmed`.
+- Four routes need a per client rate limit, not two: signup, login, TOTP confirmation and
+  password change. Each costs an Argon2id derivation and the default is one slot, so without a
+  limit anyone keeps the hasher busy and everybody gets 503. Confirmation needs no session.
+  Password change answers 403 for a wrong current password and 200 for the right one, so a
+  stolen session can test passwords as fast as the hasher allows. The package doc and the doc
+  comment of each handler say so, and tests in `example/` pin the 429 of all four.
+- A login does not end a session the request already carries, because `account` does not know
+  sessions. In `example/`, `StartSession` ends the old session first, unless the session layer
+  classifies the request as bearer (`bearer.Classify`, the rule `Manager.End` and `Start` use):
+  a bearer request gets no cookie session, and ending its device session would sign the app
+  out. Any other `Authorization` header, such as a Basic one from a proxy, is an ordinary cookie
+  request. If ending the old session fails, no new session is started and the login answers an
+  opaque 500, so a failure never leaves two live sessions. The code is consumed by then. The
+  clearing cookie of `End` is written before the new one, since a browser keeps the last.
+- The ids of local accounts and the subjects of an OIDC login share the namespace of the
+  session's subject, which `EndAll` keys on. A product that runs both prefixes one of them, for
+  example `local:` before the account id, or an OIDC subject could equal a local id and share
+  its sessions. The memory store of `example/` keeps its plain `memory-1` ids, and the example says
+  so in a comment, since it runs no OIDC account next to them.
+- Bodies are decoded by Go's `encoding/json` with unknown fields refused. Field names match case
+  insensitively, of two equal keys the last wins and invalid UTF-8 becomes U+FFFD. A proxy or a
+  WAF that parses JSON differently is out of scope. `AllowSignup` runs before the body is read
+  and cannot take an invite code from it, so an invite check uses a header, a cookie or a query
+  parameter.
+- `createClient` calls `onUnauthenticated` on every 401, a failed login included. The forms set
+  `skipUnauthenticatedHook` on their requests, so a wrong password does not look like a lost
+  session. The option is per request, additive and false by default.
+- A form used while a person is logged in, for a second login or a confirmation, sends no
+  CSRF token unless the client has `csrfToken` set, and the server answers 403, which the form
+  shows as a refused request. An application with such a flow sets `csrfToken` in
+  `createClient`.
 
 ### Theming through a published token contract
 
@@ -1118,6 +1240,8 @@ The design of the library and the reasoning behind it.
   own. Next step: revisit when a second consumer appears.
 - Whether `account` folds the case of a login or leaves it to the store's uniqueness rule. Next
   step: decide with the login logic.
+- Whether the TOTP confirm handler may start a session without a switch to turn that off. Next
+  step: decide when the first product that wants a login after confirmation reports back.
 - The passkey user handle: the opaque account id or a random handle per account. Next step:
   decide in the passkey work with its security review.
 - What the first version supports for configuration beyond the environment. Nothing reads the

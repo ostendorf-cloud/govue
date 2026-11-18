@@ -23,7 +23,9 @@ repeated here.
   with `useToasts`, the form input components (`GovueField`, `GovueInput`, `GovueSelect`,
   `GovueCheckbox`, `GovueSwitch`, `GovueTextarea`, `GovueButton`) with `useForm`, and the layout
   components (`GovuePage`, `GovueHeader`, `GovueFooter`, `GovueNav`, `GovueSkipLink`,
-  `GovueCard`, `GovueBadge`, `GovueSkeleton`), and `GovueThemeSwitch`.
+  `GovueCard`, `GovueBadge`, `GovueSkeleton`), `GovueThemeSwitch`, and the account forms
+  (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`), which take a `client` from
+  `createClient`.
 - `web/src/i18n/` holds the language layer: the `createGovueI18n` plugin, the German and
   English catalogues and `catalogues.ts`, the one list of languages. `GovueLanguageSwitch`
   lives in `web/src/components/` with the other components.
@@ -37,7 +39,9 @@ repeated here.
   `ratelimit`, `session`, `themeboot`.
 - `account` holds local accounts against the consumer's own tables: the contract, Argon2id
   password hashing, TOTP and `Service` with signup, TOTP confirmation, login and password
-  change. `account/accounttest` holds the conformance suite every adapter runs and an in memory
+  change, and `Handlers`, the JSON handlers over it. The handlers take callbacks, check the
+  method, the origin and a strict body themselves, and answer every failed login the same way.
+  `account/accounttest` holds the conformance suite every adapter runs and an in memory
   store. `Store.SetPasswordHash` is a compare and set on the old hash. Its `Store` interface
   carries only the calls its logic makes for login, TOTP enrolment and password change. A new
   method needs a reason in the pull request, because what the interface lacks is what the
