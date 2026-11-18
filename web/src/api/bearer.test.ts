@@ -931,6 +931,78 @@ describe('the rotation option with a custom storage', () => {
     expect(calls).toHaveLength(1)
   })
 
+  it('treats a null storage as the memory default', async () => {
+    const calls: string[] = []
+    const client = createClient({
+      fetch: ((input: string) => {
+        calls.push(input)
+        return Promise.resolve(
+          input.endsWith('/auth/token') ? answer(200, issued(SIGNED)) : answer(200, {}),
+        )
+      }) as never,
+      auth: { mode: 'bearer', storage: null } as never,
+    })
+
+    await client.signIn({ login: 'a', password: 'b' })
+
+    expect(calls).toHaveLength(1)
+    expect(() => build({ mode: 'bearer', storage: null, rotation: 'owner' })).not.toThrow()
+  })
+
+  it('refuses rotation none with a null storage', () => {
+    expect(() => build({ mode: 'bearer', storage: null, rotation: 'none' })).toThrow(TypeError)
+  })
+
+  it('reads storage and rotation once and builds what it checked: a rotation getter', async () => {
+    const reads = { storage: 0, rotation: 0 }
+    const storage = fakeStorage(record(OLD))
+    const fetchFake = vi.fn()
+    const auth = {
+      mode: 'bearer',
+      get storage() {
+        reads.storage++
+        return storage
+      },
+      get rotation() {
+        // 'none' passes the check, a second read would build an owner.
+        return ++reads.rotation === 1 ? 'none' : 'owner'
+      },
+    }
+
+    const client = createClient({ fetch: fetchFake as never, auth: auth as never })
+    const error = await client.signIn({ login: 'a', password: 'b' }).catch((e) => e)
+
+    expect(reads).toStrictEqual({ storage: 1, rotation: 1 })
+    expect(isApiError(error)).toBe(true)
+    expect(fetchFake).not.toHaveBeenCalled()
+  })
+
+  it('reads storage and rotation once and builds what it checked: a storage getter', async () => {
+    const reads = { storage: 0, rotation: 0 }
+    const custom = fakeStorage(record(OLD))
+    const fetchFake = vi.fn(() => Promise.resolve(answer(200, {})))
+    const auth = {
+      mode: 'bearer',
+      get storage() {
+        // No storage passes the no storage check, a second read would build an owner on custom.
+        return ++reads.storage === 1 ? undefined : custom
+      },
+      get rotation() {
+        reads.rotation++
+        return undefined
+      },
+    }
+
+    const client = createClient({ fetch: fetchFake, auth: auth as never })
+    await client.get('/x')
+
+    expect(reads).toStrictEqual({ storage: 1, rotation: 1 })
+    expect(custom.value).toBe(record(OLD))
+    expect(fetchFake.mock.calls).toHaveLength(1)
+    const init = (fetchFake.mock.calls[0] as unknown as [string, RequestInit])[1]
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
+  })
+
   it('accepts rotation owner without a storage, and an explicit undefined storage', () => {
     expect(() => build({ mode: 'bearer', rotation: 'owner' })).not.toThrow()
     expect(() => build({ mode: 'bearer', storage: undefined })).not.toThrow()

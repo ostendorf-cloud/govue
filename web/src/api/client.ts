@@ -15,7 +15,7 @@ import {
   type SignInOptions,
 } from './bearer'
 import { ApiError, ErrorCode, type ApiErrorPayload } from './errors'
-import { createMemoryTokenStorage } from './tokenStorage'
+import { createMemoryTokenStorage, type TokenStorage } from './tokenStorage'
 
 export type {
   BearerAuthOptions,
@@ -114,6 +114,12 @@ export function createClient(options: ClientOptions & { auth: BearerAuthOptions 
 export function createClient(options?: ClientOptions): ApiClient
 export function createClient(options: ClientOptions = {}): ApiClient | BearerClient {
   const bearerAuth = options.auth?.mode === 'bearer' ? options.auth : undefined
+  // Each option is read once, here. What is checked is what is built, even
+  // when the caller passes a getter that answers differently the second time.
+  let bearerStorage: TokenStorage | undefined
+  let bearerOwner = true
+  let bearerRotateAfterMs = DEFAULT_ROTATE_AFTER_MS
+  let bearerDeviceName: string | undefined
   if (bearerAuth) {
     if (options.credentials !== undefined || options.csrfToken !== undefined) {
       throw new TypeError('bearer mode does not take the credentials or csrfToken option')
@@ -121,7 +127,10 @@ export function createClient(options: ClientOptions = {}): ApiClient | BearerCli
     // First, before anything is built. A JavaScript caller or a cast reaches
     // this without the union type. The messages carry no storage content.
     const rotation: unknown = bearerAuth.rotation
-    if (bearerAuth.storage !== undefined && bearerAuth.storage !== null) {
+    const storage: TokenStorage | null | undefined = bearerAuth.storage
+    const rotateAfterMs = bearerAuth.rotateAfterMs
+    const deviceName = bearerAuth.deviceName
+    if (storage !== undefined && storage !== null) {
       if (rotation !== 'owner' && rotation !== 'none') {
         throw new TypeError(
           "auth.rotation is required with auth.storage and must be 'owner' or 'none'",
@@ -132,14 +141,17 @@ export function createClient(options: ClientOptions = {}): ApiClient | BearerCli
         "auth.rotation must be omitted or 'owner' without auth.storage, 'none' needs the storage of the owner",
       )
     }
-    if (bearerAuth.rotateAfterMs !== undefined) {
-      checkRotateAfter(bearerAuth.rotateAfterMs)
+    if (rotateAfterMs !== undefined) {
+      checkRotateAfter(rotateAfterMs)
     }
-    const problem =
-      bearerAuth.deviceName === undefined ? undefined : deviceNameProblem(bearerAuth.deviceName)
+    const problem = deviceName === undefined ? undefined : deviceNameProblem(deviceName)
     if (problem) {
       throw new RangeError(problem)
     }
+    bearerStorage = storage ?? undefined
+    bearerOwner = rotation !== 'none'
+    bearerRotateAfterMs = rotateAfterMs ?? DEFAULT_ROTATE_AFTER_MS
+    bearerDeviceName = deviceName
   }
   const rawBaseUrl = options.baseUrl ?? '/api/v1'
   // A backward scan, not /\/+$/: the unanchored regex backtracks
@@ -253,10 +265,10 @@ export function createClient(options: ClientOptions = {}): ApiClient | BearerCli
   let bearer: BearerController | undefined
   if (bearerAuth) {
     bearer = createBearer({
-      storage: bearerAuth.storage ?? createMemoryTokenStorage(),
-      rotateAfterMs: bearerAuth.rotateAfterMs ?? DEFAULT_ROTATE_AFTER_MS,
-      deviceName: bearerAuth.deviceName,
-      owner: (bearerAuth.rotation ?? 'owner') === 'owner',
+      storage: bearerStorage ?? createMemoryTokenStorage(),
+      rotateAfterMs: bearerRotateAfterMs,
+      deviceName: bearerDeviceName,
+      owner: bearerOwner,
       onUnauthenticated: options.onUnauthenticated,
       perform,
       timeoutMs,
