@@ -76,8 +76,10 @@ assert eq '[.jobs[] | select(has("container"))] | length' 0
 # only default.
 assert eq '[.jobs | to_entries[] | select(.value | has("services")) | .key] | join(",")' test
 assert eq '.jobs.test.services | keys | join(",")' postgres
-assert has '.jobs.test.services.postgres.image' 'postgres:'
+assert eq '.jobs.test.services.postgres.image | test("^postgres:")' true
 assert eq '.jobs.test.permissions' null
+assert eq '.jobs.test.services.postgres.credentials' null
+assert eq '[.jobs.test.services | .. | select(tag == "!!str" and test("(?i)secrets"))] | length' 0
 
 # The install job holds no token of its own: no credential in the checkout, no token or
 # secret in any key of any step, and never the comment action.

@@ -48,8 +48,10 @@ type migration struct {
 
 // readMigrations reads the files named NNNN_name.sql in dir of fsys and
 // checks their numbering: the versions start at 1 and have no gap and no
-// repeat. Other files and subdirectories are ignored, so a README next to
-// the migrations is fine.
+// repeat. A file ending in .sql in any spelling must follow the naming, and
+// an empty one is refused, so a typo never drops a migration silently. Other
+// files and subdirectories are ignored, so a README next to the migrations
+// is fine.
 func readMigrations(fsys fs.FS, dir string) ([]migration, error) {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
@@ -57,8 +59,11 @@ func readMigrations(fsys fs.FS, dir string) ([]migration, error) {
 	}
 	var out []migration
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".sql") {
 			continue
+		}
+		if !strings.HasSuffix(entry.Name(), ".sql") {
+			return nil, fmt.Errorf("database: migration %s must end in .sql in lower case", entry.Name())
 		}
 		// 0001_init.sql: the number orders them, the rest is for the reader.
 		number, rest, found := strings.Cut(strings.TrimSuffix(entry.Name(), ".sql"), "_")
@@ -72,6 +77,9 @@ func readMigrations(fsys fs.FS, dir string) ([]migration, error) {
 		body, err := fs.ReadFile(fsys, path.Join(dir, entry.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("database: read migration %s: %w", entry.Name(), err)
+		}
+		if strings.TrimSpace(string(body)) == "" {
+			return nil, fmt.Errorf("database: migration %s is empty", entry.Name())
 		}
 		out = append(out, migration{version: version, name: entry.Name(), sql: string(body)})
 	}
@@ -185,8 +193,15 @@ func (db *DB) tx(ctx context.Context, fn func(pgx.Tx) error) error {
 // waiting does not fix it. Everything else is retried and never given up on:
 // a database that starts after the pod does is the normal case in a cluster,
 // and Check reports the gap meanwhile. The pause starts at one second, doubles
-// up to thirty seconds, and ends early when ctx does.
+// up to thirty seconds, and ends early when ctx does. A nil logger is an
+// error.
 func (db *DB) MigrateUntilReady(ctx context.Context, logger *slog.Logger, fsys fs.FS, dir string) error {
+	// A nil logger is refused rather than replaced: this package takes a
+	// logger and never builds one, and a retry loop that logs nothing would
+	// hide why readiness stays at 503.
+	if logger == nil {
+		return errors.New("database: MigrateUntilReady needs a logger, got nil")
+	}
 	files, err := readMigrations(fsys, dir)
 	if err != nil {
 		return err

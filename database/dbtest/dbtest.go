@@ -6,7 +6,7 @@
 //
 // The server's address comes from the environment variable named by EnvURL.
 // Locally, where no server is configured, a test that calls Config or Open is
-// skipped with a message naming the variable. With the CI variable set, a
+// skipped with a message naming the variable. With CI set to true or 1, a
 // missing value fails the test instead, so a suite can never go green by
 // skipping everything.
 //
@@ -110,11 +110,17 @@ func missing(raw, ci string) (skip bool, msg string) {
 	if raw != "" {
 		return false, ""
 	}
-	if ci != "" {
+	if isCI(ci) {
 		return false, fmt.Sprintf("%s is not set in CI: the PostgreSQL service container is missing from the workflow", EnvURL)
 	}
 	return true, fmt.Sprintf("SKIPPED, NOT RUN: %s is not set, so this test against a real PostgreSQL did not run. "+
 		"Start a server (docker compose -f example/compose.yaml up -d postgres) and set it, see AGENTS.md.", EnvURL)
+}
+
+// isCI reads the CI variable the way the CI systems set it: true or 1. A
+// false or 0 a developer exported to switch it off does not count.
+func isCI(ci string) bool {
+	return strings.EqualFold(strings.TrimSpace(ci), "true") || strings.TrimSpace(ci) == "1"
 }
 
 // parse turns the URL into the admin connection's settings. Its errors never
@@ -148,7 +154,7 @@ func parse(raw string) (database.Config, error) {
 		Port:           port,
 		Name:           name,
 		User:           u.User.Username(),
-		Password:       password,
+		Password:       database.NewSecret(password),
 		SSLMode:        database.SSLMode(mode),
 		SSLRootCert:    q.Get("sslrootcert"),
 		MaxConns:       4,

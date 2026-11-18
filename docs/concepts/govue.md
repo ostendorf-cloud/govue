@@ -1184,9 +1184,21 @@ The design of the library and the reasoning behind it.
   enough in the first product: a whole product config logged through a JSON handler reaches
   `encoding/json`, which printed every field of the nested value. A missing password prints as
   empty, a set one as `[redacted]`.
+- Those methods do not run everywhere. `fmt` and slog's text handler cannot call a method of a
+  value they reach through an unexported struct field, such as a product's
+  `struct{ db database.Config }`, so they print its fields one by one. A password kept as a
+  plain string was printed there. So the password is a `database.Secret`: a struct holding a
+  pointer to the string. Printed field by field, a pointer below the top level shows as an
+  address, and where the methods run the `Secret` prints `[redacted]`. A probe showed both, and
+  the redaction test covers unexported fields, interface fields and pointers. `NewSecret` builds
+  one, `Reveal` reads it, and copies of a `Config` share the unchanged value.
 - The DSN carries no password. The user goes through `url.User`, the host through
   `net.JoinHostPort`, and the password is set on the parsed pgx config afterwards. A password with
   `@`, `:` or `%` needs no escaping, and an IPv6 host stays one host.
+- The host is a name or an address. A path starting with `/` is refused, because pgx would take it
+  as a unix socket, where TLS is off even under `verify-full`. Brackets around an IPv6 address are
+  refused, because they pass the config and fail only when the pool is built. A comma is refused,
+  because pgx would read a list of fallback hosts. Each of these needs an explicit decision first.
 
 #### TLS
 
@@ -1194,17 +1206,24 @@ The design of the library and the reasoning behind it.
   `verify-full`. libpq's `allow` and `prefer` are refused, because both fall back to plain text
   without telling anyone. A product that wants plain text, a local compose file or a test server,
   says `disable`.
-- `verify-ca` and `verify-full` need `DB_SSLROOTCERT`, the PEM file of the CA that signed the
-  server's certificate, for example the CA of the cluster's database operator. A deployment that
-  sets nothing about TLS therefore does not start, and says which variable is missing. It never
-  falls back to a weaker mode on its own. The system root pool, libpq's `sslrootcert=system`, is
-  not offered yet. The products run in a cluster whose database operator signs with its own CA,
-  and `verify-ca` against the public CAs would accept any certificate they ever signed. A
-  managed database with a publicly signed certificate is an open question below.
+- `verify-ca` and `verify-full` need `DB_SSLROOTCERT`. It is either the PEM file of the CA that
+  signed the server's certificate, for example the CA of the cluster's database operator, or
+  `system` for the system's root certificates. A deployment that sets nothing about TLS does not
+  start, and the error names both options. It never falls back to a weaker mode on its own.
+- `system` is libpq's `sslrootcert=system`, which pgx v5.13.0 supports natively: it loads
+  `x509.SystemCertPool` and forces `verify-full` (read in `pgconn/config.go`). It is for a
+  managed database whose certificate a public CA signed. It is accepted with `verify-full` only,
+  as libpq 16 does, and anything else is a startup error. `verify-ca` against every public CA
+  would accept any certificate any of them ever signed, for any host.
 - `disable` and `require` refuse a root certificate. libpq and pgx turn `require` with a root
   certificate into `verify-ca` silently, so the setting would not mean what it says.
-- The root certificate is read while the config is checked, so a wrong path or a file without a
-  certificate is one more problem in the startup error, not a failure on the first connection.
+- With `require`, pgx also turns the mode into `verify-ca` when `PGSSLROOTCERT` is set in the
+  environment or `~/.postgresql/root.crt` exists, because `Config` names no root certificate for
+  `require`. The result is stronger than asked, and can refuse a server that `require` would
+  accept. A product that sees this sets `verify-ca` or `verify-full` itself.
+- The root certificate file is read while the config is checked, up to 1 MiB, so a wrong path, a
+  file without a certificate or a path to something large is one more problem in the startup
+  error, not a failure on the first connection.
 - pgx builds the TLS configuration from `sslmode` and `sslrootcert` while it parses, the way
   libpq does. `verify-full` sets `RootCAs` and `ServerName`. `verify-ca` sets
   `InsecureSkipVerify` together with a `VerifyPeerCertificate` that checks the chain against the
@@ -1221,6 +1240,11 @@ The design of the library and the reasoning behind it.
 
 - `Open` validates and builds the pool. It does not connect, so a database that starts after the
   pod does not stop it. `Pool` hands the pgx pool to the product's queries.
+- Decision: `Pool` returns `*pgxpool.Pool`, pgx' own type. That makes pgx v5 part of govue's
+  public contract, and a move to a pgx v6 would need a new major version of govue. It is
+  accepted on purpose. A wrapper with its own query methods would be a second, thinner API that
+  every product learns and that lags behind pgx, and the products query with pgx' types anyway.
+  The owner decides in the pull request.
 - Connections are recycled after thirty minutes and after five idle minutes, and the pool checks
   them every minute. A connection kept for hours survives a failover of the cluster only as a
   broken socket.
@@ -1228,14 +1252,23 @@ The design of the library and the reasoning behind it.
   database does not answer, and with `ErrNotMigrated` until a `Migrate` in this process has
   succeeded. `health` names the check on `/readyz` and never the cause. Liveness runs no check,
   so a database outage never restarts a pod that would come back to the same outage.
+- Known trade off: the ping needs a connection from the pool. When every connection is busy, it
+  waits until `health`'s timeout for the check ends, and readiness fails. An overload that
+  saturates every pod's pool takes every pod out of the load balancer together. That is kept,
+  not worked around: a pod that cannot get a connection cannot serve a request that needs one
+  either, and skipping the ping while the pool is busy would report ready for a database that
+  hangs. A product sizes `MaxConns` for the concurrency a pod serves.
 - The package imports neither `health` nor `logging`: the method has the `health.Check` shape,
-  and `MigrateUntilReady` takes the logger it writes to.
+  and `MigrateUntilReady` takes the logger it writes to. A nil logger is an error, not a
+  default.
 
 #### Migrations
 
 - Migrations are plain SQL files a product embeds and hands over as an `fs.FS` and a directory.
   They are named `NNNN_name.sql`. The versions start at 1 and have no gap and no repeat, which the
-  loader checks before the database is asked. Other files in the directory are ignored.
+  loader checks before the database is asked. A file ending in `.sql` in any spelling must follow
+  that name, `.SQL` included, and an empty or blank file is refused, so a typo never drops a
+  migration silently. Other files in the directory are ignored.
 - Each file runs in one transaction together with its row in `schema_migrations`, under the
   advisory lock `pg_advisory_xact_lock`. A file that fails leaves nothing of itself behind, and
   two pods starting together apply each file once. The table is created under the same lock,
@@ -1250,6 +1283,10 @@ The design of the library and the reasoning behind it.
   and doubles up to thirty, and the loop ends with its context, during the pause too. It never
   gives up on its own: a late database is the normal case in a cluster, and readiness reports
   the gap meanwhile.
+- Known limit: `schema_migrations` stores the version and the name, no checksum. A file edited
+  after it was applied goes unnoticed: the runner sees the version recorded and skips it, and
+  the schema differs from the file. A change goes into a new file, never into an applied one.
+  Recording and checking a checksum is a follow up.
 - A migration library, `golang-migrate` or `goose`, would bring down migrations, a CLI and more
   dependencies for a schema that is a handful of files applied forward only.
 
@@ -1259,14 +1296,17 @@ The design of the library and the reasoning behind it.
   configuration, the loader, the retry loop and the readiness semantics with a fake pinger, run
   everywhere with no socket.
 - What only a server can prove runs against a real PostgreSQL: connect, migrate, idempotence,
-  the rollback of a failed file, the advisory lock blocking a second migrator, concurrent
-  migrators, `Check` before and after the schema, a wrong password, and the database per test.
+  the rollback of a failed file, the advisory lock blocking a second migrator, both around the
+  bookkeeping table and around a single file once the table exists, concurrent migrators,
+  `Check` before and after the schema, a wrong password, and the database per test.
 - `dbtest.Config` and `dbtest.Open` read the server from `GOVUE_TEST_DATABASE_URL`, create a
   fresh database per test and drop it with force afterwards. The role needs `CREATEDB`. Without
   the variable the test is skipped with a message naming it, and `task test:go` prints a
-  warning first, because `go test` hides a skip. With `CI` set and the variable missing the test
-  fails, so the suite cannot go green by skipping. The `test` job runs a PostgreSQL service
-  container with a `pg_isready` health check and sets the variable. A product uses the same
+  warning first, because `go test` hides a skip. With `CI` set to `true` or `1` and the variable
+  missing the test fails, so the suite cannot go green by skipping. The `test` job runs a
+  PostgreSQL service container with a `pg_isready` health check and sets the variable. The
+  workflow test allows that one service only, from the official `postgres` image, without
+  registry credentials and without a secret. A product uses the same
   helper and the same variable in its own CI.
 - These tests open a socket, in CI only. It is the one deliberate exception to "tests use no
   socket" and is recorded under Deviations in `AGENTS.md`. A fake would prove the fake: the
@@ -1849,9 +1889,6 @@ The design of the library and the reasoning behind it.
 - Whether `database` offers a way to mark the schema applied for a product that migrates with
   its own tool, such as a Kubernetes job. Today `Check` stays unready until `Migrate` succeeded in
   the same process. The owner decides when a product needs it.
-- Whether `database` accepts `DB_SSLROOTCERT=system` with `verify-full`, for a managed database
-  whose certificate a public CA signed. pgx supports it. The owner decides when a product runs on
-  one.
 - Whether `database` refuses to start when `schema_migrations` records a version newer than the
   embedded files, a rollback to an older image. Today it applies nothing and reports ready.
   The owner decides.

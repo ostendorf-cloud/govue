@@ -31,22 +31,22 @@ func TestDSNCarriesNoPasswordAndEscapes(t *testing.T) {
 	}{
 		{
 			"plain",
-			Config{Host: "db.example.invalid", Port: 5432, Name: "app", User: "app", Password: fakePassword, SSLMode: SSLRequire},
+			Config{Host: "db.example.invalid", Port: 5432, Name: "app", User: "app", Password: fakeSecret, SSLMode: SSLRequire},
 			[]string{"postgres://app@db.example.invalid:5432/app?", "sslmode=require"},
 		},
 		{
 			"ipv6 host",
-			Config{Host: "::1", Port: 5432, Name: "app", User: "app", Password: fakePassword, SSLMode: SSLDisable},
+			Config{Host: "::1", Port: 5432, Name: "app", User: "app", Password: fakeSecret, SSLMode: SSLDisable},
 			[]string{"@[::1]:5432/"},
 		},
 		{
 			"odd user and name",
-			Config{Host: "h", Port: 5432, Name: "my db?x", User: "a@b:c/d", Password: fakePassword, SSLMode: SSLDisable},
+			Config{Host: "h", Port: 5432, Name: "my db?x", User: "a@b:c/d", Password: fakeSecret, SSLMode: SSLDisable},
 			[]string{"a%40b%3Ac%2Fd@h:5432/", "/my%20db%3Fx?"},
 		},
 		{
 			"root certificate with a space",
-			Config{Host: "h", Port: 5432, Name: "n", User: "u", Password: fakePassword, SSLMode: SSLVerifyFull, SSLRootCert: "/etc/db ca/root.crt"},
+			Config{Host: "h", Port: 5432, Name: "n", User: "u", Password: fakeSecret, SSLMode: SSLVerifyFull, SSLRootCert: "/etc/db ca/root.crt"},
 			[]string{"sslmode=verify-full", "sslrootcert=%2Fetc%2Fdb+ca%2Froot.crt"},
 		},
 	}
@@ -81,7 +81,7 @@ func TestPoolConfigCarriesTheSettings(t *testing.T) {
 	t.Parallel()
 
 	cfg := Config{
-		Host: "db.example.invalid", Port: 6432, Name: "my db", User: "a@b", Password: fakePassword,
+		Host: "db.example.invalid", Port: 6432, Name: "my db", User: "a@b", Password: fakeSecret,
 		SSLMode: SSLRequire, MaxConns: 7, ConnectTimeout: 3 * time.Second,
 	}
 	pc, err := poolConfig(cfg)
@@ -120,7 +120,7 @@ func TestPoolConfigCarriesTheSettings(t *testing.T) {
 func TestPoolConfigFillsTheDefaults(t *testing.T) {
 	t.Parallel()
 
-	pc, err := poolConfig(Config{Host: "h", Name: "n", User: "u", Password: fakePassword, SSLRootCert: writeRootCert(t)})
+	pc, err := poolConfig(Config{Host: "h", Name: "n", User: "u", Password: fakeSecret, SSLRootCert: writeRootCert(t)})
 	if err != nil {
 		t.Fatalf("poolConfig() error = %v", err)
 	}
@@ -136,7 +136,7 @@ func TestPoolConfigFillsTheDefaults(t *testing.T) {
 func TestOpenRefusesAnInvalidConfigWithoutTheCause(t *testing.T) {
 	t.Parallel()
 
-	_, err := Open(t.Context(), Config{Host: "h", Name: "n", User: "u", Password: fakePassword, SSLMode: "prefer"})
+	_, err := Open(t.Context(), Config{Host: "h", Name: "n", User: "u", Password: fakeSecret, SSLMode: "prefer"})
 	if err == nil || !strings.Contains(err.Error(), `got "prefer"`) {
 		t.Fatalf("Open() error = %v, want the invalid sslmode", err)
 	}
@@ -150,7 +150,7 @@ func TestOpenRefusesAnInvalidConfigWithoutTheCause(t *testing.T) {
 func TestOpenDoesNotConnect(t *testing.T) {
 	t.Parallel()
 
-	db, err := Open(t.Context(), Config{Host: "db.example.invalid", Name: "n", User: "u", Password: fakePassword, SSLMode: SSLDisable})
+	db, err := Open(t.Context(), Config{Host: "db.example.invalid", Name: "n", User: "u", Password: fakeSecret, SSLMode: SSLDisable})
 	if err != nil {
 		t.Fatalf("Open() error = %v, want nil: the pool connects lazily", err)
 	}
@@ -167,7 +167,7 @@ func TestPoolConfigIgnoresAWeakerEnvironment(t *testing.T) {
 	t.Setenv("PGHOST", "other.example.invalid")
 	t.Setenv("PGPASSWORD", "other-fake-password")
 
-	pc, err := poolConfig(Config{Host: "h", Name: "n", User: "u", Password: fakePassword, SSLRootCert: writeRootCert(t)})
+	pc, err := poolConfig(Config{Host: "h", Name: "n", User: "u", Password: fakeSecret, SSLRootCert: writeRootCert(t)})
 	if err != nil {
 		t.Fatalf("poolConfig() error = %v", err)
 	}
@@ -324,6 +324,9 @@ func TestTLSPerSSLMode(t *testing.T) {
 		wrongHostOK   bool
 		wrongCAOK     bool
 		runHandshakes bool
+		// platformVerifier marks the system pool, which macOS and Windows
+		// check with their own verifier and its own error type.
+		platformVerifier bool
 	}{
 		{name: "disable", mode: SSLDisable},
 		{
@@ -338,12 +341,18 @@ func TestTLSPerSSLMode(t *testing.T) {
 			name: "verify-full", mode: SSLVerifyFull, root: root, wantTLS: true, wantRoots: true, wantServer: host,
 			goodOK: true, wrongHostOK: false, wrongCAOK: false, runHandshakes: true,
 		},
+		{
+			// The system roots do not hold the throwaway CA, so even the
+			// right host is refused: the system pool is used, not nothing.
+			name: "verify-full with the system roots", mode: SSLVerifyFull, root: SystemRoots, wantTLS: true, wantRoots: true, wantServer: host,
+			goodOK: false, wrongHostOK: false, wrongCAOK: false, runHandshakes: true, platformVerifier: true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			pc, err := poolConfig(Config{Host: host, Name: "n", User: "u", Password: fakePassword, SSLMode: tc.mode, SSLRootCert: tc.root})
+			pc, err := poolConfig(Config{Host: host, Name: "n", User: "u", Password: fakeSecret, SSLMode: tc.mode, SSLRootCert: tc.root})
 			if err != nil {
 				t.Fatalf("poolConfig() error = %v", err)
 			}
@@ -392,7 +401,10 @@ func TestTLSPerSSLMode(t *testing.T) {
 				// broken pipe.
 				var unknownCA x509.UnknownAuthorityError
 				var wrongName x509.HostnameError
-				if err != nil && !errors.As(err, &unknownCA) && !errors.As(err, &wrongName) {
+				if err != nil && !tc.platformVerifier && !errors.As(err, &unknownCA) && !errors.As(err, &wrongName) {
+					t.Errorf("%s: handshake error = %v, want a certificate verification error", hs.name, err)
+				}
+				if err != nil && tc.platformVerifier && !strings.Contains(err.Error(), "x509") {
 					t.Errorf("%s: handshake error = %v, want a certificate verification error", hs.name, err)
 				}
 			}

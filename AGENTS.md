@@ -47,8 +47,9 @@ repeated here.
   `metrics`, `middleware`, `oidc`, `ratelimit`, `session`, `themeboot`.
 - `database` holds the PostgreSQL connection of a product: `Config` and `LoadConfig` with the
   `DB_*` variables, the pgx pool, the migration runner over an `fs.FS` and `Check` for
-  readiness. The password never prints, and the default `sslmode` is `verify-full` with
-  `DB_SSLROOTCERT`. The product keeps its schema and its queries. `database/dbtest` gives a test
+  readiness. The password is a `database.Secret`, a pointer holder that never prints, also
+  through an unexported field. The default `sslmode` is `verify-full` with `DB_SSLROOTCERT`, a
+  PEM file or `system`. The product keeps its schema and its queries. `database/dbtest` gives a test
   a fresh database on the server named by `GOVUE_TEST_DATABASE_URL`, start one with
   `docker compose -f example/compose.yaml up -d postgres`.
 - `appassoc` serves the Apple App Site Association and Android `assetlinks.json` files from a
@@ -107,8 +108,8 @@ task example:build   # compile the example application
   Argon2id, which the standard library lacks. The owner accepted it for local accounts.
   `github.com/jackc/pgx/v5` stays confined to the `database` package, for the PostgreSQL
   driver and pool the standard library lacks. `database/dbtest` reaches it only through
-  `database`. The owner accepted it
-  for the database package. Another dependency needs a reason in the pull request.
+  `database`. The owner accepted it for the database package. Another dependency needs a
+  reason in the pull request.
 - A package stays usable on its own. An application that wants `clientip` must not pull in
   `session` with it.
 - The secure choice is the default, never an option an application has to remember. Weakening

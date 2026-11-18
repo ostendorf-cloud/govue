@@ -85,7 +85,10 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	return &DB{pool: pool, pinger: pool}, nil
 }
 
-// Pool is the pgx pool the product runs its queries on.
+// Pool is the pgx pool the product runs its queries on. Returning pgx' own
+// type makes pgx v5 part of this package's contract: a pgx v6 would need a
+// new major version of govue. That is accepted on purpose, see the concept
+// doc.
 func (db *DB) Pool() *pgxpool.Pool {
 	return db.pool
 }
@@ -100,6 +103,13 @@ func (db *DB) Close() {
 // not answer, and with ErrNotMigrated until Migrate or MigrateUntilReady has
 // applied the schema in this process. Its error goes to the log, never to the
 // client: health names the check and nothing else.
+//
+// The ping needs a connection from the pool. When every connection is busy,
+// it waits for one until health's timeout for the check ends, and readiness
+// fails. Under an overload that saturates every pod's pool, every pod goes
+// unready together. That is accepted: a pod that cannot get a connection
+// cannot serve a request that needs one either. Size MaxConns for the
+// concurrency a pod serves, and give the check a timeout in health.
 func (db *DB) Check(ctx context.Context) error {
 	if err := db.pinger.Ping(ctx); err != nil {
 		return fmt.Errorf("database: ping: %w", err)
@@ -146,7 +156,7 @@ func poolConfig(cfg Config) (*pgxpool.Config, error) {
 		// password: the password is set below.
 		return nil, fmt.Errorf("database: parse config: %w", err)
 	}
-	pc.ConnConfig.Password = cfg.Password
+	pc.ConnConfig.Password = cfg.Password.Reveal()
 	pc.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
 	pc.MaxConns = cfg.MaxConns
 	pc.MaxConnLifetime = maxConnLifetime

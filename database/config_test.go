@@ -19,6 +19,8 @@ import (
 // escape.
 const fakePassword = "fake-p@ss:w/ord%?#&="
 
+var fakeSecret = NewSecret(fakePassword)
+
 // writeRootCert writes a throwaway CA certificate and returns its path.
 func writeRootCert(t *testing.T) string {
 	t.Helper()
@@ -37,6 +39,13 @@ func writePEM(t *testing.T, pem []byte) string {
 
 func envOf(m map[string]string) func(string) string {
 	return func(key string) string { return m[key] }
+}
+
+// sameConfig compares two configs field by field, the password by value.
+func sameConfig(a, b Config) bool {
+	pa, pb := a.Password.Reveal(), b.Password.Reveal()
+	a.Password, b.Password = Secret{}, Secret{}
+	return a == b && pa == pb
 }
 
 func TestLoadConfigReadsEveryVariable(t *testing.T) {
@@ -58,10 +67,10 @@ func TestLoadConfigReadsEveryVariable(t *testing.T) {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
 	want := Config{
-		Host: "db.example.invalid", Port: 6432, Name: "app", User: "app", Password: fakePassword,
+		Host: "db.example.invalid", Port: 6432, Name: "app", User: "app", Password: fakeSecret,
 		SSLMode: SSLVerifyCA, SSLRootCert: root, MaxConns: 7, ConnectTimeout: 3 * time.Second,
 	}
-	if cfg != want {
+	if !sameConfig(cfg, want) {
 		t.Errorf("LoadConfig() = %s, want %s", cfg, want)
 	}
 }
@@ -86,16 +95,36 @@ func TestLoadConfigDefaults(t *testing.T) {
 }
 
 // The default is verify-full, so a deployment that sets nothing about TLS
-// does not start without a root certificate. It never falls back to a weaker
-// mode on its own.
+// does not start without a root certificate, and the error names both ways
+// to give one. It never falls back to a weaker mode on its own.
 func TestLoadConfigDefaultNeedsARootCertificate(t *testing.T) {
 	t.Parallel()
 
 	_, err := LoadConfig(envOf(map[string]string{
 		"DB_HOST": "db.example.invalid", "DB_NAME": "app", "DB_USER": "app", "DB_PASSWORD": fakePassword,
 	}))
-	if err == nil || !strings.Contains(err.Error(), "sslmode verify-full needs a root certificate (DB_SSLROOTCERT)") {
-		t.Fatalf("LoadConfig() error = %v, want the missing root certificate for verify-full", err)
+	if err == nil {
+		t.Fatal("LoadConfig() error = nil, want the missing root certificate for verify-full")
+	}
+	for _, want := range []string{"sslmode verify-full needs a root certificate (DB_SSLROOTCERT)", "PEM file", `"system"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error is missing %q:\n%v", want, err)
+		}
+	}
+}
+
+func TestLoadConfigAcceptsTheSystemRoots(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := LoadConfig(envOf(map[string]string{
+		"DB_HOST": "db.example.invalid", "DB_NAME": "app", "DB_USER": "app", "DB_PASSWORD": fakePassword,
+		"DB_SSLROOTCERT": "system",
+	}))
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.SSLRootCert != SystemRoots || cfg.SSLMode != SSLVerifyFull {
+		t.Errorf("LoadConfig() = %s, want verify-full with the system roots", cfg)
 	}
 }
 
@@ -113,7 +142,7 @@ func TestLoadConfigReadsThePasswordFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if cfg.Password != fakePassword {
+	if cfg.Password.Reveal() != fakePassword {
 		t.Errorf("password from DB_PASSWORD_FILE was not used")
 	}
 }
@@ -165,13 +194,61 @@ func TestLoadConfigRefusesBothPasswordSources(t *testing.T) {
 	}
 }
 
+// The host spellings pgx would read as something else, from the environment
+// and from code alike.
+func TestHostShapes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		host    string
+		wantErr string
+	}{
+		{"db.example.invalid", ""},
+		{"10.0.0.5", ""},
+		{"::1", ""},
+		{"fd00::5", ""},
+		{"/var/run/postgresql", "unix socket path"},
+		{"/tmp", "unix socket path"},
+		{"[::1]", "without brackets"},
+		{"[fd00::5]", "without brackets"},
+		{"a.invalid,b.invalid", "list of hosts"},
+		{",", "list of hosts"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.host, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := Config{Host: tc.host, Name: "n", User: "u", Password: fakeSecret, SSLMode: SSLDisable}
+			validateErr := cfg.Validate()
+			_, loadErr := LoadConfig(envOf(map[string]string{
+				"DB_HOST": tc.host, "DB_NAME": "n", "DB_USER": "u", "DB_PASSWORD": fakePassword, "DB_SSLMODE": "disable",
+			}))
+			for name, err := range map[string]error{"Validate": validateErr, "LoadConfig": loadErr} {
+				if tc.wantErr == "" {
+					if err != nil {
+						t.Errorf("%s() error = %v, want nil", name, err)
+					}
+					continue
+				}
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("%s() error = %v, want one containing %q", name, err, tc.wantErr)
+				}
+			}
+		})
+	}
+}
+
 // The TLS rules, on Validate and therefore on Open and LoadConfig alike.
 func TestValidateTLS(t *testing.T) {
 	t.Parallel()
 
 	root := writeRootCert(t)
 	notPEM := writePEM(t, []byte("not a certificate"))
-	base := Config{Host: "h", Name: "n", User: "u", Password: fakePassword}
+	tooBig := filepath.Join(t.TempDir(), "big.crt")
+	if err := os.WriteFile(tooBig, bytes.Repeat([]byte("A"), maxRootCertBytes+1), 0o600); err != nil {
+		t.Fatalf("write big file: %v", err)
+	}
+	base := Config{Host: "h", Name: "n", User: "u", Password: fakeSecret}
 
 	cases := []struct {
 		name    string
@@ -182,11 +259,16 @@ func TestValidateTLS(t *testing.T) {
 		{"verify-full with a root", SSLVerifyFull, root, ""},
 		{"verify-ca with a root", SSLVerifyCA, root, ""},
 		{"default with a root", "", root, ""},
+		{"verify-full with the system roots", SSLVerifyFull, SystemRoots, ""},
+		{"default with the system roots", "", SystemRoots, ""},
 		{"require alone", SSLRequire, "", ""},
 		{"disable alone", SSLDisable, "", ""},
 		{"verify-full without a root", SSLVerifyFull, "", "sslmode verify-full needs a root certificate"},
 		{"verify-ca without a root", SSLVerifyCA, "", "sslmode verify-ca needs a root certificate"},
 		{"default without a root", "", "", "sslmode verify-full needs a root certificate"},
+		{"verify-ca with the system roots", SSLVerifyCA, SystemRoots, `"system" needs sslmode verify-full, got verify-ca`},
+		{"require with the system roots", SSLRequire, SystemRoots, "sslmode require ignores a root certificate"},
+		{"disable with the system roots", SSLDisable, SystemRoots, "sslmode disable ignores a root certificate"},
 		{"require with a root", SSLRequire, root, "sslmode require ignores a root certificate"},
 		{"disable with a root", SSLDisable, root, "sslmode disable ignores a root certificate"},
 		{"prefer", "prefer", "", `got "prefer"`},
@@ -195,6 +277,7 @@ func TestValidateTLS(t *testing.T) {
 		{"upper case", "VERIFY-FULL", root, `got "VERIFY-FULL"`},
 		{"missing root file", SSLVerifyFull, filepath.Join(t.TempDir(), "missing.crt"), "root certificate (DB_SSLROOTCERT)"},
 		{"root file without a certificate", SSLVerifyFull, notPEM, "holds no PEM certificate"},
+		{"root file above 1 MiB", SSLVerifyFull, tooBig, "is larger than 1048576 bytes"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,69 +337,88 @@ func TestValidateAggregatesEveryProblem(t *testing.T) {
 		{"timeout 1s", Config{ConnectTimeout: time.Second}, true},
 		{"timeout 1m", Config{ConnectTimeout: time.Minute}, true},
 		{"timeout 61s", Config{ConnectTimeout: 61 * time.Second}, false},
+		{"empty secret", Config{Password: NewSecret("")}, false},
 	}
 	for _, b := range bounds {
 		cfg := b.cfg
-		cfg.Host, cfg.Name, cfg.User, cfg.Password, cfg.SSLMode = "h", "n", "u", fakePassword, SSLDisable
+		cfg.Host, cfg.Name, cfg.User, cfg.SSLMode = "h", "n", "u", SSLDisable
+		if b.name != "empty secret" {
+			cfg.Password = fakeSecret
+		}
 		if err := cfg.Validate(); (err == nil) != b.ok {
 			t.Errorf("%s: Validate() error = %v, want ok %v", b.name, err, b.ok)
 		}
 	}
 }
 
-// outer is a product's own config with the database inside, by value and by
-// pointer.
+// outer is a product's own config with the database inside: exported by
+// value and by pointer, unexported by value and by pointer, and in an
+// interface field.
 type outer struct {
 	Addr string
 	DB   Config
 	Ptr  *Config
+	db   Config
+	ptr  *Config
+	any  any
+}
+
+// leaks reports whether s holds the password or its distinctive parts, also
+// escaped or hex encoded.
+func leaks(s string) (string, bool) {
+	for _, leak := range []string{"fake-p@ss", "w/ord", "fake-p\\u0040ss", fmt.Sprintf("%x", "fake-p@ss"), fmt.Sprintf("% x", "fake-p@ss")} {
+		if strings.Contains(s, leak) {
+			return leak, true
+		}
+	}
+	return "", false
 }
 
 func TestConfigNeverPrintsItsPassword(t *testing.T) {
 	t.Parallel()
 
 	cfg := Config{
-		Host: "db.example.invalid", Port: 5432, Name: "app", User: "app", Password: fakePassword,
+		Host: "db.example.invalid", Port: 5432, Name: "app", User: "app", Password: fakeSecret,
 		SSLMode: SSLVerifyFull, SSLRootCert: "/etc/db/ca.crt", MaxConns: 10, ConnectTimeout: 5 * time.Second,
 	}
-	whole := outer{Addr: ":8080", DB: cfg, Ptr: &cfg}
+	whole := outer{Addr: ":8080", DB: cfg, Ptr: &cfg, db: cfg, ptr: &cfg, any: cfg}
+	unexported := struct {
+		Addr string
+		db   Config
+	}{Addr: ":8080", db: cfg}
+	inAny := struct{ c any }{cfg}
 
 	render := map[string]func() string{}
-	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"} {
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d", "% x"} {
 		render["fmt "+verb+" value"] = func() string { return fmt.Sprintf(verb, cfg) }
 		render["fmt "+verb+" pointer"] = func() string { return fmt.Sprintf(verb, &cfg) }
 		render["fmt "+verb+" struct"] = func() string { return fmt.Sprintf(verb, whole) }
+		render["fmt "+verb+" struct pointer"] = func() string { return fmt.Sprintf(verb, &whole) }
+		render["fmt "+verb+" unexported field"] = func() string { return fmt.Sprintf(verb, unexported) }
+		render["fmt "+verb+" interface field"] = func() string { return fmt.Sprintf(verb, inAny) }
+		render["fmt "+verb+" secret"] = func() string { return fmt.Sprintf(verb, cfg.Password) }
 	}
-	render["Sprint"] = func() string { return fmt.Sprint(cfg, &cfg, whole) }
-	render["Println"] = func() string { return fmt.Sprintln(cfg, &cfg, whole) }
+	render["Sprint"] = func() string { return fmt.Sprint(cfg, &cfg, whole, unexported, inAny) }
+	render["Println"] = func() string { return fmt.Sprintln(cfg, &cfg, whole, unexported, inAny) }
 	render["error wrap"] = func() string { return fmt.Errorf("open %v: %w", cfg, os.ErrNotExist).Error() }
 	render["json value"] = func() string { b, _ := json.Marshal(cfg); return string(b) }
 	render["json pointer"] = func() string { b, _ := json.Marshal(&cfg); return string(b) }
 	render["json struct"] = func() string { b, _ := json.Marshal(whole); return string(b) }
+	render["json secret"] = func() string { b, _ := json.Marshal(cfg.Password); return string(b) }
 	render["text"] = func() string { b, _ := cfg.MarshalText(); return string(b) }
 	for name, newHandler := range map[string]func(*bytes.Buffer) slog.Handler{
 		"slog text": func(b *bytes.Buffer) slog.Handler { return slog.NewTextHandler(b, nil) },
 		"slog json": func(b *bytes.Buffer) slog.Handler { return slog.NewJSONHandler(b, nil) },
 	} {
-		render[name+" value"] = func() string {
-			var b bytes.Buffer
-			slog.New(newHandler(&b)).Info("start", "db", cfg)
-			return b.String()
-		}
-		render[name+" pointer"] = func() string {
-			var b bytes.Buffer
-			slog.New(newHandler(&b)).Info("start", "db", &cfg)
-			return b.String()
-		}
-		render[name+" struct"] = func() string {
-			var b bytes.Buffer
-			slog.New(newHandler(&b)).Info("start", "config", whole)
-			return b.String()
-		}
-		render[name+" any"] = func() string {
-			var b bytes.Buffer
-			slog.New(newHandler(&b)).Info("start", slog.Any("config", whole), slog.Any("db", cfg))
-			return b.String()
+		for what, value := range map[string]any{
+			"value": cfg, "pointer": &cfg, "struct": whole, "struct pointer": &whole,
+			"unexported field": unexported, "interface field": inAny, "secret": cfg.Password,
+		} {
+			render[name+" "+what] = func() string {
+				var b bytes.Buffer
+				slog.New(newHandler(&b)).Info("start", slog.Any("config", value), slog.Group("nested", slog.Any("any", value)))
+				return b.String()
+			}
 		}
 	}
 
@@ -325,16 +427,27 @@ func TestConfigNeverPrintsItsPassword(t *testing.T) {
 			t.Parallel()
 
 			got := fn()
-			// The password's distinctive part, also escaped or hex encoded.
-			for _, leak := range []string{"fake-p@ss", "w/ord", "fake-p\\u0040ss", fmt.Sprintf("%x", "fake-p@ss")} {
-				if strings.Contains(got, leak) {
-					t.Fatalf("output leaks the password (%q):\n%s", leak, got)
-				}
-			}
-			if !strings.Contains(got, "db.example.invalid") && !strings.Contains(got, fmt.Sprintf("%x", "db.example.invalid")) {
-				t.Errorf("output lost the host, so the test proves nothing:\n%s", got)
+			if leak, ok := leaks(got); ok {
+				t.Fatalf("output leaks the password (%q):\n%s", leak, got)
 			}
 		})
+	}
+}
+
+// The renderings above also keep the rest of the config visible, so the
+// test does not pass by printing nothing.
+func TestConfigPrintsItsOtherFields(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{Host: "db.example.invalid", Password: fakeSecret}
+	for name, got := range map[string]string{
+		"fmt":  fmt.Sprintf("%+v", cfg),
+		"json": func() string { b, _ := json.Marshal(cfg); return string(b) }(),
+		"text": func() string { b, _ := cfg.MarshalText(); return string(b) }(),
+	} {
+		if !strings.Contains(got, "db.example.invalid") || !strings.Contains(got, "[redacted]") {
+			t.Errorf("%s = %s, want the host and the password shown as redacted", name, got)
+		}
 	}
 }
 
@@ -345,7 +458,27 @@ func TestConfigShowsAMissingPassword(t *testing.T) {
 	if got := (Config{Host: "h"}).String(); !strings.Contains(got, "password= ") {
 		t.Errorf("String() = %q, want an empty password shown as empty", got)
 	}
-	if got := (Config{Host: "h", Password: "x"}).String(); !strings.Contains(got, "password=[redacted]") {
+	if got := (Config{Host: "h", Password: NewSecret("x")}).String(); !strings.Contains(got, "password=[redacted]") {
 		t.Errorf("String() = %q, want the password shown as redacted", got)
+	}
+}
+
+func TestSecret(t *testing.T) {
+	t.Parallel()
+
+	if s := NewSecret(""); !s.IsZero() || s.Reveal() != "" || s.String() != "" {
+		t.Errorf("NewSecret(\"\") = %q, want the zero Secret", s)
+	}
+	var zero Secret
+	if !zero.IsZero() || zero.Reveal() != "" {
+		t.Error("the zero Secret is not empty")
+	}
+	s := NewSecret(fakePassword)
+	if s.IsZero() || s.Reveal() != fakePassword {
+		t.Error("Reveal() does not return the secret")
+	}
+	copied := s
+	if copied.Reveal() != fakePassword {
+		t.Error("a copy lost the secret")
 	}
 }

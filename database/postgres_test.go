@@ -145,6 +145,54 @@ func TestPostgresTheAdvisoryLockBlocksASecondMigrator(t *testing.T) {
 	}
 }
 
+// Each file takes the lock on its own, not only the creation of the
+// bookkeeping table: with file 1 applied and the table there, a held lock
+// still keeps file 2 from running.
+func TestPostgresEachFileWaitsForTheLock(t *testing.T) {
+	cfg := dbtest.Config(t)
+	holder, err := database.Open(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer holder.Close()
+	migrator, err := database.Open(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer migrator.Close()
+
+	first := fstest.MapFS{"m/0001_notes.sql": schema["m/0001_notes.sql"]}
+	if err := migrator.Migrate(t.Context(), first, "m"); err != nil {
+		t.Fatalf("Migrate() of file 1: %v", err)
+	}
+
+	tx, err := holder.Pool().Begin(t.Context())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(t.Context()) }()
+	if _, err := tx.Exec(t.Context(), "select pg_advisory_xact_lock($1)", database.MigrationLock); err != nil {
+		t.Fatalf("take the lock: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	err = migrator.ApplyFile(ctx, 2, "0002_author.sql", "alter table notes add column author text")
+	cancel()
+	if err == nil {
+		t.Fatal("file 2 was applied while another migrator held the lock")
+	}
+	if n := countRows(t, holder, "select count(*) from information_schema.columns where table_name = 'notes' and column_name = 'author'"); n != 0 {
+		t.Error("file 2 ran while another migrator held the lock")
+	}
+
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatalf("release the lock: %v", err)
+	}
+	if err := migrator.Migrate(t.Context(), schema, "m"); err != nil {
+		t.Fatalf("Migrate() after the lock was released: %v", err)
+	}
+}
+
 // Four pods starting together all succeed and apply each file once.
 func TestPostgresConcurrentMigratorsApplyOnce(t *testing.T) {
 	cfg := dbtest.Config(t)
@@ -197,7 +245,7 @@ func TestPostgresMigrateUntilReady(t *testing.T) {
 // A wrong password is refused, and the error does not carry it.
 func TestPostgresWrongPasswordIsRefused(t *testing.T) {
 	cfg := dbtest.Config(t)
-	cfg.Password = "wrong-fake-password"
+	cfg.Password = database.NewSecret("wrong-fake-password")
 	db, err := database.Open(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)

@@ -53,6 +53,10 @@ func TestReadMigrations(t *testing.T) {
 		{"no name", fstest.MapFS{"m/0001_.sql": file("a")}, nil, "not named <version>_<name>.sql"},
 		{"missing directory", fstest.MapFS{"other/0001_a.sql": file("a")}, nil, "read migrations"},
 		{"empty directory", fstest.MapFS{"m/README.md": file("x")}, nil, "no migration in m"},
+		{"upper case suffix", fstest.MapFS{"m/0001_a.sql": file("a"), "m/0002_b.SQL": file("b")}, nil, "0002_b.SQL must end in .sql in lower case"},
+		{"mixed case suffix", fstest.MapFS{"m/0001_a.Sql": file("a")}, nil, "must end in .sql in lower case"},
+		{"empty file", fstest.MapFS{"m/0001_a.sql": file("")}, nil, "migration 0001_a.sql is empty"},
+		{"blank file", fstest.MapFS{"m/0001_a.sql": file(" \n\t\n")}, nil, "migration 0001_a.sql is empty"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,6 +89,18 @@ func TestReadMigrations(t *testing.T) {
 // A broken set of files fails Migrate and MigrateUntilReady at once, before
 // the database is asked: waiting cannot fix a gap. The DB has no pool, so a
 // query would panic.
+// A nil logger is refused at once, before anything else, instead of a panic
+// in the retry loop.
+func TestMigrateUntilReadyRefusesANilLogger(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{"m/0001_a.sql": &fstest.MapFile{Data: []byte("select 1")}}
+	err := (&DB{}).MigrateUntilReady(t.Context(), nil, fsys, "m")
+	if err == nil || !strings.Contains(err.Error(), "needs a logger") {
+		t.Fatalf("MigrateUntilReady(nil logger) error = %v, want it refused", err)
+	}
+}
+
 func TestBrokenMigrationsFailBeforeTheDatabase(t *testing.T) {
 	t.Parallel()
 

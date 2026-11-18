@@ -664,11 +664,13 @@ takes the same default.
 | `MaxConns`       | `DB_MAX_CONNS`                        | 10, from 1 to 100                        |
 | `ConnectTimeout` | `DB_CONNECT_TIMEOUT`                  | 5 seconds, from 1 second to 1 minute     |
 
-`verify-ca` and `verify-full` need the root certificate, a PEM file of the CA that signed the
-server's certificate. `allow` and `prefer` are refused, and `disable` and `require` refuse a root
-certificate. The
-section [Database](docs/concepts/govue.md#database) of the concept doc has the wiring, the
-migrations and the reasons.
+`Password` is a `database.Secret`, built with `database.NewSecret`. `verify-ca` and
+`verify-full` need the root certificate: a PEM file of the CA that signed the server's
+certificate, at most 1 MiB, or `system` for the system's roots with `verify-full` only. `allow`
+and `prefer` are refused, and `disable` and `require` refuse a root certificate. A unix socket
+path, brackets and a list of hosts are refused in `Host`. The section
+[Database](docs/concepts/govue.md#database) of the concept doc has the wiring, the migrations and
+the reasons.
 
 ## Development
 

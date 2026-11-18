@@ -25,6 +25,11 @@ func TestMissing(t *testing.T) {
 		{"set in CI", "postgres://u:p@h/db?sslmode=disable", "true", false, ""},
 		{"missing locally", "", "", true, "SKIPPED, NOT RUN: " + EnvURL + " is not set"},
 		{"missing in CI", "", "true", false, EnvURL + " is not set in CI"},
+		{"missing in CI, upper case", "", "TRUE", false, EnvURL + " is not set in CI"},
+		{"missing in CI, one", "", "1", false, EnvURL + " is not set in CI"},
+		{"missing, CI false", "", "false", true, "SKIPPED, NOT RUN"},
+		{"missing, CI zero", "", "0", true, "SKIPPED, NOT RUN"},
+		{"missing, CI other", "", "yes please", true, "SKIPPED, NOT RUN"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -56,9 +61,13 @@ func TestParse(t *testing.T) {
 		t.Fatalf("parse() error = %v", err)
 	}
 	want := database.Config{
-		Host: "::1", Port: 6543, Name: "postgres", User: "govue", Password: fake,
+		Host: "::1", Port: 6543, Name: "postgres", User: "govue",
 		SSLMode: database.SSLDisable, MaxConns: 4, ConnectTimeout: 5 * time.Second,
 	}
+	if cfg.Password.Reveal() != fake {
+		t.Error("parse() lost the password")
+	}
+	cfg.Password = database.Secret{}
 	if cfg != want {
 		t.Errorf("parse() = %s, want %s", cfg, want)
 	}

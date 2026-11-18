@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ostendorf-cloud/govue/envconf"
@@ -27,7 +29,10 @@ const (
 	// development database and for a test server, never for a deployment.
 	SSLDisable SSLMode = "disable"
 	// SSLRequire encrypts and does not verify the server's certificate. It
-	// protects against a passive listener only.
+	// protects against a passive listener only. pgx, like libpq, turns it
+	// into verify-ca when PGSSLROOTCERT is set or ~/.postgresql/root.crt
+	// exists, which is stronger than asked and can refuse a server require
+	// would accept.
 	SSLRequire SSLMode = "require"
 	// SSLVerifyCA encrypts and checks that SSLRootCert signed the server's
 	// certificate, without checking the host name in it.
@@ -54,6 +59,17 @@ func (m SSLMode) valid() bool {
 func (m SSLMode) verifies() bool {
 	return m == SSLVerifyCA || m == SSLVerifyFull
 }
+
+// SystemRoots is the SSLRootCert value that verifies against the system's
+// root certificates instead of a file, libpq's sslrootcert=system. It is
+// accepted with verify-full only: verify-ca against every public CA would
+// accept any certificate any of them ever signed.
+const SystemRoots = "system"
+
+// maxRootCertBytes bounds the root certificate file. A CA bundle is a few
+// hundred kilobytes at most, and a path pointing at something else must not
+// be read whole.
+const maxRootCertBytes = 1 << 20
 
 // Defaults and bounds. A zero field of a Config means the default, so a
 // Config written in code gets the same secure choices as one loaded from the
@@ -90,22 +106,26 @@ const (
 // with a _FILE twin and never travels inside a URL that gets logged.
 //
 // Every way of printing a Config leaves the password out: every fmt verb,
-// encoding/json, encoding.TextMarshaler and log/slog, also when the Config
-// sits inside a larger struct or behind a pointer.
+// encoding/json, encoding.TextMarshaler and log/slog, also inside a larger
+// struct, behind a pointer, in an interface and in an unexported field. The
+// last one holds because the password is a Secret, see there.
 type Config struct {
+	// Host is a host name or an IP address, an IPv6 address without
+	// brackets. A unix socket path and a list of hosts are refused.
 	Host string
 	// Port is 1 to 65535. Zero means DefaultPort.
 	Port     int
 	Name     string
 	User     string
-	Password string
+	Password Secret
 	// SSLMode is one of the SSLMode constants. Empty means DefaultSSLMode,
 	// verify-full.
 	SSLMode SSLMode
 	// SSLRootCert is the path of a PEM file with the certificate authority
 	// that signed the server's certificate, for example the CA of the
-	// cluster's database operator. verify-ca and verify-full need it. disable
-	// and require refuse it, because require with a root certificate silently
+	// cluster's database operator, or SystemRoots for the system's roots
+	// with verify-full. verify-ca and verify-full need it. disable and
+	// require refuse it, because require with a root certificate silently
 	// becomes verify-ca in libpq and pgx, and disable never reads it.
 	SSLRootCert string
 	// MaxConns caps the pool, 1 to 100. Several pods share one server, so
@@ -130,15 +150,17 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		Port:           l.Int(EnvPort, DefaultPort, 1, 65535),
 		Name:           l.Required(EnvName),
 		User:           l.Required(EnvUser),
-		Password:       l.RequiredSecretOrFile(EnvPassword),
+		Password:       NewSecret(l.RequiredSecretOrFile(EnvPassword)),
 		SSLMode:        SSLMode(l.String(EnvSSLMode, string(DefaultSSLMode))),
 		SSLRootCert:    l.String(EnvSSLRootCert, ""),
 		MaxConns:       int32(l.Int(EnvMaxConns, DefaultMaxConns, minMaxConns, maxMaxConns)),
 		ConnectTimeout: l.Duration(EnvConnectTimeout, DefaultConnectTimeout, minConnectTimeout, maxConnectTimeout),
 	}
 	// envconf has checked presence and ranges already. What is left is what
-	// envconf cannot know: the mode and the root certificate.
-	problems := append([]error{l.Err()}, cfg.tlsProblems()...)
+	// envconf cannot know: the shape of the host, the mode and the root
+	// certificate.
+	problems := append([]error{l.Err()}, cfg.hostProblems()...)
+	problems = append(problems, cfg.tlsProblems()...)
 	if err := errors.Join(problems...); err != nil {
 		return Config{}, fmt.Errorf("database: load config: %w", err)
 	}
@@ -174,6 +196,7 @@ func (c Config) Validate() error {
 	if c.Host == "" {
 		add("host (%s) is required", EnvHost)
 	}
+	problems = append(problems, c.hostProblems()...)
 	if c.Port < 1 || c.Port > 65535 {
 		add("port (%s) must be between 1 and 65535, got %d", EnvPort, c.Port)
 	}
@@ -183,7 +206,7 @@ func (c Config) Validate() error {
 	if c.User == "" {
 		add("user (%s) is required", EnvUser)
 	}
-	if c.Password == "" {
+	if c.Password.IsZero() {
 		add("password (%s or %s_FILE) is required", EnvPassword, EnvPassword)
 	}
 	if c.MaxConns < minMaxConns || c.MaxConns > maxMaxConns {
@@ -199,9 +222,27 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// hostProblems refuses the host spellings pgx would read as something else:
+// a path is a unix socket, where TLS is silently off even under verify-full,
+// brackets fail only later when the pool is built, and a comma makes a list
+// of fallback hosts.
+func (c Config) hostProblems() []error {
+	var problems []error
+	if strings.HasPrefix(c.Host, "/") {
+		problems = append(problems, fmt.Errorf("host (%s) %q is a unix socket path, which is not supported: TLS would be off", EnvHost, c.Host))
+	}
+	if strings.ContainsAny(c.Host, "[]") {
+		problems = append(problems, fmt.Errorf("host (%s) %q: write an IPv6 address without brackets", EnvHost, c.Host))
+	}
+	if strings.Contains(c.Host, ",") {
+		problems = append(problems, fmt.Errorf("host (%s) %q is a list of hosts, which is not supported", EnvHost, c.Host))
+	}
+	return problems
+}
+
 // tlsProblems checks the mode and its root certificate. A root certificate
-// is read here, so a wrong path or a file without a certificate fails at
-// startup with every other problem, not on the first connection.
+// file is read here, so a wrong path or a file without a certificate fails
+// at startup with every other problem, not on the first connection.
 func (c Config) tlsProblems() []error {
 	mode := c.SSLMode
 	if mode == "" {
@@ -210,39 +251,49 @@ func (c Config) tlsProblems() []error {
 	if !mode.valid() {
 		return []error{fmt.Errorf("sslmode (%s) must be one of %v, got %q", EnvSSLMode, sslModes, string(mode))}
 	}
+	root := c.SSLRootCert
 	switch {
-	case mode.verifies() && c.SSLRootCert == "":
-		return []error{fmt.Errorf("sslmode %s needs a root certificate (%s)", mode, EnvSSLRootCert)}
-	case !mode.verifies() && c.SSLRootCert != "":
+	case mode.verifies() && root == "":
+		return []error{fmt.Errorf("sslmode %s needs a root certificate (%s): the path of the CA's PEM file, or %q with verify-full for the system roots",
+			mode, EnvSSLRootCert, SystemRoots)}
+	case !mode.verifies() && root != "":
 		return []error{fmt.Errorf("sslmode %s ignores a root certificate (%s): use verify-full or remove it", mode, EnvSSLRootCert)}
-	case c.SSLRootCert == "":
+	case root == SystemRoots && mode != SSLVerifyFull:
+		return []error{fmt.Errorf("root certificate (%s) %q needs sslmode verify-full, got %s", EnvSSLRootCert, SystemRoots, mode)}
+	case root == "" || root == SystemRoots:
 		return nil
 	}
-	pem, err := os.ReadFile(c.SSLRootCert)
+	pem, err := readBounded(root, maxRootCertBytes)
 	if err != nil {
 		return []error{fmt.Errorf("root certificate (%s): %w", EnvSSLRootCert, err)}
 	}
 	if !x509.NewCertPool().AppendCertsFromPEM(pem) {
-		return []error{fmt.Errorf("root certificate (%s): %s holds no PEM certificate", EnvSSLRootCert, c.SSLRootCert)}
+		return []error{fmt.Errorf("root certificate (%s): %s holds no PEM certificate", EnvSSLRootCert, root)}
 	}
 	return nil
 }
 
-// redacted stands in for the password wherever a Config is printed.
-const redacted = "[redacted]"
+// readBounded reads path, and refuses a file larger than limit bytes.
+func readBounded(path string, limit int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%s is larger than %d bytes", path, limit)
+	}
+	return data, nil
+}
 
 // String prints the connection without its password.
 func (c Config) String() string {
 	return fmt.Sprintf("host=%s port=%d dbname=%s user=%s password=%s sslmode=%s sslrootcert=%s max_conns=%d connect_timeout=%s",
-		c.Host, c.Port, c.Name, c.User, c.redactedPassword(), c.SSLMode, c.SSLRootCert, c.MaxConns, c.ConnectTimeout)
-}
-
-// redactedPassword shows whether a password is set, never what it is.
-func (c Config) redactedPassword() string {
-	if c.Password == "" {
-		return ""
-	}
-	return redacted
+		c.Host, c.Port, c.Name, c.User, c.Password, c.SSLMode, c.SSLRootCert, c.MaxConns, c.ConnectTimeout)
 }
 
 // GoString keeps %#v from printing the password field.
@@ -253,17 +304,13 @@ func (c Config) Format(f fmt.State, _ rune) {
 	_, _ = fmt.Fprint(f, c.String())
 }
 
-// MarshalJSON keeps the password out of JSON. It matters when a whole product
-// config is logged through a JSON handler: LogValue applies only when a
-// Config is the attribute value itself, while a Config nested inside another
-// value reaches encoding/json, which would print every field.
+// MarshalJSON writes the fields as an object, the password through Secret.
+// Without it, MarshalText would turn a Config into one JSON string.
 func (c Config) MarshalJSON() ([]byte, error) {
 	// plain has Config's fields and none of its methods, so this does not
 	// call MarshalJSON again.
 	type plain Config
-	p := plain(c)
-	p.Password = c.redactedPassword()
-	out, err := json.Marshal(p)
+	out, err := json.Marshal(plain(c))
 	if err != nil {
 		return nil, fmt.Errorf("database: marshal config: %w", err)
 	}
@@ -282,7 +329,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Int("port", c.Port),
 		slog.String("name", c.Name),
 		slog.String("user", c.User),
-		slog.String("password", c.redactedPassword()),
+		slog.String("password", c.Password.String()),
 		slog.String("sslmode", string(c.SSLMode)),
 		slog.String("sslrootcert", c.SSLRootCert),
 		slog.Int("max_conns", int(c.MaxConns)),
