@@ -42,6 +42,18 @@ type config struct {
 	rateLimitBurst int
 	rateLimitPer   time.Duration
 
+	// authRateLimitBurst and authRateLimitPer are the limit of the routes that
+	// check a password: signup, login, TOTP confirmation and password change.
+	// It is stricter than the general limit, because a guess costs an Argon2id
+	// derivation and the hasher has few slots.
+	authRateLimitBurst int
+	authRateLimitPer   time.Duration
+
+	// allowSignup opens the signup route. It is off by default: the example
+	// keeps accounts in memory, and open registration is the application's
+	// decision.
+	allowSignup bool
+
 	allowPlainHTTP bool
 
 	// siteDir is the output directory of the prerender step. Empty means the
@@ -102,6 +114,10 @@ func loadConfig(getenv func(string) string) (config, error) {
 
 	cfg.rateLimitBurst = l.Int("RATE_LIMIT_BURST", 20, 0, 100_000)
 	cfg.rateLimitPer = l.Duration("RATE_LIMIT_PER", time.Minute, time.Second, time.Hour)
+
+	cfg.authRateLimitBurst = l.Int("AUTH_RATE_LIMIT_BURST", 5, 0, 1000)
+	cfg.authRateLimitPer = l.Duration("AUTH_RATE_LIMIT_PER", time.Minute, time.Second, time.Hour)
+	cfg.allowSignup = l.Bool("ALLOW_SIGNUP", false)
 
 	cfg.allowPlainHTTP = l.Bool("ALLOW_PLAIN_HTTP", false)
 

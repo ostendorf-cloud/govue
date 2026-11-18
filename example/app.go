@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/ostendorf-cloud/govue/account"
 	"github.com/ostendorf-cloud/govue/api"
 	"github.com/ostendorf-cloud/govue/clientip"
 	"github.com/ostendorf-cloud/govue/csrf"
@@ -50,6 +51,12 @@ type app struct {
 	protector  *csrf.Protector
 
 	oidc *oidc.Provider
+
+	// accounts are the local account handlers, with their own stricter rate
+	// limit. See buildAccounts.
+	accounts      *account.Handlers
+	authLimiter   *ratelimit.Limiter
+	authRateLimit *middleware.RateLimit
 
 	health *health.Registry
 
@@ -217,6 +224,8 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 	fail(err)
 	a.rateLimit = rateLimit
 
+	fail(a.buildAccounts())
+
 	cors, err := middleware.NewCORS(middleware.CORSConfig{
 		Origins: cfg.allowedOrigins,
 		// csrf.HeaderName is added so a cross-origin preflight allows the
@@ -272,6 +281,16 @@ func (a *app) handler() http.Handler {
 	route := func(h http.Handler) http.Handler {
 		return middleware.Chain(h, a.cors.Middleware, a.rateLimit.Middleware, a.protector.Middleware, a.sessions.Middleware)
 	}
+
+	// checked is the route chain with the stricter limit of the routes that
+	// check a password. The limit sits before the CSRF protector and the
+	// session, like the general one, so a refused guess costs no lookup and
+	// no derivation.
+	checked := func(h http.Handler) http.Handler {
+		return middleware.Chain(h, a.cors.Middleware, a.rateLimit.Middleware, a.authRateLimit.Middleware,
+			a.protector.Middleware, a.sessions.Middleware)
+	}
+	a.mountAccounts(mux, route, checked)
 
 	mux.Handle("GET /app", route(api.Handle(a.home)))
 	mux.Handle("GET /notes", route(api.Handle(a.listNotes)))

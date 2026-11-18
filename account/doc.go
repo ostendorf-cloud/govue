@@ -11,8 +11,8 @@
 // The package holds the contract, [Identity], [Store], [Record] and the
 // errors, the two checks a login is built from, Argon2id password hashing in
 // [Hasher] and TOTP in [VerifyTOTPCode], and [Service], which combines them
-// with the store: signup, TOTP confirmation, login and password change. The
-// HTTP handlers on top of it are not part of the package yet.
+// with the store: signup, TOTP confirmation, login and password change.
+// [Handlers] puts JSON over HTTP on top of the service.
 //
 // The accounttest package holds the conformance suite every adapter runs
 // against its own storage, and an in memory store for tests.
@@ -39,6 +39,55 @@
 //
 // The service does not normalise logins: letter case, Unicode forms and
 // confusable characters are the adapter's or the application's job.
+//
+// # HTTP handlers
+//
+// [NewHandlers] returns [Handlers] with one http.Handler per step: Signup,
+// ConfirmTOTP, Login, ChangePassword and Logout. A product mounts the ones
+// it offers, each on a POST route. A product without open registration
+// mounts no signup handler, and [HandlerConfig.AllowSignup] decides per
+// request where registration is open but conditional.
+//
+// Like the oidc handlers they take callbacks, so this package imports nothing
+// from session: [HandlerConfig.StartSession] turns a verified [Identity] into
+// a session, [HandlerConfig.EndSession] ends the one session of a logout,
+// [HandlerConfig.CurrentIdentity] reads the account of a request, and the
+// service's EndSessions callback ends every session after a password change.
+//
+// Requests and answers are JSON objects with named fields, never a bare
+// value: [SignupRequest], [CredentialsRequest] and [PasswordChangeRequest] in,
+// [SignupResult], [LoginResult] and [PasswordChangeResult] out, errors in the
+// shape of the api package. Fields may be added to an answer in a later
+// release, for a token a native app can use instead of a cookie, so a client
+// reads the names it knows and ignores the rest. A request never takes a
+// field this package does not name.
+//
+// Every handler checks, in this order, the method (POST only), the origin
+// with net/http.CrossOriginProtection, and the body. A request with a
+// Sec-Fetch-Site of cross-site or same-site, or an Origin other than this host
+// or [HandlerConfig.TrustedOrigins], is refused with 403, with or without a
+// session. A request that carries neither header passes, as it does for the
+// csrf package: that is every client that is not a browser. The session bound
+// CSRF token stays the application's middleware, as for any unsafe route.
+// The body has to be application/json, at most [DefaultMaxBodyBytes] unless
+// configured, one object, with no unknown field.
+//
+// A refused login, and a refused TOTP confirmation, answer 401 with
+// [CodeInvalidCredentials] and one message, whether the login is unknown, the
+// password or the code wrong or replayed, the secret unconfirmed or the
+// account disabled. A server without capacity to hash answers 503 with
+// Retry-After instead, which says nothing about the guess. Neither the
+// password, a code, a secret nor a hash reaches the log or an answer, and no
+// session is started on any failure. The login route needs a per client rate
+// limit in front of it, and so does signup, which answers 409 for a taken
+// login and so is an account existence oracle. See [Service.SignUp].
+//
+// A password change answers with the four outcomes of
+// [Service.ChangePassword]: 200 with sessions_ended true, 200 with
+// sessions_ended false when the change stands but ending the sessions failed,
+// 409 [CodeStale] when nothing changed, and 500 [CodePasswordChangeUnknown]
+// when the change may not have happened. Every session of the account ends
+// with it, the caller's own included, and the handler starts none.
 //
 // # Password hashing
 //
