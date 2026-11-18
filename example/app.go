@@ -72,6 +72,11 @@ type app struct {
 	limiter   *ratelimit.Limiter
 	rateLimit *middleware.RateLimit
 	cors      *middleware.CORS
+	// appOrigins and appCORS are the native app mode. Both are zero and nil
+	// unless APP_ORIGINS is set. appOrigins feeds Issue and appCORS and
+	// nothing else.
+	appOrigins middleware.AppOrigins
+	appCORS    *middleware.AppCORS
 
 	security  middleware.Security
 	accessLog middleware.AccessLog
@@ -240,6 +245,7 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 	fail(err)
 	a.rateLimit = rateLimit
 
+	fail(a.buildAppOrigins())
 	fail(a.buildAccounts())
 
 	cors, err := middleware.NewCORS(middleware.CORSConfig{
@@ -295,7 +301,7 @@ func (a *app) handler() http.Handler {
 	// a request never authenticates by the cookie. A route mounted without
 	// this chain must not sit behind the exempting protector either.
 	route := func(h http.Handler) http.Handler {
-		return middleware.Chain(h, a.cors.Middleware, a.rateLimit.Middleware, a.protector.Middleware, a.sessions.Middleware)
+		return middleware.Chain(h, a.corsMiddleware(), a.rateLimit.Middleware, a.protector.Middleware, a.sessions.Middleware)
 	}
 
 	// checked is the route chain with the stricter limit of the routes that
@@ -303,7 +309,7 @@ func (a *app) handler() http.Handler {
 	// session, like the general one, so a refused guess costs no lookup and
 	// no derivation.
 	checked := func(h http.Handler) http.Handler {
-		return middleware.Chain(h, a.cors.Middleware, a.rateLimit.Middleware, a.authRateLimit.Middleware,
+		return middleware.Chain(h, a.corsMiddleware(), a.rateLimit.Middleware, a.authRateLimit.Middleware,
 			a.protector.Middleware, a.sessions.Middleware)
 	}
 	a.mountAccounts(mux, route, checked)

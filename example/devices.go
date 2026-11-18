@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/ostendorf-cloud/govue/account"
+	"github.com/ostendorf-cloud/govue/middleware"
 	"github.com/ostendorf-cloud/govue/session/devicehttp"
 )
 
@@ -39,10 +40,11 @@ func (a *app) buildDevices(service *account.Service) error {
 		// The same clock as the session manager, because the store compares
 		// the time of the credential check with the time of an EndAll.
 		Now: a.cfg.now,
-		// No IssueTrustedOrigins: the web origins of ALLOWED_ORIGINS feed the
-		// CSRF protector and a CORS policy with credentials, and an app origin
-		// must never be on those lists. A separate app origin list arrives with
-		// step 5 of #117, see docs/concepts/govue.md.
+		// The app origins of APP_ORIGINS, and only those. The web origins of
+		// ALLOWED_ORIGINS feed the CSRF protector and a CORS policy with
+		// credentials, and never go here. Empty without APP_ORIGINS, which
+		// leaves Issue trusting its own origin only.
+		IssueTrustedOrigins: a.appOrigins.List(),
 	})
 	if err != nil {
 		return fmt.Errorf("example: device handlers: %w", err)
@@ -50,6 +52,62 @@ func (a *app) buildDevices(service *account.Service) error {
 	a.devices = handlers
 
 	return nil
+}
+
+// buildAppOrigins turns APP_ORIGINS into the typed list and the app CORS
+// handler. It does nothing without APP_ORIGINS.
+//
+// This is the one place the lists meet, and it runs at startup: the app list
+// is checked against the web list and against the origins handed to
+// csrf.TrustOrigin, which here are the same ALLOWED_ORIGINS. An application
+// with its own trusted origins passes them too. An overlap fails startup and
+// names the origin. The app list reaches Issue and the app CORS handler and
+// nothing else.
+func (a *app) buildAppOrigins() error {
+	if len(a.cfg.appOrigins) == 0 {
+		if len(a.cfg.appSchemes) > 0 {
+			return errors.New("example: APP_SCHEMES is set without APP_ORIGINS")
+		}
+
+		return nil
+	}
+
+	origins, err := middleware.NewAppOrigins(a.cfg.appOrigins, a.cfg.appSchemes...)
+	if err != nil {
+		return fmt.Errorf("example: APP_ORIGINS: %w", err)
+	}
+	if err := origins.RejectOverlap(a.cfg.allowedOrigins, a.cfg.allowedOrigins); err != nil {
+		return fmt.Errorf("example: APP_ORIGINS: %w", err)
+	}
+	appCORS, err := middleware.NewAppCORS(origins)
+	if err != nil {
+		return fmt.Errorf("example: app CORS: %w", err)
+	}
+	// An app calls the issue route from its own origin, which is cross site, so
+	// the origin half of the CSRF protector would refuse it. The one route is
+	// exempt from that half, and only that. Issue checks the origin itself
+	// against the app origins, and the token half stays.
+	if err := a.protector.ExemptOrigin(http.MethodPost, authPrefix+"/token"); err != nil {
+		return fmt.Errorf("example: %w", err)
+	}
+	a.appOrigins = origins
+	a.appCORS = appCORS
+
+	return nil
+}
+
+// corsMiddleware is the CORS part of the route chain. With app origins, a
+// request whose Origin is on the app list is answered by the app handler,
+// without credentials. Every other request goes on to the web policy, which
+// never sees an app origin because the lists are disjoint.
+func (a *app) corsMiddleware() middleware.Middleware {
+	if a.appCORS == nil {
+		return a.cors.Middleware
+	}
+
+	return func(next http.Handler) http.Handler {
+		return a.appCORS.Middleware(a.cors.Middleware(next))
+	}
 }
 
 // mapLoginError turns what account.Service.Login returns into the two errors

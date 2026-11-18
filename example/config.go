@@ -41,6 +41,13 @@ type config struct {
 
 	allowedOrigins []string
 
+	// appOrigins and appSchemes are the origins of native apps and the custom
+	// schemes they may use. Both are empty by default, which turns the app
+	// mode of the origin and CORS handling off. They are a list of their own
+	// and never mix with allowedOrigins: see newApp.
+	appOrigins []string
+	appSchemes []string
+
 	rateLimitBurst int
 	rateLimitPer   time.Duration
 
@@ -118,6 +125,12 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 
 	cfg.allowedOrigins = l.List("ALLOWED_ORIGINS")
+	// Off by default. APP_ORIGINS lists exact origins of a native app, such as
+	// capacitor://localhost or https://localhost. A custom scheme is allowed
+	// only when APP_SCHEMES names it, one scheme at a time, never a pattern.
+	// The values are checked by middleware.NewAppOrigins in newApp.
+	cfg.appOrigins = l.List("APP_ORIGINS")
+	cfg.appSchemes = l.List("APP_SCHEMES")
 
 	cfg.rateLimitBurst = l.Int("RATE_LIMIT_BURST", 20, 0, 100_000)
 	cfg.rateLimitPer = l.Duration("RATE_LIMIT_PER", time.Minute, time.Second, time.Hour)

@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/ostendorf-cloud/govue/internal/bearer"
 )
@@ -157,6 +158,42 @@ func (p *Protector) TrustOrigin(origin string) error {
 	if err := p.cross.AddTrustedOrigin(origin); err != nil {
 		return fmt.Errorf("csrf: trusted origin %q: %w", origin, err)
 	}
+	return nil
+}
+
+// ExemptOrigin skips the origin half of the check for requests with exactly
+// this method and exactly this path, for the one endpoint a native app calls
+// from its own origin without a bearer token: the issue of a device token.
+// The token half stays. It passes for a caller with no session, and a request
+// that carries a session cookie still needs the CSRF token.
+//
+// The exempt endpoint must check the origin itself against a short list of
+// app origins, as devicehttp.Handlers.Issue does, because from here on any
+// origin passes this protector on that route. It is safe only for an endpoint
+// that carries no ambient credential and changes no browser state.
+//
+// path is an absolute path without a host, a query, a wildcard, a wildcard
+// variable, "{$}" or a trailing slash, and method is one upper case token. The
+// bypass of net/http matches the path exactly, so a neighbouring path and a
+// path with a trailing slash keep the origin check. A pattern that net/http
+// refuses, such as a second call for the same route, is returned as an error
+// and not as a panic. It is meant to be called during setup like TrustOrigin.
+func (p *Protector) ExemptOrigin(method, path string) (err error) {
+	if method == "" || strings.Trim(method, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") != "" {
+		return fmt.Errorf("csrf: exempt origin: method %q must be one upper case token", method)
+	}
+	if !strings.HasPrefix(path, "/") || path == "/" || strings.HasSuffix(path, "/") ||
+		strings.ContainsAny(path, "{}*? #\t\r\n") {
+		return fmt.Errorf("csrf: exempt origin: path %q must be an absolute path without a wildcard, "+
+			"a query or a trailing slash", path)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("csrf: exempt origin: %s %s: %v", method, path, r)
+		}
+	}()
+	p.cross.AddInsecureBypassPattern(method + " " + path)
+
 	return nil
 }
 
