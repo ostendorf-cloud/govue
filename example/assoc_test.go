@@ -114,6 +114,22 @@ func TestAssociationFilesAreNeverRedirectedOrSetACookie(t *testing.T) {
 	}
 }
 
+// TestAppleFileWithPathsAndWebCredentialsHoldsBoth pins that a path keeps
+// the applinks entry when webcredentials is on as well.
+func TestAppleFileWithPathsAndWebCredentialsHoldsBoth(t *testing.T) {
+	a, _ := newTestAppEnv(t, 1000, assocEnv())
+	rec := serveExample(t, a, newReq(t, http.MethodGet, appassoc.ApplePath))
+	var doc map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"applinks", "webcredentials"} {
+		if _, ok := doc[key]; !ok {
+			t.Errorf("%s missing: %s", key, rec.Body.String())
+		}
+	}
+}
+
 func TestAndroidLoginCredsFollowsTheSwitch(t *testing.T) {
 	for _, on := range []bool{true, false} {
 		env := assocEnv()
@@ -219,6 +235,7 @@ func TestAssociationConfigurationErrors(t *testing.T) {
 	for name, extra := range map[string]map[string]string{
 		"apple id without a dot":  {"APPLE_APP_ID": "nodot"},
 		"apple id without paths":  {"APPLE_APP_ID": "ABCDE12345.com.example.app"},
+		"exclusion without path":  {"APPLE_APP_ID": "ABCDE12345.com.example.app", "APPLE_APP_EXCLUDE_PATHS": "/a", "APPLE_WEBCREDENTIALS": "true"},
 		"android without a print": {"ANDROID_PACKAGE": "com.example.app"},
 		"android bad print":       {"ANDROID_PACKAGE": "com.example.app", "ANDROID_CERT_SHA256": "AA:BB"},
 		"bad bool":                {"APPLE_APP_ID": "ABCDE12345.com.example.app", "APPLE_APP_PATHS": "/a", "APPLE_WEBCREDENTIALS": "maybe"},

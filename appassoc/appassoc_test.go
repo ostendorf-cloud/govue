@@ -511,12 +511,8 @@ func TestValidation(t *testing.T) {
 		{"fingerprint dashes", android(func(a *AndroidApp) { a.Fingerprints = []string{strings.ReplaceAll(fpUpper, ":", "-")} }), false},
 		{"fingerprint non hex", android(func(a *AndroidApp) { a.Fingerprints = []string{"ZZ" + fpUpper[2:]} }), false},
 		{"fingerprint padded", android(func(a *AndroidApp) { a.Fingerprints = []string{" " + fpUpper} }), false},
-		{"too many fingerprints", android(func(a *AndroidApp) {
-			a.Fingerprints = nil
-			for i := range 11 {
-				a.Fingerprints = append(a.Fingerprints, strings.Replace(fpUpper, "AA", strings.ToUpper(strconv.FormatInt(int64(16+i), 16)), 1))
-			}
-		}), false},
+		{"fingerprints at limit", android(func(a *AndroidApp) { a.Fingerprints = distinctPrints(10) }), true},
+		{"too many fingerprints", android(func(a *AndroidApp) { a.Fingerprints = distinctPrints(11) }), false},
 		{"unknown relation", android(func(a *AndroidApp) { a.Relations = []Relation{"delegate_permission/common.other"} }), false},
 		{"duplicate package", Config{Android: AndroidConfig{Apps: []AndroidApp{
 			{PackageName: "com.example.app", Fingerprints: []string{fpUpper}},
@@ -540,6 +536,16 @@ func TestValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// distinctPrints returns n different valid fingerprints, so the dedupe does
+// not hide the count.
+func distinctPrints(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = strings.Replace(fpUpper, "AA", strings.ToUpper(strconv.FormatInt(int64(16+i), 16)), 1)
+	}
+	return out
 }
 
 func manyApple(n int) []AppleApp {

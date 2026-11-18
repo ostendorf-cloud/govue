@@ -1119,10 +1119,11 @@ The design of the library and the reasoning behind it.
     Digital Asset Links is required for passkeys, are in
     <https://developer.android.com/identity/credential-manager/prerequisites>. The file must
     answer 200 with `application/json`, and a 301 or 302 fails verification:
-    <https://developer.android.com/training/app-links/configure-assetlinks>. Uppercase colon
-    separated fingerprints, the re-verification on Android 15 and later and the seven day delay
-    are in <https://developer.android.com/training/app-links/verify-android-applinks>. Package
-    name rules are in <https://developer.android.com/build/configure-app-module>.
+    <https://developer.android.com/training/app-links/configure-assetlinks>. The uppercase colon
+    separated fingerprint example is on that page too. The re-verification on Android 15 and
+    later and the seven day delay are in
+    <https://developer.android.com/training/app-links/verify-android-applinks>. Package name
+    rules are in <https://developer.android.com/build/configure-app-module>.
 - Not verified from a primary source:
   - Apple's 128 KB size limit. Only an archived 2016 page and third party guides name it. The
     64 KiB cap is this package's own.
