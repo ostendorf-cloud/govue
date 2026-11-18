@@ -275,31 +275,38 @@ The design of the library and the reasoning behind it.
 
 - App mode lets a native app, such as a Capacitor app, sign in with a device token instead of a
   cookie. It is off until a product wires every step below, and each step links to the section
-  that explains it. This list repeats no design. Every name was read in the code.
+  that explains it. This list repeats no design.
 - Step 1, an account sign in. The token is issued after the same check as the cookie login.
-  `example/` passes `account.Service.Login` as `devicehttp.HandlerConfig.VerifyCredentials`, so
-  the token needs login, password and a TOTP code. Any other check works, because the handler
-  takes a callback. See "Local accounts". Signup and TOTP enrolment stay in the web app, since
-  the account routes accept only their own origin and `TrustedOrigins`.
+  `example/` wraps `account.Service.Login` in the `devicehttp.HandlerConfig.VerifyCredentials`
+  callback. The callback returns the account id and maps the errors to
+  `devicehttp.ErrInvalidCredentials` and `devicehttp.ErrBusy`. So the token needs login,
+  password and a TOTP code. Any other check works, because the handler takes a callback. See
+  "Local accounts". The account routes refuse a cross site browser request from an app origin.
+  A request without `Origin` and `Sec-Fetch-Site` passes, as for any non browser client. Whether
+  the native HTTP plugin of Capacitor sends those headers is not verified.
 - Step 2, a device store. Set `session.Config.Devices` to `session.DeviceConfig{Store: ...}`.
   App mode is off while `Store` is nil. A product writes a shared `session.DeviceStore` and runs
   `sessiontest.DeviceStore` against it. `session.NewMemoryDeviceStore` serves one replica and a
   restart signs every app out. Set `DeviceConfig.TokenPrefix` to the product's own name. Set
   `Config.OnBearerRefusal` for the error shape. Call `csrf.Protector.ExemptBearer` and keep
   `session.Manager.Middleware` behind the protector. See "Device sessions for native apps".
-- Step 3, the token handlers and their rate limit. `devicehttp.NewHandlers` takes
-  `HandlerConfig{Sessions, VerifyCredentials, Now, IssueTrustedOrigins}`. `Now` is the clock of
-  `session.Config.Now`. Mount `Issue`, `Rotate`, `SignOut`, `List` and `Revoke` as in
-  "Token handlers". Put `Issue` behind a per client limit stricter than the general one, as
-  `example/` does with `AUTH_RATE_LIMIT_BURST` and `AUTH_RATE_LIMIT_PER`.
-- Step 4, the app origin list and its overlap check. Build the list with
-  `middleware.NewAppOrigins(origins, customSchemes...)`. Call `RejectOverlap(webCORS, csrfTrusted)`
-  at startup and refuse to start on an error. Call `csrf.Protector.TrustOriginOnRoute` with
-  `http.MethodPost`, the path of the issue route and `AppOrigins.List()`. Pass the same list as
-  `IssueTrustedOrigins`. Build `middleware.NewAppCORS(appOrigins, webCORS)` and use its
-  `Middleware` in place of `CORS.Middleware`, at the same place in the chain. In `example/` the
-  list comes from `APP_ORIGINS` and `APP_SCHEMES`, for example `APP_ORIGINS=capacitor://localhost`
-  with `APP_SCHEMES=capacitor`, and `https://localhost` for Android. See "App origins".
+- Step 3, the app origin list and its overlap check. It comes before the token handlers, which
+  take the list. Build it with `middleware.NewAppOrigins(origins, customSchemes...)`. Call
+  `RejectOverlap(nil, origins)` at startup with every origin passed to
+  `csrf.Protector.TrustOrigin`, and with `account.HandlerConfig.TrustedOrigins` when that list
+  differs. Refuse to start on an error. Call `csrf.Protector.TrustOriginOnRoute` with
+  `http.MethodPost`, the path of the issue route and `AppOrigins.List()`. Once the web `CORS`
+  exists, build `middleware.NewAppCORS(appOrigins, webCORS)`, where `webCORS` is the `*CORS`. It
+  refuses an overlap with that policy. Use its `Middleware` in place of `CORS.Middleware`, at the
+  same place in the chain. In `example/` the list comes from `APP_ORIGINS` and `APP_SCHEMES`, for
+  example `APP_ORIGINS=capacitor://localhost` with `APP_SCHEMES=capacitor`, and
+  `https://localhost` for Android. See "App origins".
+- Step 4, the token handlers and their rate limit. `devicehttp.NewHandlers` takes
+  `HandlerConfig{Sessions, VerifyCredentials, Now, IssueTrustedOrigins}`. Pass `AppOrigins.List()`
+  from step 3 as `IssueTrustedOrigins`. `Now` is the clock of `session.Config.Now`. Mount
+  `Issue`, `Rotate`, `SignOut`, `List` and `Revoke` as in "Token handlers". Put `Issue` behind a
+  per client limit stricter than the general one, as `example/` does with
+  `AUTH_RATE_LIMIT_BURST` and `AUTH_RATE_LIMIT_PER`.
 - Step 5, the association files. Fill `appassoc.Config`, call `appassoc.New` and
   `Handlers.Handle(mux, nil)`, outside the route chain. They serve `appassoc.ApplePath` and
   `appassoc.AndroidPath`. `example/` reads `APPLE_APP_ID`, `APPLE_APP_PATHS`,
@@ -309,12 +316,12 @@ The design of the library and the reasoning behind it.
   with a `TokenStorage` adapter that the product writes. Exactly one context per storage keeps
   `rotation: 'owner'`, the default. Every other context sets `rotation: 'none'`. Sign in with
   `signIn` and out with `signOut`. `baseUrl` defaults to `/api/v1`, which is relative to the
-  bundled origin of the app, so an app names its API there. That follows from how the client
-  joins the URL and was not run. See "The bearer client of a native app".
+  bundled origin of the app, so an app names its API there. Assumed, not tested. See "The bearer
+  client of a native app".
 
 #### What the server serves in app mode
 
-- New routes: the five token routes of step 3 and the two association files of step 5.
+- New routes: the five token routes of step 4 and the two association files of step 5.
 - New answers: the CORS answers of `AppCORS` for the listed app origins, preflight included.
 - Cookie based and unchanged: the web session cookie, the CSRF check of every cookie request, the
   web CORS list with its credentials and the account forms of the web app. `List` and `Revoke`
@@ -342,9 +349,9 @@ The design of the library and the reasoning behind it.
 #### Known limits and decisions
 
 - The ADR fallback is not built. A 401 clears the token. See "The bearer client of a native
-  app", list "Differences from ADR 0001".
+  app", the bullet "Differences from ADR 0001, all of them".
 - Two contexts that both rotate one storage revoke the device. See "The bearer client of a
-  native app", paragraph "One context owns the storage".
+  native app", the bullet "One context owns the storage".
 - `rotation` defaults to `'owner'`. Whether a custom storage must state it is open, see "Open
   questions".
 - The Capacitor defaults were verified on 2026-11-18 against the Capacitor and Ionic pages. The
@@ -1648,8 +1655,8 @@ The design of the library and the reasoning behind it.
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a
   maintained headless primitives library beats writing a worse one. Reka UI, the Vue port of
   Radix, is the leading candidate and is evaluated in its own issue, styled with these tokens.
-- Nothing is wired up for this yet. The decision belongs to the issue that needs the first such
-  component.
+- Reka UI is wired up. `GovueDialog` and `GovueSelect` import `reka-ui`. A checkbox and a switch
+  stay hand rolled on native elements.
 
 ## Alternatives considered
 
@@ -1714,7 +1721,9 @@ The design of the library and the reasoning behind it.
 
 - [0001 Device token sessions for native apps](../adr/0001-device-token-sessions.md), accepted:
   the bearer token a native app signs in with, and the CSRF boundary it draws. "Enabling app
-  mode" lists the steps that apply it. One sentence of the record is out of date: the handlers
-  live in `session/devicehttp` and not in `session`. "Token handlers" says so.
+  mode" lists the steps that apply it. Two sentences of the record are out of date. The handlers
+  live in `session/devicehttp` and not in `session`, and "Token handlers" says so. The account
+  package is `account` and not `auth`, and it ends sessions through `ServiceConfig.EndSessions`,
+  not `EndAllSessions`.
 - The other decisions above are recorded here on purpose. One gets its own ADR when it turns out
   to be contested and expensive to reverse, not before.

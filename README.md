@@ -31,7 +31,8 @@ itself.
 
 The design and the reasoning behind it are in [docs/concepts/govue.md](docs/concepts/govue.md).
 A native app, such as a Capacitor app, signs in with a device token. The order of the steps to
-enable that is the section "Enabling app mode" in the same document, and
+enable that is the section
+[Enabling app mode](docs/concepts/govue.md#enabling-app-mode) in the same document, and
 [docs/adr/0001-device-token-sessions.md](docs/adr/0001-device-token-sessions.md) holds the
 decision.
 
