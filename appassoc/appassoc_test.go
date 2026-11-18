@@ -194,6 +194,9 @@ func TestGetHeaders(t *testing.T) {
 		if got := hdr.Get("Cache-Control"); got != CacheControl {
 			t.Errorf("%s: cache control %q", path, got)
 		}
+		if got := hdr.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options %q", path, got)
+		}
 		if got := hdr.Get("Content-Length"); got != strconv.Itoa(rec.Body.Len()) {
 			t.Errorf("%s: content length %q, body %d", path, got, rec.Body.Len())
 		}
@@ -483,6 +486,16 @@ func TestValidation(t *testing.T) {
 			}
 			return out
 		}()}}, false},
+		{"path with percent", app(func(a *AppleApp) { a.Paths = []string{"/a%2Fb"} }), false},
+		{"applinks apps at limit", Config{Apple: AppleConfig{AppLinks: manyApple(20)}}, true},
+		{"too many applinks apps", Config{Apple: AppleConfig{AppLinks: manyApple(21)}}, false},
+		{"android apps at limit", Config{Android: AndroidConfig{Apps: manyAndroid(20)}}, true},
+		{"too many android apps", Config{Android: AndroidConfig{Apps: manyAndroid(21)}}, false},
+		{"webcredentials at limit", Config{Apple: AppleConfig{WebCredentials: manyIDs(20)}}, true},
+		{"duplicate webcredentials", Config{Apple: AppleConfig{WebCredentials: []AppleID{
+			{TeamID: "ABCDE12345", BundleID: "a.b"},
+			{TeamID: "ABCDE12345", BundleID: "a.b"},
+		}}}, false},
 		{"webcredentials bad id", Config{Apple: AppleConfig{WebCredentials: []AppleID{{TeamID: "x", BundleID: "a.b"}}}}, false},
 		{"package one segment", android(func(a *AndroidApp) { a.PackageName = "example" }), false},
 		{"package digit start", android(func(a *AndroidApp) { a.PackageName = "com.1example" }), false},
@@ -526,6 +539,74 @@ func TestValidation(t *testing.T) {
 				t.Fatal("a refused configuration returned handlers")
 			}
 		})
+	}
+}
+
+func manyApple(n int) []AppleApp {
+	out := make([]AppleApp, n)
+	for i := range out {
+		out[i] = AppleApp{
+			AppleID: AppleID{TeamID: "ABCDE12345", BundleID: "com.example.a" + strconv.Itoa(i)},
+			Paths:   []string{"/a"},
+		}
+	}
+	return out
+}
+
+func manyIDs(n int) []AppleID {
+	out := make([]AppleID, n)
+	for i := range out {
+		out[i] = AppleID{TeamID: "ABCDE12345", BundleID: "com.example.a" + strconv.Itoa(i)}
+	}
+	return out
+}
+
+func manyAndroid(n int) []AndroidApp {
+	out := make([]AndroidApp, n)
+	for i := range out {
+		out[i] = AndroidApp{PackageName: "com.example.a" + strconv.Itoa(i), Fingerprints: []string{fpUpper}}
+	}
+	return out
+}
+
+// TestDocumentSizeBoundary pins the cap at 64 KiB with a literal, so a
+// change of the constant fails here: the largest accepted document is just
+// under it and the next path is refused.
+func TestDocumentSizeBoundary(t *testing.T) {
+	const limit = 64 << 10
+	path := "/" + strings.Repeat("a", 255)
+	cfg := func(n int) AppleConfig {
+		var apps []AppleApp
+		for left, i := n, 0; left > 0; i++ {
+			k := min(left, maxPaths)
+			paths := make([]string, k)
+			for j := range paths {
+				paths[j] = path
+			}
+			apps = append(apps, AppleApp{
+				AppleID: AppleID{TeamID: "ABCDE12345", BundleID: "com.example.a" + strconv.Itoa(i)},
+				Paths:   paths,
+			})
+			left -= k
+		}
+		return AppleConfig{AppLinks: apps}
+	}
+	// 20 apps of 100 paths hold about 580 KB, far over the cap.
+	n := 1
+	for ; n <= maxApps*maxPaths; n++ {
+		if _, errs := buildApple(cfg(n)); len(errs) > 0 {
+			break
+		}
+	}
+	if n == 1 || n > maxApps*maxPaths {
+		t.Fatalf("no boundary found, n = %d", n)
+	}
+	body, errs := buildApple(cfg(n - 1))
+	if len(errs) > 0 {
+		t.Fatalf("%d paths refused: %v", n-1, errs)
+	}
+	if len(body) > limit || len(body) < limit-400 {
+		t.Fatalf("largest accepted document is %d bytes, want just under %d", len(body), limit)
 	}
 }
 

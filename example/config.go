@@ -130,7 +130,8 @@ func loadConfig(getenv func(string) string) (config, error) {
 //	APPLE_APP_ID            TeamID.BundleID, turns the Apple file on
 //	APPLE_APP_PATHS         comma separated path patterns the app opens
 //	APPLE_APP_EXCLUDE_PATHS comma separated patterns it does not open
-//	APPLE_WEBCREDENTIALS    true lists the app under webcredentials
+//	APPLE_WEBCREDENTIALS    true lists the app under webcredentials. With no
+//	                        path set it is the only entry, a passkey only file
 //	ANDROID_PACKAGE         application id, turns the Android file on
 //	ANDROID_CERT_SHA256     comma separated SHA-256 certificate fingerprints
 //	ANDROID_LOGIN_CREDS     true adds get_login_creds
@@ -143,12 +144,16 @@ func loadAssoc(l *envconf.Loader) (appassoc.Config, error) {
 			return appassoc.Config{}, errors.New("APPLE_APP_ID: must be TeamID.BundleID")
 		}
 		appleID := appassoc.AppleID{TeamID: team, BundleID: bundle}
-		cfg.Apple.AppLinks = []appassoc.AppleApp{{
-			AppleID:      appleID,
-			Paths:        l.List("APPLE_APP_PATHS"),
-			ExcludePaths: l.List("APPLE_APP_EXCLUDE_PATHS"),
-		}}
-		if l.Bool("APPLE_WEBCREDENTIALS", false) {
+		paths := l.List("APPLE_APP_PATHS")
+		excluded := l.List("APPLE_APP_EXCLUDE_PATHS")
+		webCredentials := l.Bool("APPLE_WEBCREDENTIALS", false)
+		// No paths at all with webcredentials on is the passkey only file:
+		// no applinks entry. Any path or exclusion keeps the applinks entry,
+		// and an entry without a path is then refused by appassoc.New.
+		if len(paths) > 0 || len(excluded) > 0 || !webCredentials {
+			cfg.Apple.AppLinks = []appassoc.AppleApp{{AppleID: appleID, Paths: paths, ExcludePaths: excluded}}
+		}
+		if webCredentials {
 			cfg.Apple.WebCredentials = []appassoc.AppleID{appleID}
 		}
 	}

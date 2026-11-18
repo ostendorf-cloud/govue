@@ -1081,11 +1081,21 @@ The design of the library and the reasoning behind it.
   `GET <path>`, which also matches HEAD, and `<path>` without a method. The second one matters
   behind the catch-all `"/"`. Without it a POST matches the catch-all, which answers 404, and
   ServeMux's own 405 never happens. The handler answers 405 with `Allow: GET, HEAD` for it.
-  A path with a trailing slash matches no pattern, so the catch-all answers 404 and ServeMux
-  never redirects it. A path with a double slash is cleaned by ServeMux with a 307 before any
-  handler runs, like every other path, and no platform fetches such a path.
+  A path with a trailing slash matches no pattern, so it goes to the catch-all and ServeMux
+  never redirects it. What the catch-all answers is the application's choice: in `example/` a
+  bad `Authorization` header gets 401 from the route chain there. A path with a double slash is
+  cleaned by ServeMux with a 307 before any handler runs, like every other path, and no platform
+  fetches such a path.
 - The response is `application/json`, `Cache-Control: public, max-age=3600`, `nosniff`, no
   cookie and no redirect. The handlers read neither a cookie nor an `Authorization` header.
+- The origin `max-age` is not the lever for a correction. Apple's CDN fetches the file within
+  about 24 hours and devices check about weekly. Android 15 and later re-verify in the
+  background, and a change takes up to seven days to reach every device. A wrong path list or
+  certificate therefore stays live for days whatever the header says. The hour only spares the
+  origin a poll.
+- A passkey only product sets `APPLE_APP_ID` and `APPLE_WEBCREDENTIALS=true` in the example
+  with no path. The file then holds `webcredentials` and no `applinks`. In `Config` that is an
+  empty `AppLinks` with a `WebCredentials` list.
 - `example/` mounts the files only when `APPLE_APP_ID` or `ANDROID_PACKAGE` is set, and outside
   the route chain. The rate limiter would count a platform fetcher that shares a few addresses.
   The session middleware answers a malformed `Authorization` header with 401. CORS and CSRF
@@ -1096,12 +1106,30 @@ The design of the library and the reasoning behind it.
 - Passkeys in a native app need the `webcredentials` entry here and the app origin in the relying
   party's allowed origins. The first exists now. The second comes with the passkey step of
   #104, where the origin format is decided.
-- Assumptions: the Apple shape is the `components` format with `appIDs`, which needs a recent
-  iOS. The older `paths` format and `apps: []` are not written. Apple's own page could not be
-  read by the tooling used, so the shape follows the published format from memory. Check it
-  against a real device before a release. The Android shape was read from the Digital Asset Links
-  documentation, which shows `handle_all_urls`. The `get_login_creds` relation is not on that
-  page.
+- Sources checked against Apple and Google documentation:
+  - The Apple shape, `applinks.details[].appIDs` with `components` entries (`/` and `exclude`)
+    and `webcredentials.apps`, is in
+    <https://developer.apple.com/tutorials/data/documentation/xcode/supporting-associated-domains.json>.
+    `components` needs iOS 13 or later, the first matching entry wins, and the file is served
+    over HTTPS without a redirect and without a file extension. The wildcard rules (`*`, `?`,
+    `?*`) are in
+    <https://developer.apple.com/tutorials/data/documentation/bundleresources/applinks/details-swift.dictionary/components-swift.dictionary.json>.
+    The older `paths` format and `apps: []` are not written.
+  - The Android relations `handle_all_urls` and `get_login_creds`, and the statement that
+    Digital Asset Links is required for passkeys, are in
+    <https://developer.android.com/identity/credential-manager/prerequisites>. The file must
+    answer 200 with `application/json`, and a 301 or 302 fails verification:
+    <https://developer.android.com/training/app-links/configure-assetlinks>. Uppercase colon
+    separated fingerprints, the re-verification on Android 15 and later and the seven day delay
+    are in <https://developer.android.com/training/app-links/verify-android-applinks>. Package
+    name rules are in <https://developer.android.com/build/configure-app-module>.
+- Not verified from a primary source:
+  - Apple's 128 KB size limit. Only an archived 2016 page and third party guides name it. The
+    64 KiB cap is this package's own.
+  - The 155 character bundle id cap and the ten uppercase alphanumeric team id. Both are local
+    checks.
+  - How Apple's CDN treats `Cache-Control`. Apple publishes nothing on it.
+  - Behaviour on a real device. No iOS or Android device was used.
 
 ### Component behaviour
 

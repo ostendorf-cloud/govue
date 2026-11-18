@@ -4,12 +4,15 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/ostendorf-cloud/govue/appassoc"
+	"github.com/ostendorf-cloud/govue/logging"
 	"github.com/ostendorf-cloud/govue/middleware"
 )
 
@@ -108,6 +111,57 @@ func TestAssociationFilesAreNeverRedirectedOrSetACookie(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestAndroidLoginCredsFollowsTheSwitch(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		env := assocEnv()
+		if !on {
+			delete(env, "ANDROID_LOGIN_CREDS")
+		}
+		a, _ := newTestAppEnv(t, 1000, env)
+		body := serveExample(t, a, newReq(t, http.MethodGet, appassoc.AndroidPath)).Body.String()
+		if !strings.Contains(body, "common.handle_all_urls") {
+			t.Errorf("login creds %v: handle_all_urls missing: %s", on, body)
+		}
+		if got := strings.Contains(body, "common.get_login_creds"); got != on {
+			t.Errorf("login creds %v: get_login_creds present = %v: %s", on, got, body)
+		}
+	}
+}
+
+// TestWebCredentialsOnlyAppleFile covers the passkey only product: the app
+// id with APPLE_WEBCREDENTIALS and no path gives a file without applinks.
+func TestWebCredentialsOnlyAppleFile(t *testing.T) {
+	env := assocEnv()
+	delete(env, "APPLE_APP_PATHS")
+	a, _ := newTestAppEnv(t, 1000, env)
+	rec := serveExample(t, a, newReq(t, http.MethodGet, appassoc.ApplePath))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc["applinks"]; ok {
+		t.Errorf("applinks present: %s", rec.Body.String())
+	}
+	if _, ok := doc["webcredentials"]; !ok {
+		t.Errorf("webcredentials missing: %s", rec.Body.String())
+	}
+
+	// Without the switch, no path stays an error.
+	env = assocEnv()
+	delete(env, "APPLE_APP_PATHS")
+	delete(env, "APPLE_WEBCREDENTIALS")
+	cfg, err := loadConfig(func(key string) string { return env[key] })
+	if err == nil {
+		_, err = newApp(cfg, logging.New(io.Discard, cfg.logLevel))
+	}
+	if err == nil {
+		t.Error("an app id without a path and without webcredentials must fail")
 	}
 }
 

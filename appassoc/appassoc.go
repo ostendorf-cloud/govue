@@ -52,13 +52,20 @@ const (
 	AndroidPath = "/.well-known/assetlinks.json"
 )
 
-// CacheControl is the Cache-Control value of both files. The files change
-// only with a release of the app, and both platforms keep their own copy, so
-// an hour in a shared cache costs nothing and spares the origin a poll.
+// CacheControl is the Cache-Control value of both files. An hour in a shared
+// cache spares the origin a poll and costs nothing. The origin max-age is not
+// the lever for a correction: Apple's CDN fetches the file within about a
+// day, devices check about weekly, and Android 15 and later re-verify in the
+// background with changes taking up to seven days to reach every device. A
+// changed path list, certificate or app id takes that long whatever this
+// value is.
 const CacheControl = "public, max-age=3600"
 
-// Limits on a configuration. They keep the document far below the 128 KB
-// Apple allows for the Apple file.
+// Limits on a configuration. They are this package's own caps, not rules
+// Apple or Google publish. The 128 KB figure often quoted for the Apple file
+// comes from an archived 2016 page and third party guides, and the 155
+// character bundle id cap of build.go is a local choice too. The document cap
+// of 64 KiB stays well below that figure.
 const (
 	maxApps         = 20
 	maxPaths        = 100
