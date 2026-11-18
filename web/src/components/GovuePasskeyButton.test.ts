@@ -156,6 +156,9 @@ describe('GovuePasskeyButton', () => {
     )
     // Announced once: the live region has it, the button's own text does not.
     expect(screen.getAllByText('Waiting for your passkey')).toHaveLength(1)
+    // And no second text: GovueButton's default loading text is not rendered.
+    expect(screen.queryByText('Working')).not.toBeInTheDocument()
+    expect(button).toHaveAccessibleName('Log in with a passkey')
     // A second click on the disabled button starts nothing.
     await user.click(button)
     expect(browser.get).toHaveBeenCalledTimes(1)

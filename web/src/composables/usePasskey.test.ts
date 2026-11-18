@@ -579,6 +579,79 @@ describe('one ceremony per page', () => {
   })
 })
 
+describe('the signal option and a second conditional login', () => {
+  it('ends the begin request when the caller aborts', async () => {
+    let beginSignal: AbortSignal | undefined
+    const { passkey } = setup({
+      ...happy,
+      'POST /account/passkeys/login/begin': (_body, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          beginSignal = init?.signal ?? undefined
+          init?.signal?.addEventListener('abort', () => {
+            reject(domError('AbortError'))
+          })
+        }),
+    })
+    const caller = new AbortController()
+
+    const waiting = passkey.login({ conditional: true, signal: caller.signal })
+    await vi.waitFor(() => expect(beginSignal).toBeDefined())
+    caller.abort()
+
+    await expect(waiting).resolves.toBeUndefined()
+    expect(beginSignal?.aborted).toBe(true)
+    expect(stubs.get).not.toHaveBeenCalled()
+  })
+
+  it('ends the browser step when the caller aborts', async () => {
+    let seen: AbortSignal | undefined
+    stubs.get.mockImplementationOnce(
+      (args: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          seen = args.signal
+          args.signal.addEventListener('abort', () => {
+            reject(domError('AbortError'))
+          })
+        }),
+    )
+    const { passkey, fetchMock } = setup(happy)
+    const caller = new AbortController()
+
+    const waiting = passkey.login({ conditional: true, signal: caller.signal })
+    await vi.waitFor(() => expect(seen).toBeDefined())
+    caller.abort()
+
+    await expect(waiting).resolves.toBeUndefined()
+    expect(seen?.aborted).toBe(true)
+    expect(fetchMock.mock.calls.some(([url]) => (url as string).endsWith('/login/finish'))).toBe(
+      false,
+    )
+  })
+
+  it('lets a second conditional login replace the first', async () => {
+    let first: AbortSignal | undefined
+    stubs.get.mockImplementationOnce(
+      (args: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          first = args.signal
+          args.signal.addEventListener('abort', () => {
+            reject(domError('AbortError'))
+          })
+        }),
+    )
+    const { passkey, client } = setup(happy)
+    const other = usePasskey({ client })
+
+    const older = passkey.login({ conditional: true })
+    await vi.waitFor(() => expect(first).toBeDefined())
+    const newer = await other.login({ conditional: true })
+
+    expect(first?.aborted).toBe(true)
+    await expect(older).resolves.toBeUndefined()
+    expect(newer).toEqual({ login: 'person@example.com' })
+  })
+})
+
 describe('a passkey with a device token client', () => {
   it('refuses both ceremonies without a request', async () => {
     const fetchMock = vi.fn<typeof globalThis.fetch>()

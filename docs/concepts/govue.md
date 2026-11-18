@@ -1205,7 +1205,12 @@ The design of the library and the reasoning behind it.
   while it waits aborts it, its begin request included, and it resolves with `undefined` too. The
   product restarts it when it wants it again. A conditional login that has already returned from
   the browser and waits for its finish answer is not stopped by a modal ceremony that starts
-  then. That window is short, and the loser answers `invalid_credentials`.
+  then: the abort reaches the browser step and the begin request, and the finish request has no
+  signal. That window is short. The server takes a challenge and clears the cookie at the first
+  finish and a new begin replaces the cookie, so one of the two finishes can fail. A failing
+  modal ceremony rejects with `invalid_passkey` (enrolment) or `invalid_credentials` (login). A
+  failing conditional login resolves with `undefined`, because its signal is aborted by then, and
+  one that succeeds resolves with the login. The product restarts it when it wants it again.
 - A conditional begin made at page load expires with the challenge lifetime of the server, 300
   seconds by default. A person who picks a passkey from the autofill UI later gets
   `invalid_credentials` from the finish. The product restarts the conditional login, for

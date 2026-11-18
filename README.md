@@ -16,7 +16,8 @@ Two halves, one repository, one version:
   Every package is importable on its own.
 - A Vue package with components and a design token contract, so an application themes itself by
   filling that contract instead of inventing a palette. It carries the account forms
-  (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`) and the bearer client of a native
+  (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`), the passkey button
+  (`GovuePasskeyButton`, `usePasskey`, `isBearerClient`) and the bearer client of a native
   app (`createClient({ auth: { mode: 'bearer' } })`).
 
 It is a library, not a framework, and the difference is the direction of the calls. A framework
