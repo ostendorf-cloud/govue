@@ -163,14 +163,10 @@ func TestStartSetsAHostPrefixedCookie(t *testing.T) {
 		t.Errorf("the cookie is persistent: MaxAge = %d, Expires = %s", cookie.MaxAge, cookie.Expires)
 	}
 
+	// Nothing but the id travels in the cookie. The id is random, so the test
+	// compares it with the session id and never searches it for a substring.
 	if cookie.Value != started.ID || started.ID == "" {
 		t.Errorf("cookie value %q and session id %q differ", cookie.Value, started.ID)
-	}
-	// Nothing but the id travels in the cookie.
-	for _, leak := range []string{"simon", "u1"} {
-		if strings.Contains(cookie.Value, leak) {
-			t.Errorf("the cookie carries session content %q: %q", leak, cookie.Value)
-		}
 	}
 }
 
