@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-17
 ---
 
@@ -41,18 +41,26 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 
 ### Token and record
 
-- The token is a prefix, 32 random bytes base64url encoded, and a short checksum.
-- The product configures the prefix for secret scanning. The default is neutral and does not
-  name the library, like the default cookie name.
-- The checksum rejects a malformed token before any store lookup.
-- Fake example: `Authorization: Bearer example_AAAAexampleexampleexampleexampleexampleAAAA_x1y2`.
+- The token is a prefix, 32 random bytes base64url encoded, and a checksum, joined by
+  underscores.
+- The checksum is the CRC-32 of prefix and random part, six base64url characters. It rejects a
+  malformed token before any store lookup and is no security control.
+- The default prefix is `device`. It is neutral and does not name the library, like the default
+  cookie name. A product sets its own, so secret scanning can find a leaked token of exactly
+  that product.
+- Fake example: `Authorization: Bearer example_AAAAexampleexampleexampleexampleexampleAAAA_x1y2z3`.
 - The token travels only in the `Authorization` header. Never in a cookie, a query parameter, a
   form field or a URL.
 - The store holds plain `SHA-256(token)`. 256 random bits need no salt, no slow KDF and no HMAC.
 - Record: `DeviceSession{ID, Subject, Name, CreatedAt, LastSeen, ExpiresAt, CurrentHash,
-  PendingHash, PendingNonce, Retired}`.
-- `Retired` holds at most the last four retired hashes, each with its grace end. The oldest is
-  dropped first.
+  PendingHash, PendingNonce, PendingAt, RotatedAt, Retired}`.
+- `PendingAt` is when the pending token of the current nonce was first issued. `RotatedAt` is when
+  the current token became current. The rotate timeout and the minimum interval count from them.
+- `Retired` holds two lists, each entry with its grace end and its kind:
+  - Retired current hashes, at most four: the tokens a holder had and rotated away from.
+  - Retired pending hashes, at most two: pending tokens a later rotation replaced.
+- Each list drops its own oldest entry first. Pending replacements therefore never push a retired
+  current hash out.
 - `ID` is a random handle for listing and revoking, never a credential. `Name` is a bounded
   display label, never trusted.
 
@@ -68,8 +76,17 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 - Touch updates only `LastSeen`. No update recreates a missing record.
 - Revoke by id takes the subject in the same call and removes nothing of another subject.
 - Delete by subject always wins over a concurrent touch, rotate or confirm.
-- Each subject has a device cap. Issuing past it evicts that subject's least recently seen
-  device, never another subject's.
+- Delete by subject cannot reach a record created after it. The issue therefore carries the time
+  of its credential check. The store remembers the time of each delete by subject for at least
+  five minutes, and create refuses an issue whose check is not later. The manager refuses a
+  check older than five minutes. A password change that lands between the check of the old
+  password and the issue leaves no device behind.
+- Those times come from the replicas' clocks, so a shared store needs synchronised clocks.
+- Each subject has a device cap, ten by default. Issuing past it evicts that subject's least
+  recently seen device, never another subject's, and logs the device id and the subject.
+- Whoever has the password can use the cap to sign the account's apps out. A password change,
+  which ends every session, is the remedy.
+- No store error carries a token hash or a nonce.
 - A full memory store refuses to issue for everyone. That global lever is acceptable for a
   single replica memory store. Open sign up of #104 needs its own bound before it meets it.
 - A conformance suite, like `account/accounttest` of #104, runs these rules and their races
@@ -98,8 +115,9 @@ reuses the reasoning that already rejected a signed cookie for the web session.
   - Minimum interval, default one hour: the least time between two confirmed rotations of one
     device. Issuing the token counts as the first, so the first rotation follows one interval
     after issue.
-  - Rotate timeout, default 30 seconds: how long after issue a same nonce retry may overwrite
-    the pending token.
+  - Rotate timeout, default 30 seconds: how long after the first issue of a nonce's pending token
+    a same nonce retry may overwrite it. A retry does not restart it, so a holder of the nonce
+    cannot keep the window open.
 
 | State | Token presented | Request | Rotate |
 | --- | --- | --- | --- |
@@ -118,8 +136,9 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 - Rare edge: the server processes the original rotate more than 30 seconds after the retry's
   pending token was issued. It retires that token, and the app's first use revokes the device.
   This is acceptable because the client timeout is below the rotate timeout.
-- The minimum interval keeps app launches from draining `Retired`. Without pending replacements
-  a retired token stays detectable for at least four intervals.
+- The minimum interval keeps app launches from draining the retired current hashes. A retired
+  current token stays detectable for at least four intervals. Pending replacements only fill the
+  retired pending list and cannot push it out.
 
 ### Client contract
 
@@ -215,10 +234,10 @@ reuses the reasoning that already rejected a signed cookie for the web session.
   secure storage protects it at rest only.
 - Bad: the token endpoint is a named exception to the origin check. It stays one route and must
   never set a cookie.
-- Bad: reuse detection holds only while the stolen token is among the last four retired hashes.
-  After that it is a plain 401 without a theft signal.
-- Bad: against an informed thief who holds the current token, detection is best effort. Pending
-  replacements also fill `Retired`, and the minimum interval does not bound them.
+- Bad: reuse detection holds only while the stolen token is among the last four retired current
+  hashes. After that it is a plain 401 without a theft signal.
+- Bad: a replaced pending token is detectable only while it is among the last two retired pending
+  hashes. The app never relies on one, so this bounds the theft signal, not the fallback.
 - Bad: web cookie session ids are still stored in the clear. Hashing them too is defence in depth
   and tracked in a separate issue.
 
@@ -226,6 +245,8 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 
 - A reviewer for security boundaries signs this ADR off before any code pull request of #117
   opens. Status moves to `accepted` then.
+- The security sign off came in review round 4 of pull request #127, which approved the ADR.
+  The session step of #117 then settled the open items below and moved the status to `accepted`.
 - The conformance suite, the `csrf` exemption tests and the `example/` contract test pin the
   rules above.
 
@@ -269,9 +290,12 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 
 - Stolen and used: valid until either holder rotates and confirms. The other holder's token is
   then retired, and its use after the grace revokes the device. This holds while the stolen
-  token is among the last four retired hashes.
+  token is among the last four retired current hashes.
 - Stolen and kept passive: the same, and the minimum interval keeps it detectable for at least
-  four intervals without pending replacements.
+  four intervals.
+- A thief who holds the current token and replaces pending tokens over and over: the
+  replacements fill only the retired pending list. The app's retired token stays, and its next
+  use revokes the device.
 - A thief who replaces the app's pending token: the app falls back to its current token and
   rotates again, which retires the thief's pending token. Its next use revokes the device.
 - A thief who knows the nonce can overwrite silently only within the rotate timeout. The app's
@@ -281,16 +305,21 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 - Stolen from a store dump: only hashes, which are not usable as tokens.
 - Leaked into a log or a URL: the token never travels in a URL, and no log carries it.
 
+### Settled in the session step
+
+- Two retired lists, four current and two pending, instead of one list of four.
+- The rotate timeout counts from the first issue of a nonce's pending token.
+- Default prefix `device`, a CRC-32 checksum of six characters, and a cap of ten devices per
+  account.
+- An issue carries the time of its credential check, and the store refuses one that is not
+  later than the account's last end of all sessions.
+
 ### Open questions
 
-- The default prefix string and the default device cap. Both are set in the session step.
 - Which `Sec-Fetch-Site` and `Origin` values the iOS and Android webviews send from the bundled
   origins. The exemption holds either way.
 - Whether the native HTTP plugin of Capacitor bypasses CORS when a product enables it.
 - Whether passkeys work inside a Capacitor webview.
-- For the code pull request, owner decides: keep retired current hashes and retired pending
-  hashes in two bounded lists, for example four and two. Pending replacements could then not push
-  the app's retired token out. The fallback never relies on a retired pending entry.
 
 ### Related
 

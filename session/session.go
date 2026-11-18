@@ -406,7 +406,7 @@ func (m *Manager) EndAll(ctx context.Context, subject string) error {
 		problems = append(problems, fmt.Errorf("session: delete the account's sessions: %w", err))
 	}
 	if m.cfg.Devices.Store != nil {
-		if err := m.cfg.Devices.Store.DeleteSubject(ctx, subject); err != nil {
+		if err := m.cfg.Devices.Store.DeleteSubject(ctx, subject, m.cfg.Now().UTC()); err != nil {
 			problems = append(problems, fmt.Errorf("session: delete the account's device sessions: %w", err))
 		}
 	}

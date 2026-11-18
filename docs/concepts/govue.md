@@ -277,8 +277,18 @@ The design of the library and the reasoning behind it.
   Later steps of #117 add them.
 - The token is a prefix, 32 random bytes in base64url and a CRC-32 checksum. The store keeps only
   its SHA-256. A malformed token never reaches the store.
+- The default prefix `device` is neutral. A product sets its own, so secret scanning finds a
+  leaked token of exactly that product.
 - `DeviceStore` is a separate interface, so no `Store` implementation breaks. Every method is
   atomic on one record, and rotation is a conditional swap, never a read followed by a write.
+- Retired hashes are two lists: four retired current hashes and two replaced pending ones.
+  Rotations by a thief can fill only the second, so the app's old token still reveals the theft.
+- `IssueDevice` takes the time of the credential check. An issue whose check is five minutes old,
+  or not later than the account's last `EndAll`, is refused. A password change that lands between
+  the check and the issue leaves no device behind. A shared store needs synchronised clocks for
+  this.
+- The cap of ten devices per account ends the least recently seen one and logs it. Whoever has
+  the password can use that to sign the account's apps out. A password change is the remedy.
 - `MemoryDeviceStore` is for one replica. A full one refuses to issue for everyone and never
   evicts another account's device. A restart signs every app out, so a product with apps writes a
   shared store.

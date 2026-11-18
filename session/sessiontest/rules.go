@@ -125,7 +125,7 @@ func (f *fixture) set(d time.Duration) { f.clock.set(f.start.Add(d)) }
 
 func (f *fixture) issue(subject string) (string, session.Device) {
 	f.t.Helper()
-	token, device, err := f.manager.IssueDevice(context.Background(), subject, "phone")
+	token, device, err := f.manager.IssueDevice(context.Background(), subject, "phone", f.clock.Now())
 	if err != nil {
 		f.t.Fatalf("IssueDevice: %v", err)
 	}
@@ -211,18 +211,25 @@ func leaks(text, token string) bool {
 
 func rulesIssueStoresOnlyTheHash(t *testing.T, newStore NewStore) {
 	f := newFixture(t, newStore, nil)
-	token, device := f.issue("u1")
+	// The subject holds characters outside base64url, so it can never be a
+	// piece of a token by chance.
+	const subject = "user@1"
+	token, device := f.issue(subject)
 
 	d, slot := f.record(token)
 	if slot != session.SlotCurrent || d.CurrentHash != sha256.Sum256([]byte(token)) {
 		t.Fatalf("slot %d, the current hash is not SHA-256 of the token", slot)
 	}
+	// What counts is that no stored field carries the token or its random
+	// part, which is the secret. The random part is 43 characters, so a
+	// match by chance is out of reach.
+	random := token[len(session.DefaultDeviceTokenPrefix)+1:][:43]
 	for field, value := range map[string]string{"ID": d.ID, "Subject": d.Subject, "Name": d.Name, "PendingNonce": d.PendingNonce} {
-		if value != "" && (strings.Contains(value, token) || strings.Contains(token, value)) {
-			t.Errorf("%s shares text with the token", field)
+		if strings.Contains(value, token) || strings.Contains(value, random) {
+			t.Errorf("%s carries the token", field)
 		}
 	}
-	if device.ID != d.ID || device.Subject != "u1" || device.Name != "phone" ||
+	if device.ID != d.ID || device.Subject != subject || device.Name != "phone" ||
 		!device.CreatedAt.Equal(f.start) || !device.ExpiresAt.Equal(f.start.Add(session.DefaultDeviceLifetime)) {
 		t.Errorf("device = %+v", device)
 	}
@@ -282,7 +289,8 @@ func rulesRotationIsPendingUntilFirstUse(t *testing.T, newStore NewStore) {
 		t.Errorf("RotatedAt = %s, want the confirm time", d.RotatedAt)
 	}
 	wantGraceEnd := f.start.Add(confirmAt + session.DefaultDeviceGrace)
-	if len(d.Retired) != 1 || d.Retired[0].Hash != sha256.Sum256([]byte(token)) || !d.Retired[0].GraceEnd.Equal(wantGraceEnd) {
+	if len(d.Retired) != 1 || d.Retired[0].Hash != sha256.Sum256([]byte(token)) ||
+		!d.Retired[0].GraceEnd.Equal(wantGraceEnd) || d.Retired[0].Kind != session.RetiredCurrent {
 		t.Errorf("retired = %+v, want the old token with a grace end of %s", d.Retired, wantGraceEnd)
 	}
 }
@@ -421,7 +429,8 @@ func rulesSameNonceAtTimeoutRetires(t *testing.T, newStore NewStore) {
 	second := f.mustRotate(token, "n1")
 	d, _ := f.record(token)
 	wantEnd := f.start.Add(at + session.DefaultDeviceRotateTimeout)
-	if len(d.Retired) != 1 || d.Retired[0].Hash != sha256.Sum256([]byte(first)) || !d.Retired[0].GraceEnd.Equal(wantEnd) {
+	if len(d.Retired) != 1 || d.Retired[0].Hash != sha256.Sum256([]byte(first)) ||
+		!d.Retired[0].GraceEnd.Equal(wantEnd) || d.Retired[0].Kind != session.RetiredPending {
 		t.Fatalf("retired = %+v, want the first pending token without grace", d.Retired)
 	}
 
@@ -653,6 +662,90 @@ func rulesCapEvictsOnlyTheSubject(t *testing.T, newStore NewStore) {
 	f.mustAuth(b1, "another subject's device")
 }
 
+// rulesRotationsCannotFlushTheRetiredCurrent is the informed thief: it holds
+// the app's token, rotates and confirms, then replaces pending tokens over and
+// over to push the app's retired token out. The replaced pending hashes have
+// their own list, so the app's next request still reveals the theft.
+func rulesRotationsCannotFlushTheRetiredCurrent(t *testing.T, newStore NewStore) {
+	f := newFixture(t, newStore, nil)
+	app, _ := f.issue("u1")
+	f.set(session.DefaultDeviceMinRotateInterval)
+	thief := f.mustRotate(app, "t0")
+	f.mustAuth(thief, "the thief's pending token")
+
+	f.set(2 * session.DefaultDeviceMinRotateInterval)
+	for i := range session.MaxRetiredCurrent + session.MaxRetiredPending + 1 {
+		f.mustRotate(thief, fmt.Sprintf("t%d", i+1))
+	}
+	d, _ := f.record(thief)
+	pendings := 0
+	for _, r := range d.Retired {
+		if r.Kind == session.RetiredPending {
+			pendings++
+		}
+	}
+	if pendings > session.MaxRetiredPending {
+		t.Errorf("%d retired pending hashes, want at most %d", pendings, session.MaxRetiredPending)
+	}
+
+	f.mustFail(app, "the app's retired token after the thief's rotations")
+	f.mustFail(thief, "the thief's token after the app revealed the reuse")
+	f.wantGone(thief, "a device revoked for reuse")
+}
+
+// rulesIssueAfterEndAllRefused is a password change that lands between the
+// check of the old password and the issue of the device.
+func rulesIssueAfterEndAllRefused(t *testing.T, newStore NewStore) {
+	f := newFixture(t, newStore, nil)
+	f.set(time.Minute)
+	checked := f.clock.Now()
+
+	f.set(2 * time.Minute)
+	endedAt := f.clock.Now()
+	if err := f.manager.EndAll(context.Background(), "u1"); err != nil {
+		t.Fatalf("EndAll: %v", err)
+	}
+	// The issue itself runs after EndAll. Only the time of the credential
+	// check can tell that the check came first.
+	f.set(2*time.Minute + 30*time.Second)
+	for name, at := range map[string]time.Time{"before EndAll": checked, "at EndAll": endedAt} {
+		token, _, err := f.manager.IssueDevice(context.Background(), "u1", "phone", at)
+		if !errors.Is(err, session.ErrStaleAuthentication) || token != "" {
+			t.Errorf("IssueDevice with a credential check %s = %v, want ErrStaleAuthentication", name, err)
+		}
+	}
+	if list, err := f.manager.ListDevices(context.Background(), "u1"); err != nil || len(list) != 0 {
+		t.Errorf("devices after a refused issue = %+v, %v", list, err)
+	}
+
+	f.set(3 * time.Minute)
+	token, _ := f.issue("u1")
+	f.mustAuth(token, "a device whose credential check followed EndAll")
+}
+
+func rulesIssueRefusesAnOldAuthentication(t *testing.T, newStore NewStore) {
+	f := newFixture(t, newStore, nil)
+	f.set(time.Hour)
+	now := f.clock.Now()
+
+	issue := func(at time.Time) error {
+		_, _, err := f.manager.IssueDevice(context.Background(), "u1", "phone", at)
+		return err
+	}
+	if err := issue(now.Add(-session.MaxDeviceIssueDelay)); !errors.Is(err, session.ErrStaleAuthentication) {
+		t.Errorf("a credential check one issue delay ago = %v, want ErrStaleAuthentication", err)
+	}
+	if err := issue(time.Time{}); err == nil {
+		t.Error("a zero credential check time was accepted")
+	}
+	if err := issue(now.Add(time.Nanosecond)); err == nil {
+		t.Error("a credential check in the future was accepted")
+	}
+	if err := issue(now.Add(-session.MaxDeviceIssueDelay + time.Nanosecond)); err != nil {
+		t.Errorf("a credential check inside the issue delay = %v", err)
+	}
+}
+
 // race runs fn on n goroutines at once and waits for all of them.
 func race(n int, fn func(i int)) {
 	var wg sync.WaitGroup
@@ -789,6 +882,88 @@ func raceReuseRevokesUnderConcurrency(t *testing.T, newStore NewStore) {
 		f.mustFail(current, "the current token after concurrent reuse")
 		if list, err := f.manager.ListDevices(context.Background(), "u1"); err != nil || len(list) != 0 {
 			t.Fatalf("devices after reuse = %+v, %v, want none", list, err)
+		}
+	}
+}
+
+// raceRevokeBeatsRotateAndConfirm is the owner revoking a device while its
+// tokens are confirmed and rotated. Once all calls return, the device is gone
+// and no token of it authenticates.
+func raceRevokeBeatsRotateAndConfirm(t *testing.T, newStore NewStore) {
+	const rounds, callers = 10, 9
+	for range rounds {
+		f := newFixture(t, newStore, nil)
+		token, device := f.issue("u1")
+		f.set(session.DefaultDeviceMinRotateInterval)
+		pending := f.mustRotate(token, "n0")
+		f.set(session.DefaultDeviceMinRotateInterval + time.Second)
+
+		var mu sync.Mutex
+		all := []string{token, pending}
+		race(callers, func(i int) {
+			switch {
+			case i == 0:
+				err := f.manager.RevokeDevice(context.Background(), "u1", device.ID)
+				if err != nil && !errors.Is(err, session.ErrNotFound) {
+					t.Errorf("RevokeDevice: %v", err)
+				}
+			case i%3 == 0:
+				_, _ = f.manager.AuthenticateDevice(context.Background(), pending)
+			case i%3 == 1:
+				next, _, err := f.manager.RotateDevice(context.Background(), token, fmt.Sprintf("n%d", i))
+				if err == nil {
+					mu.Lock()
+					all = append(all, next)
+					mu.Unlock()
+				}
+			default:
+				_, _ = f.manager.AuthenticateDevice(context.Background(), token)
+			}
+		})
+
+		for _, x := range all {
+			f.mustFail(x, "a token of a revoked device")
+		}
+		if list, err := f.manager.ListDevices(context.Background(), "u1"); err != nil || len(list) != 0 {
+			t.Fatalf("devices after a revoke = %+v, %v, want none", list, err)
+		}
+	}
+}
+
+// raceConfirmAgainstRotation is the first use of a pending token racing a
+// rotation with the current token that would retire it. Never both win, and
+// when the rotation wins, the confirm reveals a second holder.
+func raceConfirmAgainstRotation(t *testing.T, newStore NewStore) {
+	const rounds = 20
+	for range rounds {
+		f := newFixture(t, newStore, nil)
+		current, _ := f.issue("u1")
+		f.set(session.DefaultDeviceMinRotateInterval)
+		first := f.mustRotate(current, "thief")
+		f.set(session.DefaultDeviceMinRotateInterval + time.Second)
+
+		var confirmErr, rotateErr error
+		var second string
+		f.barrier.arm(2)
+		race(2, func(i int) {
+			if i == 0 {
+				_, confirmErr = f.manager.AuthenticateDevice(context.Background(), first)
+				return
+			}
+			second, _, rotateErr = f.manager.RotateDevice(context.Background(), current, "app")
+		})
+
+		switch {
+		case confirmErr == nil && rotateErr == nil:
+			t.Fatal("the confirm and the rotation both won")
+		case errors.Is(confirmErr, session.ErrDeviceToken):
+			for _, x := range []string{current, first, second} {
+				if x != "" {
+					f.mustFail(x, "a token of a device revoked for reuse")
+				}
+			}
+		case confirmErr != nil:
+			t.Fatalf("confirm = %v", confirmErr)
 		}
 	}
 }

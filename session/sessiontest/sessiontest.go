@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,14 +62,19 @@ func DeviceStore(t *testing.T, newStore NewStore) {
 		{"store/SwapKeepsEverythingElse", storeSwapKeepsEverythingElse},
 		{"store/SwapForgetsAnOverwrittenPendingHash", storeSwapForgetsOverwrittenPending},
 		{"store/RetiredIsBoundedOldestFirst", storeRetiredIsBounded},
+		{"store/RetiredListsAreCutApart", storeRetiredListsAreCutApart},
+		{"store/SwapRefusesAnUnknownKind", storeSwapRefusesAnUnknownKind},
 		{"store/RevokeChecksTheSubject", storeRevokeChecksTheSubject},
 		{"store/DeleteSubject", storeDeleteSubject},
+		{"store/CreateRefusesAuthenticationBeforeDeleteSubject", storeCreateRefusesStaleAuthentication},
+		{"store/CreateReportsEvicted", storeCreateReportsEvicted},
 		{"store/ListReturnsOnlyTheSubject", storeListReturnsOnlyTheSubject},
 		{"store/NoSharedReferences", storeNoSharedReferences},
 
 		// The store operations racing each other.
 		{"race/ConcurrentSwapsOneWins", raceConcurrentSwapsOneWins},
 		{"race/DeleteSubjectWins", raceDeleteSubjectWins},
+		{"race/DeleteSubjectBeatsAStaleCreate", raceDeleteSubjectBeatsStaleCreate},
 		{"race/ConcurrentCreatesKeepTheCap", raceConcurrentCreatesKeepTheCap},
 
 		// The rules of the manager on top of the store.
@@ -95,6 +101,9 @@ func DeviceStore(t *testing.T, newStore NewStore) {
 		{"rules/RevokeDeviceRefusesAnotherSubject", rulesRevokeDeviceRefusesAnotherSubject},
 		{"rules/EndAllCoversDevices", rulesEndAllCoversDevices},
 		{"rules/CapEvictsOnlyTheSubject", rulesCapEvictsOnlyTheSubject},
+		{"rules/RotationsCannotFlushTheRetiredCurrent", rulesRotationsCannotFlushTheRetiredCurrent},
+		{"rules/IssueAfterEndAllRefused", rulesIssueAfterEndAllRefused},
+		{"rules/IssueRefusesAnOldAuthentication", rulesIssueRefusesAnOldAuthentication},
 
 		// The rules racing each other through the manager.
 		{"race/ConcurrentRotationsOneWins", raceConcurrentRotationsOneWins},
@@ -102,6 +111,8 @@ func DeviceStore(t *testing.T, newStore NewStore) {
 		{"race/SameNonceRetriesOneWins", raceSameNonceRetriesOneWins},
 		{"race/ReuseRevokesUnderConcurrency", raceReuseRevokesUnderConcurrency},
 		{"race/EndAllBeatsRotation", raceEndAllBeatsRotation},
+		{"race/RevokeBeatsRotateAndConfirm", raceRevokeBeatsRotateAndConfirm},
+		{"race/ConfirmAgainstRotation", raceConfirmAgainstRotation},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) { test.run(t, newStore) })
@@ -131,11 +142,23 @@ func record(id, subject string, at time.Time) session.DeviceSession {
 	}
 }
 
-func create(t *testing.T, store session.DeviceStore, d session.DeviceSession, maxPerSubject int) {
+// create inserts a record whose credential check happened at its creation.
+func create(t *testing.T, store session.DeviceStore, d session.DeviceSession, maxPerSubject int) []string {
 	t.Helper()
-	if err := store.Create(context.Background(), d, maxPerSubject); err != nil {
+	evicted, err := store.Create(context.Background(), d, maxPerSubject, d.CreatedAt)
+	if err != nil {
 		t.Fatalf("Create %s: %v", d.ID, err)
 	}
+	return evicted
+}
+
+// retiredCurrent and retiredPending build the two kinds of retired entries.
+func retiredCurrent(h session.TokenHash, graceEnd time.Time) session.RetiredHash {
+	return session.RetiredHash{Hash: h, GraceEnd: graceEnd, Kind: session.RetiredCurrent}
+}
+
+func retiredPending(h session.TokenHash, at time.Time) session.RetiredHash {
+	return session.RetiredHash{Hash: h, GraceEnd: at, Kind: session.RetiredPending}
 }
 
 func lookup(t *testing.T, store session.DeviceStore, h session.TokenHash) (session.DeviceSession, session.DeviceSlot) {
@@ -193,7 +216,7 @@ func storeLookupMatchesEverySlot(t *testing.T, newStore NewStore) {
 
 	confirmed := session.DeviceState{CurrentHash: pending, RotatedAt: at.Add(time.Minute)}
 	graceEnd := at.Add(6 * time.Minute)
-	swap(t, store, d.ID, withPending, confirmed, session.RetiredHash{Hash: d.CurrentHash, GraceEnd: graceEnd})
+	swap(t, store, d.ID, withPending, confirmed, retiredCurrent(d.CurrentHash, graceEnd))
 
 	got, slot := lookup(t, store, d.CurrentHash)
 	if slot != session.SlotRetired || got.ID != "d1" {
@@ -239,13 +262,13 @@ func storeCreateRefusesDuplicates(t *testing.T, newStore NewStore) {
 
 	sameID := record("d1", "u2", base())
 	sameID.CurrentHash = hashOf("other")
-	if err := store.Create(context.Background(), sameID, 10); !errors.Is(err, session.ErrDeviceConflict) {
+	if _, err := store.Create(context.Background(), sameID, 10, sameID.CreatedAt); !errors.Is(err, session.ErrDeviceConflict) {
 		t.Errorf("Create with a taken id = %v, want ErrDeviceConflict", err)
 	}
 
 	sameHash := record("d2", "u2", base())
 	sameHash.CurrentHash = d.CurrentHash
-	if err := store.Create(context.Background(), sameHash, 10); !errors.Is(err, session.ErrDeviceConflict) {
+	if _, err := store.Create(context.Background(), sameHash, 10, sameHash.CreatedAt); !errors.Is(err, session.ErrDeviceConflict) {
 		t.Errorf("Create with a taken hash = %v, want ErrDeviceConflict", err)
 	}
 
@@ -342,7 +365,7 @@ func storeSwapIsConditional(t *testing.T, newStore NewStore) {
 		"nonce":   {CurrentHash: d.CurrentHash, PendingHash: d.PendingHash, PendingNonce: "n2"},
 	}
 	for field, expect := range wrong {
-		err := store.Swap(context.Background(), "d1", expect, next, []session.RetiredHash{{Hash: d.CurrentHash, GraceEnd: at}})
+		err := store.Swap(context.Background(), "d1", expect, next, []session.RetiredHash{retiredCurrent(d.CurrentHash, at)})
 		if !errors.Is(err, session.ErrDeviceConflict) {
 			t.Errorf("Swap with a stale %s = %v, want ErrDeviceConflict", field, err)
 		}
@@ -359,7 +382,7 @@ func storeSwapNeverRecreates(t *testing.T, newStore NewStore) {
 	store := newStore(t)
 	d := record("d1", "u1", base())
 	create(t, store, d, 10)
-	if err := store.DeleteSubject(context.Background(), "u1"); err != nil {
+	if err := store.DeleteSubject(context.Background(), "u1", base()); err != nil {
 		t.Fatalf("DeleteSubject: %v", err)
 	}
 
@@ -423,29 +446,143 @@ func storeRetiredIsBounded(t *testing.T, newStore NewStore) {
 
 	state := d.DeviceState
 	retiredHashes := []session.TokenHash{}
-	for i := range session.MaxRetiredHashes + 1 {
+	for i := range session.MaxRetiredCurrent + 1 {
 		next := session.DeviceState{CurrentHash: hashOf(fmt.Sprintf("current-%d", i)), RotatedAt: at}
-		retired := session.RetiredHash{Hash: state.CurrentHash, GraceEnd: at.Add(time.Duration(i) * time.Minute)}
-		swap(t, store, d.ID, state, next, retired)
+		swap(t, store, d.ID, state, next, retiredCurrent(state.CurrentHash, at.Add(time.Duration(i)*time.Minute)))
 		retiredHashes = append(retiredHashes, state.CurrentHash)
 		state = next
 	}
 
 	got, _ := lookup(t, store, state.CurrentHash)
-	if len(got.Retired) != session.MaxRetiredHashes {
-		t.Fatalf("retired = %d entries, want %d", len(got.Retired), session.MaxRetiredHashes)
+	if len(got.Retired) != session.MaxRetiredCurrent {
+		t.Fatalf("retired = %d entries, want %d", len(got.Retired), session.MaxRetiredCurrent)
 	}
 	// The oldest is dropped first, and the rest stay in order.
 	wantNotFound(t, store, retiredHashes[0], "the oldest retired hash")
 	for i, entry := range got.Retired {
-		if entry.Hash != retiredHashes[i+1] {
-			t.Errorf("retired[%d] is not the %d. retired hash", i, i+2)
+		if entry.Hash != retiredHashes[i+1] || entry.Kind != session.RetiredCurrent {
+			t.Errorf("retired[%d] is not the %d. retired current hash", i, i+2)
 		}
 	}
 	for _, h := range retiredHashes[1:] {
 		if _, slot := lookup(t, store, h); slot != session.SlotRetired {
 			t.Errorf("a kept retired hash: slot %d", slot)
 		}
+	}
+}
+
+// storeRetiredListsAreCutApart pins the two lists: replaced pending hashes
+// never push a retired current hash out, and each list drops its own oldest.
+func storeRetiredListsAreCutApart(t *testing.T, newStore NewStore) {
+	store := newStore(t)
+	at := base()
+	d := record("d1", "u1", at)
+	create(t, store, d, 10)
+
+	// One confirmed rotation retires the current hash the app held.
+	pending := d.DeviceState
+	pending.PendingHash = hashOf("p0")
+	pending.PendingNonce = "n0"
+	swap(t, store, d.ID, d.DeviceState, pending)
+	state := session.DeviceState{CurrentHash: pending.PendingHash, RotatedAt: at}
+	swap(t, store, d.ID, pending, state, retiredCurrent(d.CurrentHash, at.Add(time.Minute)))
+
+	// Many replaced pending tokens follow.
+	replaced := []session.TokenHash{}
+	for i := range session.MaxRetiredPending + 3 {
+		next := state
+		next.PendingHash = hashOf(fmt.Sprintf("p%d", i+1))
+		next.PendingNonce = fmt.Sprintf("n%d", i+1)
+		var retire []session.RetiredHash
+		if !state.PendingHash.IsZero() {
+			retire = append(retire, retiredPending(state.PendingHash, at))
+			replaced = append(replaced, state.PendingHash)
+		}
+		swap(t, store, d.ID, state, next, retire...)
+		state = next
+	}
+
+	got, slot := lookup(t, store, d.CurrentHash)
+	if slot != session.SlotRetired {
+		t.Fatalf("the retired current hash was pushed out by pending replacements: slot %d", slot)
+	}
+	var currents, pendings int
+	for _, r := range got.Retired {
+		switch r.Kind {
+		case session.RetiredCurrent:
+			currents++
+		case session.RetiredPending:
+			pendings++
+		default:
+			t.Errorf("a retired entry of kind %d", r.Kind)
+		}
+	}
+	if currents != 1 || pendings != session.MaxRetiredPending {
+		t.Errorf("retired lists hold %d current and %d pending, want 1 and %d", currents, pendings, session.MaxRetiredPending)
+	}
+	for i, h := range replaced {
+		if i < len(replaced)-session.MaxRetiredPending {
+			wantNotFound(t, store, h, "an old replaced pending hash")
+			continue
+		}
+		if _, slot := lookup(t, store, h); slot != session.SlotRetired {
+			t.Errorf("a recent replaced pending hash: slot %d", slot)
+		}
+	}
+}
+
+func storeSwapRefusesAnUnknownKind(t *testing.T, newStore NewStore) {
+	store := newStore(t)
+	at := base()
+	d := record("d1", "u1", at)
+	create(t, store, d, 10)
+
+	next := session.DeviceState{CurrentHash: hashOf("next"), RotatedAt: at}
+	unknown := session.RetiredHash{Hash: d.CurrentHash, GraceEnd: at}
+	if err := store.Swap(context.Background(), d.ID, d.DeviceState, next, []session.RetiredHash{unknown}); err == nil {
+		t.Fatal("Swap accepted a retired hash without a kind")
+	}
+	if got, slot := lookup(t, store, d.CurrentHash); slot != session.SlotCurrent || len(got.Retired) != 0 {
+		t.Errorf("a refused swap changed the record: slot %d", slot)
+	}
+}
+
+func storeCreateRefusesStaleAuthentication(t *testing.T, newStore NewStore) {
+	store := newStore(t)
+	at := base()
+	if err := store.DeleteSubject(context.Background(), "u1", at); err != nil {
+		t.Fatalf("DeleteSubject: %v", err)
+	}
+
+	for name, authenticatedAt := range map[string]time.Time{
+		"before the delete": at.Add(-time.Second),
+		"at the delete":     at,
+	} {
+		d := record("stale-"+strings.ReplaceAll(name, " ", "-"), "u1", at)
+		if _, err := store.Create(context.Background(), d, 10, authenticatedAt); !errors.Is(err, session.ErrStaleAuthentication) {
+			t.Errorf("Create with a credential check %s = %v, want ErrStaleAuthentication", name, err)
+		}
+		wantNotFound(t, store, d.CurrentHash, "a device whose credential check "+name)
+	}
+
+	fresh := record("fresh", "u1", at)
+	if _, err := store.Create(context.Background(), fresh, 10, at.Add(time.Nanosecond)); err != nil {
+		t.Errorf("Create with a credential check after the delete = %v", err)
+	}
+	other := record("other", "u2", at)
+	if _, err := store.Create(context.Background(), other, 10, at.Add(-time.Second)); err != nil {
+		t.Errorf("Create for another subject = %v, want no effect of u1's delete", err)
+	}
+}
+
+func storeCreateReportsEvicted(t *testing.T, newStore NewStore) {
+	store := newStore(t)
+	at := base()
+	if evicted := create(t, store, record("a1", "u1", at), 1); len(evicted) != 0 {
+		t.Errorf("the first device evicted %v", evicted)
+	}
+	if evicted := create(t, store, record("a2", "u1", at.Add(time.Second)), 1); !slices.Equal(evicted, []string{"a1"}) {
+		t.Errorf("evicted = %v, want a1", evicted)
 	}
 }
 
@@ -459,7 +596,7 @@ func storeRevokeChecksTheSubject(t *testing.T, newStore NewStore) {
 	pending.PendingNonce = "n1"
 	swap(t, store, d.ID, d.DeviceState, pending)
 	confirmed := session.DeviceState{CurrentHash: pending.PendingHash}
-	swap(t, store, d.ID, pending, confirmed, session.RetiredHash{Hash: d.CurrentHash, GraceEnd: at})
+	swap(t, store, d.ID, pending, confirmed, retiredCurrent(d.CurrentHash, at))
 
 	if err := store.Revoke(context.Background(), "u2", "d1"); !errors.Is(err, session.ErrNotFound) {
 		t.Errorf("Revoke by another subject = %v, want ErrNotFound", err)
@@ -489,7 +626,7 @@ func storeDeleteSubject(t *testing.T, newStore NewStore) {
 		create(t, store, d, 10)
 	}
 
-	if err := store.DeleteSubject(context.Background(), "u1"); err != nil {
+	if err := store.DeleteSubject(context.Background(), "u1", at); err != nil {
 		t.Fatalf("DeleteSubject: %v", err)
 	}
 	wantNotFound(t, store, a1.CurrentHash, "a1")
@@ -497,7 +634,7 @@ func storeDeleteSubject(t *testing.T, newStore NewStore) {
 	if _, slot := lookup(t, store, b1.CurrentHash); slot != session.SlotCurrent {
 		t.Error("another subject's device was deleted")
 	}
-	if err := store.DeleteSubject(context.Background(), "nobody"); err != nil {
+	if err := store.DeleteSubject(context.Background(), "nobody", at); err != nil {
 		t.Errorf("DeleteSubject of a subject without devices = %v", err)
 	}
 }
@@ -528,7 +665,7 @@ func storeNoSharedReferences(t *testing.T, newStore NewStore) {
 	d := record("d1", "u1", at)
 	create(t, store, d, 10)
 	next := session.DeviceState{CurrentHash: hashOf("next")}
-	swap(t, store, d.ID, d.DeviceState, next, session.RetiredHash{Hash: d.CurrentHash, GraceEnd: at})
+	swap(t, store, d.ID, d.DeviceState, next, retiredCurrent(d.CurrentHash, at))
 
 	got, _ := lookup(t, store, next.CurrentHash)
 	got.Retired[0].GraceEnd = at.Add(time.Hour)
@@ -592,7 +729,8 @@ func raceDeleteSubjectWins(t *testing.T, newStore NewStore) {
 	at := base()
 
 	for round := range rounds {
-		d := record(fmt.Sprintf("d%d", round), "u1", at)
+		subject := fmt.Sprintf("u%d", round)
+		d := record(fmt.Sprintf("d%d", round), subject, at)
 		create(t, store, d, rounds)
 
 		var wg sync.WaitGroup
@@ -608,7 +746,7 @@ func raceDeleteSubjectWins(t *testing.T, newStore NewStore) {
 		}
 		wg.Go(func() {
 			<-start
-			if err := store.DeleteSubject(context.Background(), "u1"); err != nil {
+			if err := store.DeleteSubject(context.Background(), subject, at); err != nil {
 				t.Errorf("DeleteSubject: %v", err)
 			}
 		})
@@ -619,7 +757,7 @@ func raceDeleteSubjectWins(t *testing.T, newStore NewStore) {
 		for i := range writers {
 			wantNotFound(t, store, hashOf(fmt.Sprintf("%s/p%d", d.ID, i)), "a pending hash after DeleteSubject")
 		}
-		if list, err := store.List(context.Background(), "u1"); err != nil || len(list) != 0 {
+		if list, err := store.List(context.Background(), subject); err != nil || len(list) != 0 {
 			t.Fatalf("round %d: List after DeleteSubject = %v, %v", round, ids(list), err)
 		}
 	}
@@ -635,7 +773,7 @@ func raceConcurrentCreatesKeepTheCap(t *testing.T, newStore NewStore) {
 	for i := range callers {
 		wg.Go(func() {
 			<-start
-			if err := store.Create(context.Background(), record(fmt.Sprintf("d%d", i), "u1", at), maxPerSubject); err != nil {
+			if _, err := store.Create(context.Background(), record(fmt.Sprintf("d%d", i), "u1", at), maxPerSubject, at); err != nil {
 				t.Errorf("Create: %v", err)
 			}
 		})
@@ -649,5 +787,37 @@ func raceConcurrentCreatesKeepTheCap(t *testing.T, newStore NewStore) {
 	}
 	if len(list) != maxPerSubject {
 		t.Errorf("u1 has %d devices, want the cap of %d", len(list), maxPerSubject)
+	}
+}
+
+// raceDeleteSubjectBeatsStaleCreate is a password change racing the issue of
+// a device whose credential check used the old password. Whichever runs
+// first, no device of the subject is left.
+func raceDeleteSubjectBeatsStaleCreate(t *testing.T, newStore NewStore) {
+	const rounds = 50
+	store := newStore(t)
+	at := base()
+
+	for round := range rounds {
+		subject := fmt.Sprintf("u%d", round)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		wg.Go(func() {
+			<-start
+			d := record(fmt.Sprintf("d%d", round), subject, at)
+			_, _ = store.Create(context.Background(), d, 10, at.Add(-time.Second))
+		})
+		wg.Go(func() {
+			<-start
+			if err := store.DeleteSubject(context.Background(), subject, at); err != nil {
+				t.Errorf("DeleteSubject: %v", err)
+			}
+		})
+		close(start)
+		wg.Wait()
+
+		if list, err := store.List(context.Background(), subject); err != nil || len(list) != 0 {
+			t.Fatalf("round %d: a device issued on a credential check older than DeleteSubject survived: %v, %v", round, ids(list), err)
+		}
 	}
 }

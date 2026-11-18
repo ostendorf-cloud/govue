@@ -130,7 +130,8 @@ type DeviceConfig struct {
 
 	// TokenPrefix starts every token, followed by an underscore. One to
 	// sixteen lower case letters and digits. Empty is
-	// [DefaultDeviceTokenPrefix].
+	// [DefaultDeviceTokenPrefix], which is neutral. A product sets its own,
+	// so secret scanning can find a leaked token of exactly that product.
 	TokenPrefix string
 
 	// MaxPerSubject is how many device sessions one account keeps. Zero is
@@ -216,10 +217,19 @@ func (d DeviceSession) view() Device {
 // authenticated and returns its token. The token is shown to the caller once
 // and never stored: the store keeps its SHA-256.
 //
+// authenticatedAt is when the credential check behind this issue ran, read
+// from the same clock as [Config.Now]. An issue whose check is
+// [MaxDeviceIssueDelay] old or more, or not later than the last [Manager.EndAll]
+// of the account, is refused with [ErrStaleAuthentication]. That keeps a
+// password change that lands between the check of the old password and the
+// issue from leaving a device behind.
+//
 // Issuing counts as the first rotation, so the first rotation follows one
 // [DeviceConfig.MinRotateInterval] later. Past [DeviceConfig.MaxPerSubject],
-// the account's least recently seen device session ends.
-func (m *Manager) IssueDevice(ctx context.Context, subject, name string) (string, Device, error) {
+// the account's least recently seen device session ends, and a log line names
+// it. Whoever has the password can use that to sign the account's apps out;
+// changing the password, which calls EndAll, is the remedy.
+func (m *Manager) IssueDevice(ctx context.Context, subject, name string, authenticatedAt time.Time) (string, Device, error) {
 	store := m.cfg.Devices.Store
 	if store == nil {
 		return "", Device{}, ErrDevicesDisabled
@@ -229,6 +239,13 @@ func (m *Manager) IssueDevice(ctx context.Context, subject, name string) (string
 	}
 	if !validDeviceName(name) {
 		return "", Device{}, ErrInvalidDeviceName
+	}
+	now := m.cfg.Now().UTC()
+	if authenticatedAt.IsZero() || authenticatedAt.After(now) {
+		return "", Device{}, errors.New("session: issue device: the credential check time is unset or in the future")
+	}
+	if now.Sub(authenticatedAt) >= MaxDeviceIssueDelay {
+		return "", Device{}, ErrStaleAuthentication
 	}
 
 	token, err := m.newDeviceToken()
@@ -240,7 +257,6 @@ func (m *Manager) IssueDevice(ctx context.Context, subject, name string) (string
 		return "", Device{}, err
 	}
 
-	now := m.cfg.Now().UTC()
 	d := DeviceSession{
 		ID:        id,
 		Subject:   subject,
@@ -253,8 +269,13 @@ func (m *Manager) IssueDevice(ctx context.Context, subject, name string) (string
 			RotatedAt:   now,
 		},
 	}
-	if err := store.Create(ctx, d, m.cfg.Devices.MaxPerSubject); err != nil {
+	evicted, err := store.Create(ctx, d, m.cfg.Devices.MaxPerSubject, authenticatedAt.UTC())
+	if err != nil {
 		return "", Device{}, fmt.Errorf("session: issue device: %w", err)
+	}
+	for _, id := range evicted {
+		logging.FromContext(ctx).InfoContext(ctx, "session: device session ended by the per account cap",
+			"device_id", id, "subject", subject)
 	}
 	return token, d.view(), nil
 }
@@ -315,7 +336,9 @@ func (m *Manager) authenticateDevice(ctx context.Context, token string) (Device,
 //   - Pending, current token, otherwise: the pending token is retired
 //     without grace and a new one issued.
 //   - Pending token: it is confirmed as on a request, and no new pending
-//     token is issued, which is [ErrRotateRefused].
+//     token is issued. The confirmed device comes back together with
+//     [ErrRotateRefused], so a caller sees that the pending token now
+//     authenticates.
 //   - Retired token inside its grace: [ErrRotateRefused].
 //   - Retired token after its grace: the device session is revoked.
 //
@@ -365,7 +388,7 @@ func (m *Manager) RotateDevice(ctx context.Context, token, nonce string) (string
 		// issue put it, so a holder of the nonce cannot keep it open.
 		next.PendingAt = d.PendingAt
 	default:
-		retire = []RetiredHash{{Hash: d.PendingHash, GraceEnd: now}}
+		retire = []RetiredHash{{Hash: d.PendingHash, GraceEnd: now, Kind: RetiredPending}}
 	}
 
 	pending, err := m.newDeviceToken()
@@ -451,6 +474,10 @@ func (m *Manager) lookupDevice(ctx context.Context, token string) (DeviceSession
 	if slot == 0 || d.slot(hash) != slot {
 		return DeviceSession{}, 0, time.Time{}, errors.New("session: look up device: the store returned a record that does not hold the hash")
 	}
+	// A record without an id could be neither touched nor revoked.
+	if d.ID == "" {
+		return DeviceSession{}, 0, time.Time{}, errors.New("session: look up device: the store returned a record without an id")
+	}
 
 	now := m.cfg.Now().UTC()
 	if m.deviceExpired(d, now) {
@@ -484,13 +511,15 @@ func graceEnd(retired []RetiredHash, hash TokenHash) time.Time {
 
 // revokeReused ends a device session whose retired token came back after its
 // grace. The log line names the device and the account, never the token or
-// its hash.
+// its hash. A failed revocation is logged, and the answer is the same
+// [ErrDeviceToken] as for every other token failure: the token does not
+// authenticate either way.
 func (m *Manager) revokeReused(ctx context.Context, d DeviceSession) error {
 	logger := logging.FromContext(ctx)
 	if err := m.cfg.Devices.Store.Revoke(ctx, d.Subject, d.ID); err != nil && !errors.Is(err, ErrNotFound) {
 		logger.ErrorContext(ctx, "session: device token reused, revoking the device failed",
 			"device_id", d.ID, "subject", d.Subject, "error", err)
-		return fmt.Errorf("%w: revoke: %w", ErrDeviceToken, err)
+		return ErrDeviceToken
 	}
 	logger.WarnContext(ctx, "session: device token reused, device revoked",
 		"device_id", d.ID, "subject", d.Subject)
@@ -501,7 +530,7 @@ func (m *Manager) revokeReused(ctx context.Context, d DeviceSession) error {
 // with the grace.
 func (m *Manager) confirmDevice(ctx context.Context, d DeviceSession, now time.Time) (DeviceSession, error) {
 	next := DeviceState{CurrentHash: d.PendingHash, RotatedAt: now}
-	retire := []RetiredHash{{Hash: d.CurrentHash, GraceEnd: now.Add(m.cfg.Devices.Grace)}}
+	retire := []RetiredHash{{Hash: d.CurrentHash, GraceEnd: now.Add(m.cfg.Devices.Grace), Kind: RetiredCurrent}}
 	if err := m.cfg.Devices.Store.Swap(ctx, d.ID, d.DeviceState, next, retire); err != nil {
 		return DeviceSession{}, swapError(err)
 	}
