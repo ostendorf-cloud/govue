@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"strings"
 	"time"
 
+	"github.com/ostendorf-cloud/govue/appassoc"
 	"github.com/ostendorf-cloud/govue/clientip"
 	"github.com/ostendorf-cloud/govue/envconf"
 	"github.com/ostendorf-cloud/govue/logging"
@@ -47,6 +49,11 @@ type config struct {
 	// siteDir is the output directory of the prerender step. Empty means the
 	// example serves no language pages and no redirect at /.
 	siteDir string
+
+	// assoc is the content of the app association files. It is empty unless
+	// APPLE_APP_ID or ANDROID_PACKAGE is set, and an empty one mounts no
+	// association file.
+	assoc appassoc.Config
 
 	// now is the clock of the session and device stores. It is not read
 	// from the environment. Nil is time.Now, and tests replace it.
@@ -107,8 +114,51 @@ func loadConfig(getenv func(string) string) (config, error) {
 
 	cfg.siteDir = l.String("SITE_DIR", "")
 
+	cfg.assoc, err = loadAssoc(l)
+	fail(err)
+
 	if err := errors.Join(append(problems, l.Err())...); err != nil {
 		return config{}, fmt.Errorf("example: load config: %w", err)
+	}
+	return cfg, nil
+}
+
+// loadAssoc reads the app association settings. Both files are off by
+// default. The example takes one app per platform, a product with more fills
+// appassoc.Config itself. The values are checked by appassoc.New in newApp.
+//
+//	APPLE_APP_ID            TeamID.BundleID, turns the Apple file on
+//	APPLE_APP_PATHS         comma separated path patterns the app opens
+//	APPLE_APP_EXCLUDE_PATHS comma separated patterns it does not open
+//	APPLE_WEBCREDENTIALS    true lists the app under webcredentials
+//	ANDROID_PACKAGE         application id, turns the Android file on
+//	ANDROID_CERT_SHA256     comma separated SHA-256 certificate fingerprints
+//	ANDROID_LOGIN_CREDS     true adds get_login_creds
+func loadAssoc(l *envconf.Loader) (appassoc.Config, error) {
+	var cfg appassoc.Config
+
+	if id := l.String("APPLE_APP_ID", ""); id != "" {
+		team, bundle, ok := strings.Cut(id, ".")
+		if !ok {
+			return appassoc.Config{}, errors.New("APPLE_APP_ID: must be TeamID.BundleID")
+		}
+		appleID := appassoc.AppleID{TeamID: team, BundleID: bundle}
+		cfg.Apple.AppLinks = []appassoc.AppleApp{{
+			AppleID:      appleID,
+			Paths:        l.List("APPLE_APP_PATHS"),
+			ExcludePaths: l.List("APPLE_APP_EXCLUDE_PATHS"),
+		}}
+		if l.Bool("APPLE_WEBCREDENTIALS", false) {
+			cfg.Apple.WebCredentials = []appassoc.AppleID{appleID}
+		}
+	}
+
+	if pkg := l.String("ANDROID_PACKAGE", ""); pkg != "" {
+		app := appassoc.AndroidApp{PackageName: pkg, Fingerprints: l.List("ANDROID_CERT_SHA256")}
+		if l.Bool("ANDROID_LOGIN_CREDS", false) {
+			app.Relations = []appassoc.Relation{appassoc.RelationHandleAllURLs, appassoc.RelationGetLoginCreds}
+		}
+		cfg.Android.Apps = []appassoc.AndroidApp{app}
 	}
 	return cfg, nil
 }

@@ -1053,6 +1053,56 @@ The design of the library and the reasoning behind it.
   check on the built pages remains the guarantee.
 - Not covered here: `og:image` (govue#69) and the Vue components, which write no head markup.
 
+### App association files
+
+- A native app only opens a domain's links, and only shares its credentials, when the domain
+  says so. iOS reads `/.well-known/apple-app-site-association`, Android reads
+  `/.well-known/assetlinks.json`. The package `appassoc` serves both from one typed `Config`.
+- The name is `appassoc`, not `wellknown`. The package serves these two files and nothing else.
+  A name that says `wellknown` invites `security.txt` and `change-password` into it, and each of
+  those has its own rules.
+- What a product sets:
+  - Apple: per app the team id, the bundle id and the path patterns it opens. Excluded patterns
+    come first in the file, because the first match decides. A `WebCredentials` list names the
+    apps that share credentials.
+  - Android: per app the package name, the SHA-256 fingerprints of the signing certificates and
+    the relations. The default is `handle_all_urls`. `get_login_creds` is explicit.
+- The documents are built with `encoding/json` from typed structs at construction, never by
+  joining strings. `Config` is validated in the same step and every problem is returned at once:
+  a ten character uppercase team id, a bundle id, an Android package name with at least two
+  segments, a fingerprint of 32 hex bytes with colons, a path from a safe character set, and
+  caps on the number of apps, paths and fingerprints and on the size of the document. A
+  fingerprint is normalised to uppercase. The files carry public identifiers only. They never
+  hold a secret, a token, an account name or any value from a request.
+- A file with no entries is not mounted and answers like any unknown path. It is never served as
+  an empty document, which would tell a phone that the domain trusts no app. `New` refuses a
+  `Config` that configures neither file.
+- Both platforms refuse a redirect, so the paths are exact patterns. `Handle` registers
+  `GET <path>`, which also matches HEAD, and `<path>` without a method. The second one matters
+  behind the catch-all `"/"`. Without it a POST matches the catch-all, which answers 404, and
+  ServeMux's own 405 never happens. The handler answers 405 with `Allow: GET, HEAD` for it.
+  A path with a trailing slash matches no pattern, so the catch-all answers 404 and ServeMux
+  never redirects it. A path with a double slash is cleaned by ServeMux with a 307 before any
+  handler runs, like every other path, and no platform fetches such a path.
+- The response is `application/json`, `Cache-Control: public, max-age=3600`, `nosniff`, no
+  cookie and no redirect. The handlers read neither a cookie nor an `Authorization` header.
+- `example/` mounts the files only when `APPLE_APP_ID` or `ANDROID_PACKAGE` is set, and outside
+  the route chain. The rate limiter would count a platform fetcher that shares a few addresses.
+  The session middleware answers a malformed `Authorization` header with 401. CORS and CSRF
+  protect nothing on a public GET. The outer chain still runs, so the access log and the
+  security headers apply. A test sends the files through the whole example chain with a session
+  cookie, a bad bearer token and a foreign origin, and pins that the catch-all never answers,
+  nothing redirects and no cookie is set.
+- Passkeys in a native app need the `webcredentials` entry here and the app origin in the relying
+  party's allowed origins. The first exists now. The second comes with the passkey step of
+  #104, where the origin format is decided.
+- Assumptions: the Apple shape is the `components` format with `appIDs`, which needs a recent
+  iOS. The older `paths` format and `apps: []` are not written. Apple's own page could not be
+  read by the tooling used, so the shape follows the published format from memory. Check it
+  against a real device before a release. The Android shape was read from the Digital Asset Links
+  documentation, which shows `handle_all_urls`. The `get_login_creds` relation is not on that
+  page.
+
 ### Component behaviour
 
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a

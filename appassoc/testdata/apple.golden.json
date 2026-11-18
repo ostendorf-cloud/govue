@@ -1,0 +1,28 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": [
+          "ABCDE12345.com.example.app"
+        ],
+        "components": [
+          {
+            "/": "/app/private/*",
+            "exclude": true
+          },
+          {
+            "/": "/app/*"
+          },
+          {
+            "/": "/invite/?*"
+          }
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": [
+      "ABCDE12345.com.example.app"
+    ]
+  }
+}
