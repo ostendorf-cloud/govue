@@ -21,6 +21,9 @@ type outcome struct {
 	session Session
 	ok      bool
 	err     error
+	// kind is the request's classification, which [Manager.Start] and
+	// [Manager.Rotate] read to refuse a bearer request.
+	kind bearer.Kind
 }
 
 // Middleware reads the session the request carries and puts the outcome into
@@ -47,26 +50,38 @@ type outcome struct {
 // answer, so an application's own check is fail closed whether it reads the
 // error or not.
 //
-// A bearer request is different. Its response carries Cache-Control: no-store.
-// A token that does not authenticate, a request with more than one
-// Authorization header, and any bearer request without a device store are
-// answered with 401 and WWW-Authenticate: Bearer, through
-// [Config.OnBearerRefusal], on every route: the app has to learn that its
-// token failed, and the request never reaches a handler that might read the
-// cookie on its own. A device store that could not answer is passed on like a
-// cookie store outage.
+// A bearer or malformed request is different:
+//
+//   - Every response produced by or behind this middleware carries
+//     Cache-Control: no-store, whatever a handler sets. A response produced
+//     earlier in the chain, such as a rate limiter's 429, a CORS refusal or a
+//     redirect of the mux, is outside it and carries no credential data.
+//   - With a device store, a token that does not authenticate and a request
+//     with more than one Authorization header are answered with 401 and a
+//     WWW-Authenticate challenge, through [Config.OnBearerRefusal], on every
+//     route: the app has to learn that its token failed. A device store that
+//     could not answer is passed on like a cookie store outage.
+//   - Without a device store the request is passed on as anonymous, so a
+//     product's own gateway or JWT keeps working. The cookie is not read.
+//   - [Manager.Start] and [Manager.Rotate] refuse to set a cookie for it.
 func (m *Manager) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		res := m.read(r.Context(), r)
-		if res.kind != bearer.None {
-			noStore(w)
-		}
-		if res.refused {
-			m.refuseBearer(w, r)
+		ctx := context.WithValue(r.Context(), contextKey{}, outcome{session: res.session, ok: res.ok, err: res.err, kind: res.kind})
+		if res.kind == bearer.None {
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
-		ctx := context.WithValue(r.Context(), contextKey{}, outcome{session: res.session, ok: res.ok, err: res.err})
-		next.ServeHTTP(w, r.WithContext(ctx))
+		noStore(w.Header())
+		if res.refused {
+			m.refuseBearer(w, r, res.noToken)
+			return
+		}
+		guarded := &guardWriter{ResponseWriter: w, before: noStore}
+		next.ServeHTTP(guarded, r.WithContext(ctx))
+		// A handler that wrote nothing leaves the status to net/http, which
+		// sends the headers as they are now.
+		noStore(w.Header())
 	})
 }
 
@@ -100,4 +115,11 @@ func ErrorFromContext(ctx context.Context) error {
 		return nil
 	}
 	return got.err
+}
+
+// bearerRequest reports whether [Manager.Middleware] classified the request
+// of ctx as a bearer or malformed request.
+func bearerRequest(ctx context.Context) bool {
+	got, ok := ctx.Value(contextKey{}).(outcome)
+	return ok && got.kind != bearer.None
 }

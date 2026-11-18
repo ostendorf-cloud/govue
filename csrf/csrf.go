@@ -19,8 +19,9 @@
 // Expected function, which is why this package never imports a session
 // package: it only ever sees a session id as a string.
 //
-// A bearer request is not checked at all, see [Protector.Check]. ADR 0001
-// records why.
+// A native app's bearer request can be exempted with [Protector.ExemptBearer].
+// It is off by default and safe only in front of session.Middleware, which
+// never reads a cookie on such a request. ADR 0001 records why.
 package csrf
 
 import (
@@ -122,9 +123,10 @@ type Expected func(*http.Request) (string, bool)
 
 // Protector checks the origin signals and the token on every unsafe method.
 type Protector struct {
-	cross    *http.CrossOriginProtection
-	expected Expected
-	respond  func(http.ResponseWriter, *http.Request, error)
+	cross        *http.CrossOriginProtection
+	expected     Expected
+	respond      func(http.ResponseWriter, *http.Request, error)
+	exemptBearer bool
 }
 
 // New returns a Protector that trusts its own origin only and answers a
@@ -158,6 +160,22 @@ func (p *Protector) TrustOrigin(origin string) error {
 	return nil
 }
 
+// ExemptBearer skips both halves of the check for a request with an
+// Authorization header of the Bearer scheme, or with more than one
+// Authorization header, and Expected is not called for it. It is off by
+// default, and is meant to be called during setup like TrustOrigin.
+//
+// It is safe only when nothing behind the protector authenticates such a
+// request by a cookie. Enable it only in front of session.Middleware, which
+// never reads the cookie on such a request, or in front of an equivalent
+// that keeps the same rule. A handler that reads a cookie of its own behind
+// this exemption is open to cross site requests from any client that can
+// add the header, such as a proxy that injects a bearer token.
+//
+// The classification is the module's one shared predicate, the same one the
+// session package uses.
+func (p *Protector) ExemptBearer() { p.exemptBearer = true }
+
 // OnRefusal replaces what a refused request is answered with, for an
 // application that answers HTML or an API error shape instead of plain text.
 // The error says which check refused and belongs in the log, never in the
@@ -182,17 +200,15 @@ func (p *Protector) Middleware(next http.Handler) http.Handler {
 // origin signals are checked first, then the token, so a cross origin request
 // is refused whatever token it carries.
 //
-// A request with an Authorization header of the Bearer scheme, or with more
-// than one Authorization header, skips both halves, and Expected is not
-// called for it. A browser never attaches such a header by itself, and a
-// cross site page cannot add one without a CORS preflight. The session layer
-// authenticates such a request by its token only and never by a cookie, so
-// there is no ambient credential to borrow. A request with no Authorization
-// header or another scheme keeps both halves. The classification is the
-// module's one shared predicate, the same one the session package uses.
+// With [Protector.ExemptBearer], a bearer or malformed request skips both
+// halves. A browser never attaches such a header by itself, and a cross site
+// page cannot add one without a CORS preflight. Without it, every request
+// keeps both halves.
 func (p *Protector) Check(r *http.Request) error {
-	if kind, _ := bearer.Classify(r.Header); kind != bearer.None {
-		return nil
+	if p.exemptBearer {
+		if kind, _ := bearer.Classify(r.Header); kind != bearer.None {
+			return nil
+		}
 	}
 	if err := p.cross.Check(r); err != nil {
 		return fmt.Errorf("csrf: cross origin check: %w", err)

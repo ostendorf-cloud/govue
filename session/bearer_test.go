@@ -261,19 +261,22 @@ func serve(m *session.Manager, req *http.Request) (*httptest.ResponseRecorder, b
 }
 
 func TestMiddlewareRefusesAFailedBearerRequest(t *testing.T) {
+	// RFC 6750 section 3.1: a request without a token gets the bare
+	// challenge, a token that fails gets invalid_token.
+	const invalid = `Bearer error="invalid_token"`
 	cases := map[string]struct {
-		devices bool
-		auth    []string
+		auth      []string
+		challenge string
 	}{
-		"a junk token":                    {true, []string{"Bearer " + junkToken}},
-		"bearer without a token":          {true, []string{"Bearer"}},
-		"two headers":                     {true, []string{"Bearer a", "Bearer b"}},
-		"two basic headers":               {true, []string{"Basic a", "Basic b"}},
-		"a bearer without a device store": {false, []string{"Bearer " + junkToken}},
+		"a junk token":           {[]string{"Bearer " + junkToken}, invalid},
+		"bearer without a token": {[]string{"Bearer"}, "Bearer"},
+		"bearer and spaces only": {[]string{"Bearer   "}, "Bearer"},
+		"two headers":            {[]string{"Bearer a", "Bearer b"}, invalid},
+		"two basic headers":      {[]string{"Basic a", "Basic b"}, invalid},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			f := newBearerFixture(t, tc.devices, nil)
+			f := newBearerFixture(t, true, nil)
 			cookie := f.login(t)
 			before := f.cookies.count()
 
@@ -284,8 +287,8 @@ func TestMiddlewareRefusesAFailedBearerRequest(t *testing.T) {
 			if rec.Code != http.StatusUnauthorized {
 				t.Errorf("status = %d, want 401", rec.Code)
 			}
-			if got := rec.Header().Get("WWW-Authenticate"); got != "Bearer" {
-				t.Errorf("WWW-Authenticate = %q, want Bearer", got)
+			if got := rec.Header().Get("WWW-Authenticate"); got != tc.challenge {
+				t.Errorf("WWW-Authenticate = %q, want %q", got, tc.challenge)
 			}
 			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 				t.Errorf("Cache-Control = %q, want no-store", got)
@@ -370,7 +373,7 @@ func TestOnBearerRefusalAnswersTheRefusal(t *testing.T) {
 	f := newBearerFixture(t, true, func(cfg *session.Config) {
 		cfg.OnBearerRefusal = func(w http.ResponseWriter, _ *http.Request) {
 			called++
-			if w.Header().Get("WWW-Authenticate") != "Bearer" || w.Header().Get("Cache-Control") != "no-store" {
+			if w.Header().Get("WWW-Authenticate") != `Bearer error="invalid_token"` || w.Header().Get("Cache-Control") != "no-store" {
 				t.Error("the headers are not set before the refusal is answered")
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -382,6 +385,258 @@ func TestOnBearerRefusalAnswersTheRefusal(t *testing.T) {
 	if reached || called != 1 || rec.Code != http.StatusUnauthorized || rec.Header().Get("Content-Type") != "application/json" {
 		t.Errorf("reached %v called %d status %d type %q, want the custom refusal",
 			reached, called, rec.Code, rec.Header().Get("Content-Type"))
+	}
+}
+
+// TestANoOpRefusalIsStill401 pins that a refusal callback which writes
+// nothing cannot turn the refusal into an empty 200.
+func TestANoOpRefusalIsStill401(t *testing.T) {
+	for name, refuse := range map[string]func(http.ResponseWriter, *http.Request){
+		"writes nothing":       func(http.ResponseWriter, *http.Request) {},
+		"only sets a header":   func(w http.ResponseWriter, _ *http.Request) { w.Header().Set("X-Example", "1") },
+		"drops the challenge":  func(w http.ResponseWriter, _ *http.Request) { w.Header().Del("WWW-Authenticate") },
+		"drops the cache rule": func(w http.ResponseWriter, _ *http.Request) { w.Header().Del("Cache-Control") },
+		"answers 200":          func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) },
+		"writes a body only":   func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("{}")) },
+		"drops both and writes": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Del("WWW-Authenticate")
+			w.Header().Del("Cache-Control")
+			w.WriteHeader(http.StatusUnauthorized)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newBearerFixture(t, true, func(cfg *session.Config) { cfg.OnBearerRefusal = refuse })
+			rec, reached, _, _ := serve(f.manager, request(nil, "Bearer "+junkToken))
+			if reached {
+				t.Error("the handler ran")
+			}
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("status = %d, want 401", rec.Code)
+			}
+			if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer error="invalid_token"` {
+				t.Errorf("WWW-Authenticate = %q", got)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control = %q, want no-store", got)
+			}
+		})
+	}
+}
+
+// TestWithoutADeviceStoreABearerRequestIsAnonymous is the escape hatch for a
+// product whose own gateway or JWT uses the Authorization header: no 401, no
+// session, and the cookie is still never read.
+func TestWithoutADeviceStoreABearerRequestIsAnonymous(t *testing.T) {
+	for name, auth := range map[string][]string{
+		"a gateway token": {"Bearer an-api-gateway-jwt"},
+		"no token":        {"Bearer"},
+		"two headers":     {"Bearer a", "Bearer b"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newBearerFixture(t, false, nil)
+			cookie := f.login(t)
+			before := f.cookies.count()
+
+			rec, reached, seen, seenErr := serve(f.manager, request(cookie, auth...))
+			if !reached || rec.Code != http.StatusTeapot {
+				t.Fatalf("reached %v status %d, want the handler", reached, rec.Code)
+			}
+			if seen.Subject != "" || seen.Credential != session.CredentialNone || seenErr != nil {
+				t.Errorf("context = %q %v %v, want anonymous", seen.Subject, seen.Credential, seenErr)
+			}
+			if f.cookies.count() != before {
+				t.Error("the cookie store was asked on a bearer request")
+			}
+			if got := rec.Header().Get("WWW-Authenticate"); got != "" {
+				t.Errorf("WWW-Authenticate = %q, want none", got)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control = %q, want no-store", got)
+			}
+			if got := rec.Header().Values("Set-Cookie"); len(got) != 0 {
+				t.Errorf("Set-Cookie = %q, want none", got)
+			}
+		})
+	}
+}
+
+// TestNoStoreWinsOverTheHandler pins that no handler behind the middleware
+// can make a response to a bearer request cacheable, whichever way it
+// writes, while a cookie response keeps the handler's own header.
+func TestNoStoreWinsOverTheHandler(t *testing.T) {
+	const immutable = "public, max-age=31536000, immutable"
+	writes := map[string]http.HandlerFunc{
+		"WriteHeader": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Cache-Control", immutable)
+			w.WriteHeader(http.StatusOK)
+		},
+		"Write only": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Cache-Control", immutable)
+			_, _ = w.Write([]byte("body"))
+		},
+		"Flush": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Cache-Control", immutable)
+			if err := http.NewResponseController(w).Flush(); err != nil {
+				t.Errorf("Flush: %v", err)
+			}
+		},
+		"nothing written": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Cache-Control", immutable)
+		},
+	}
+	for name, handler := range writes {
+		t.Run(name, func(t *testing.T) {
+			f := newBearerFixture(t, true, nil)
+			token, _ := f.issue(t)
+			cookie := f.login(t)
+
+			rec := httptest.NewRecorder()
+			f.manager.Middleware(handler).ServeHTTP(rec, request(nil, "Bearer "+token))
+			if got := rec.Result().Header.Get("Cache-Control"); got != "no-store" {
+				t.Errorf("bearer Cache-Control = %q, want no-store", got)
+			}
+
+			rec = httptest.NewRecorder()
+			f.manager.Middleware(handler).ServeHTTP(rec, request(cookie))
+			if got := rec.Result().Header.Get("Cache-Control"); got != immutable {
+				t.Errorf("cookie Cache-Control = %q, want the handler's %q", got, immutable)
+			}
+		})
+	}
+}
+
+// TestStartAndRotateRefuseABearerRequest pins that no handler behind the
+// middleware mints a cookie session on a bearer request.
+func TestStartAndRotateRefuseABearerRequest(t *testing.T) {
+	for name, tc := range map[string]struct {
+		devices bool
+		two     bool
+	}{
+		"with a device store":         {true, false},
+		"without one":                 {false, false},
+		"two headers without a store": {false, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newBearerFixture(t, tc.devices, nil)
+			auth := []string{"Bearer an-api-gateway-jwt"}
+			if tc.devices {
+				token, _ := f.issue(t)
+				auth = []string{"Bearer " + token}
+			}
+			if tc.two {
+				auth = append(auth, "Bearer another")
+			}
+			cookie := f.login(t)
+			cookieSession, ok, err := f.manager.Read(context.Background(), request(cookie))
+			if err != nil || !ok {
+				t.Fatalf("Read: %v %v", ok, err)
+			}
+			sessionsBefore := f.cookies.Len()
+
+			rec := httptest.NewRecorder()
+			f.manager.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if _, err := f.manager.Start(r.Context(), w, session.Session{Subject: "u1"}); !errors.Is(err, session.ErrBearerRequest) {
+					t.Errorf("Start = %v, want ErrBearerRequest", err)
+				}
+				if _, err := f.manager.Rotate(r.Context(), w, cookieSession); !errors.Is(err, session.ErrBearerRequest) {
+					t.Errorf("Rotate = %v, want ErrBearerRequest", err)
+				}
+			})).ServeHTTP(rec, request(nil, auth...))
+			if got := rec.Header().Values("Set-Cookie"); len(got) != 0 {
+				t.Errorf("Set-Cookie = %q, want none", got)
+			}
+			if f.cookies.Len() != sessionsBefore {
+				t.Errorf("cookie store holds %d sessions, want %d", f.cookies.Len(), sessionsBefore)
+			}
+		})
+	}
+
+	// A cookie request behind the middleware still starts a session.
+	f := newBearerFixture(t, true, nil)
+	rec := httptest.NewRecorder()
+	f.manager.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := f.manager.Start(r.Context(), w, session.Session{Subject: "u1"}); err != nil {
+			t.Errorf("Start on a cookie request = %v", err)
+		}
+	})).ServeHTTP(rec, request(nil))
+	if len(rec.Header().Values("Set-Cookie")) != 1 {
+		t.Error("Start on a cookie request set no cookie")
+	}
+}
+
+// TestADeviceSessionHasNoGroups pins what Session.In documents: a device
+// session carries no groups, so a deny list check passes it.
+func TestADeviceSessionHasNoGroups(t *testing.T) {
+	f := newBearerFixture(t, true, nil)
+	token, _ := f.issue(t)
+	s, ok, err := f.manager.Read(context.Background(), request(nil, "Bearer "+token))
+	if err != nil || !ok {
+		t.Fatalf("Read: %v %v", ok, err)
+	}
+	if s.Groups != nil || s.In("admin") || s.Username != "" || s.Name != "" || s.Email != "" || s.Data != nil {
+		t.Errorf("device session = %+v, want no groups and no account attributes", s)
+	}
+}
+
+// TestEndReportsAFailedRevoke pins that a sign out the store did not carry
+// out is not reported as done.
+func TestEndReportsAFailedRevoke(t *testing.T) {
+	h := newHooked(t)
+	token := h.issue(t)
+	h.store.revoke = func(context.Context, string, string) error { return errStore }
+
+	err := h.manager.End(context.Background(), httptest.NewRecorder(), request(nil, "Bearer "+token))
+	if !errors.Is(err, errStore) {
+		t.Errorf("End = %v, want the store error", err)
+	}
+}
+
+// TestRotateRefusesEitherDeviceMarker pins both halves of the Rotate guard.
+func TestRotateRefusesEitherDeviceMarker(t *testing.T) {
+	f := newBearerFixture(t, true, nil)
+	s, ok, err := f.manager.Read(context.Background(), request(f.login(t)))
+	if err != nil || !ok {
+		t.Fatalf("Read: %v %v", ok, err)
+	}
+	for name, mark := range map[string]func(*session.Session){
+		"credential only": func(s *session.Session) { s.Credential = session.CredentialDevice },
+		"device id only":  func(s *session.Session) { s.DeviceID = "a-device" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			marked := s
+			mark(&marked)
+			rec := httptest.NewRecorder()
+			if _, err := f.manager.Rotate(context.Background(), rec, marked); err == nil {
+				t.Error("Rotate = nil, want a refusal")
+			}
+			if got := rec.Header().Values("Set-Cookie"); len(got) != 0 {
+				t.Errorf("Set-Cookie = %q, want none", got)
+			}
+		})
+	}
+}
+
+// deviceIDStore returns every session with a DeviceID set, as a store that
+// persisted one would.
+type deviceIDStore struct{ *session.MemoryStore }
+
+func (s deviceIDStore) Get(ctx context.Context, id string) (session.Session, error) {
+	got, err := s.MemoryStore.Get(ctx, id)
+	got.DeviceID = "a-stored-device-id"
+	got.Credential = session.CredentialDevice
+	return got, err
+}
+
+// TestACookieSessionNeverCarriesADeviceID pins that what a store holds does
+// not decide the credential of a cookie session.
+func TestACookieSessionNeverCarriesADeviceID(t *testing.T) {
+	f := newFixture(t, func(cfg *session.Config) {
+		cfg.Store = deviceIDStore{session.NewMemoryStore(cfg.Now, 100)}
+	})
+	_, req := f.login(t, "u1")
+	s, ok := f.read(t, req)
+	if !ok || s.DeviceID != "" || s.Credential != session.CredentialCookie {
+		t.Errorf("Read = ok %v device %q credential %v, want a plain cookie session", ok, s.DeviceID, s.Credential)
 	}
 }
 
@@ -409,12 +664,14 @@ func TestEndRefusesAFailedBearerRequest(t *testing.T) {
 	for name, tc := range map[string]struct {
 		devices bool
 		auth    []string
+		want    error
 	}{
-		"a junk token":            {true, []string{"Bearer " + junkToken}},
-		"two headers":             {true, []string{"Bearer a", "Bearer b"}},
-		"without a device store":  {false, []string{"Bearer " + junkToken}},
-		"bearer without a token":  {true, []string{"Bearer"}},
-		"two headers, both basic": {true, []string{"Basic a", "Basic b"}},
+		"a junk token":            {true, []string{"Bearer " + junkToken}, session.ErrDeviceToken},
+		"two headers":             {true, []string{"Bearer a", "Bearer b"}, session.ErrDeviceToken},
+		"without a device store":  {false, []string{"Bearer " + junkToken}, session.ErrDevicesDisabled},
+		"two without a store":     {false, []string{"Bearer a", "Bearer b"}, session.ErrDevicesDisabled},
+		"bearer without a token":  {true, []string{"Bearer"}, session.ErrDeviceToken},
+		"two headers, both basic": {true, []string{"Basic a", "Basic b"}, session.ErrDeviceToken},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newBearerFixture(t, tc.devices, nil)
@@ -423,8 +680,8 @@ func TestEndRefusesAFailedBearerRequest(t *testing.T) {
 
 			rec := httptest.NewRecorder()
 			err := f.manager.End(context.Background(), rec, request(cookie, tc.auth...))
-			if !errors.Is(err, session.ErrDeviceToken) {
-				t.Errorf("End = %v, want ErrDeviceToken", err)
+			if !errors.Is(err, tc.want) {
+				t.Errorf("End = %v, want %v", err, tc.want)
 			}
 			if got := rec.Header().Values("Set-Cookie"); len(got) != 0 {
 				t.Errorf("Set-Cookie = %q, want none", got)

@@ -49,6 +49,8 @@ func TestClassify(t *testing.T) {
 		{"a tab after the scheme is no separator", header("Bearer\tx"), bearer.None, ""},
 		{"a scheme glued to the token", header("Bearerx"), bearer.None, ""},
 		{"a longer scheme that starts with bearer", header("Bearers x"), bearer.None, ""},
+		{"a comma after the scheme", header("Bearer, x"), bearer.None, ""},
+		{"a comma glued to the scheme", header("bearer,"), bearer.None, ""},
 		{"basic", header("Basic dXNlcjpwYXNz"), bearer.None, ""},
 		{"basic with a bearer later in the value", header("Basic x, Bearer " + fakeToken), bearer.None, ""},
 		{"an empty value", header(""), bearer.None, ""},

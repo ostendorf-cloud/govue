@@ -105,8 +105,10 @@ type Session struct {
 	Username string
 	Name     string
 	Email    string
-	Groups   []string
-	Data     map[string]string
+	// Groups is empty for a device session: the device record holds no
+	// account attributes. See [Session.In].
+	Groups []string
+	Data   map[string]string
 
 	// IssuedAt is when the login happened. It does not move on a rotation.
 	IssuedAt time.Time
@@ -129,6 +131,11 @@ type Session struct {
 }
 
 // In reports whether the account is in the group.
+//
+// A device session has no groups, so In is false for every group. An allow
+// list check fails closed for it, but a deny list check such as
+// ok && !s.In("suspended") fails open. For a device session a product
+// authorises from its own account record, looked up by Subject.
 func (s Session) In(group string) bool { return slices.Contains(s.Groups, group) }
 
 // Config configures a [Manager]. Store is the only required field; every other
@@ -188,10 +195,11 @@ type Config struct {
 	Devices DeviceConfig
 
 	// OnBearerRefusal answers a bearer request whose token does not
-	// authenticate, for an application with its own error shape. It must
-	// answer 401 and must not set a cookie. [Manager.Middleware] has set
-	// WWW-Authenticate and Cache-Control already. Nil answers a plain text
-	// 401.
+	// authenticate, for an application with its own error shape. It must not
+	// set a cookie. [Manager.Middleware] sets WWW-Authenticate and
+	// Cache-Control before every write, turns any status into 401, and
+	// answers a plain text 401 itself when the function writes nothing. Nil
+	// answers a plain text 401.
 	OnBearerRefusal func(w http.ResponseWriter, r *http.Request)
 }
 
@@ -264,7 +272,14 @@ func (m *Manager) CookieName() string { return m.cfg.CookieName }
 //
 // The id, the issue time, the last use and the expiry on s are overwritten. The
 // session as stored is returned.
+//
+// A request [Manager.Middleware] classified as a bearer request is refused
+// with [ErrBearerRequest] and gets no cookie. ctx has to be the request's
+// context for that check to see it.
 func (m *Manager) Start(ctx context.Context, w http.ResponseWriter, s Session) (Session, error) {
+	if bearerRequest(ctx) {
+		return Session{}, fmt.Errorf("session: start: %w", ErrBearerRequest)
+	}
 	id, err := NewID()
 	if err != nil {
 		return Session{}, err
@@ -300,8 +315,13 @@ func (m *Manager) Start(ctx context.Context, w http.ResponseWriter, s Session) (
 // a fresh login writes whatever the authentication just established.
 //
 // A session a device token authenticated is refused: it has no cookie to
-// rotate, and rotating it would mint a cookie session from a bearer token.
+// rotate, and rotating it would mint a cookie session from a bearer token. A
+// request [Manager.Middleware] classified as a bearer request is refused with
+// [ErrBearerRequest], whatever s is.
 func (m *Manager) Rotate(ctx context.Context, w http.ResponseWriter, s Session) (Session, error) {
+	if bearerRequest(ctx) {
+		return Session{}, fmt.Errorf("session: rotate: %w", ErrBearerRequest)
+	}
 	if s.Credential == CredentialDevice || s.DeviceID != "" {
 		return Session{}, errors.New("session: rotate: a device session has no cookie to rotate")
 	}
@@ -366,10 +386,11 @@ func (m *Manager) Rotate(ctx context.Context, w http.ResponseWriter, s Session) 
 // [Manager.AuthenticateDevice], and the session comes back with
 // [CredentialDevice], the device's subject and [Session.DeviceID]. The cookie
 // is not read, so a request with both authenticates as the token's subject.
-// A token that does not authenticate, a request with more than one
-// Authorization header, and any bearer request without a device store are no
-// session and no error, never a fallback to the cookie. [Manager.Middleware]
-// answers them with 401. A device store that could not answer is the error.
+// A token that does not authenticate and a request with more than one
+// Authorization header are no session and no error, never a fallback to the
+// cookie, and [Manager.Middleware] answers them with 401. Without a device
+// store a bearer request is anonymous: no session, no error, no cookie read.
+// A device store that could not answer is the error.
 func (m *Manager) Read(ctx context.Context, r *http.Request) (Session, bool, error) {
 	res := m.read(ctx, r)
 	return res.session, res.ok, res.err

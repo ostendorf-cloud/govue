@@ -131,7 +131,7 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 	fail(err)
 	a.sessions = sessions
 
-	loginCodec, err := session.NewCodec(session.CodecConfig{Key: cfg.sessionKey})
+	loginCodec, err := session.NewCodec(session.CodecConfig{Key: cfg.sessionKey, AllowPlainHTTP: cfg.allowPlainHTTP})
 	fail(err)
 	a.loginCodec = loginCodec
 
@@ -157,6 +157,10 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 	for _, origin := range cfg.allowedOrigins {
 		fail(a.protector.TrustOrigin(origin))
 	}
+	// App mode: a native app's bearer request skips the CSRF check. That is
+	// safe only because every route sits behind the session middleware,
+	// which never reads the cookie on such a request. See (*app).handler.
+	a.protector.ExemptBearer()
 
 	provider, err := oidc.New(oidc.Config{
 		Issuer:       cfg.oidcIssuer,
@@ -261,9 +265,10 @@ func (a *app) handler() http.Handler {
 	//
 	// The session middleware sits after the csrf protector, so a cookie
 	// request is checked exactly as before it is read. It answers a failed
-	// bearer request with 401 on every route, and the csrf protector lets a
-	// bearer request through only because of that: such a request never
-	// authenticates by the cookie.
+	// bearer request with 401 on every route. The csrf protector's
+	// ExemptBearer lets a bearer request through only because of that: such
+	// a request never authenticates by the cookie. A route mounted without
+	// this chain must not sit behind the exempting protector either.
 	route := func(h http.Handler) http.Handler {
 		return middleware.Chain(h, a.cors.Middleware, a.rateLimit.Middleware, a.protector.Middleware, a.sessions.Middleware)
 	}

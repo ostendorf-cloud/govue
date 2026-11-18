@@ -13,12 +13,20 @@ import (
 )
 
 // A request is a bearer request when it carries one Authorization header with
-// the Bearer scheme, and a malformed one when it carries more than one. Both
-// authenticate by the device token only and never by the cookie: on them this
-// package does not read the session cookie or the login cookie at all, and
-// does not clear either. ADR 0001 records why. The csrf package skips both of
-// its checks for the same requests, through the same predicate, and that is
-// only safe because nothing here falls back to the cookie.
+// the Bearer scheme, and a malformed one when it carries more than one. On
+// both this package never reads the session cookie or the login cookie, and
+// never sets or clears either, whether a device store is configured or not.
+// With a device store they authenticate by the device token only. Without one
+// they are anonymous, so a product's own gateway or JWT keeps working. ADR
+// 0001 records why. csrf.Protector.ExemptBearer skips the CSRF check for the
+// same requests, through the same predicate, and that is only safe because
+// nothing here falls back to the cookie.
+
+// ErrBearerRequest is [Manager.Start] or [Manager.Rotate] called for a
+// request that [Manager.Middleware] classified as a bearer or malformed
+// request. Such a request never gets a session cookie. Without the middleware
+// in front, neither method can tell.
+var ErrBearerRequest = errors.New("session: a bearer request gets no session cookie")
 
 // Credential says how a request authenticated.
 type Credential int
@@ -46,6 +54,13 @@ func (c Credential) String() string {
 	return "unknown"
 }
 
+// The two WWW-Authenticate challenges of RFC 6750 section 3.1: the bare one
+// for a request without a token, and invalid_token for a token that fails.
+const (
+	challengeNoToken = "Bearer"
+	challengeInvalid = `Bearer error="invalid_token"`
+)
+
 // readResult is the whole outcome of one read, the bearer refusal included,
 // which [Manager.Read] does not report and [Manager.Middleware] answers.
 type readResult struct {
@@ -55,37 +70,41 @@ type readResult struct {
 	// kind is the request's classification.
 	kind bearer.Kind
 	// refused is a bearer or malformed request whose token does not
-	// authenticate: the one 401 of ADR 0001.
+	// authenticate against a configured device store: the one 401 of ADR
+	// 0001.
 	refused bool
+	// noToken is a refused bearer request that carried no token at all.
+	noToken bool
 }
 
 // read classifies the request once and reads the one credential it decides.
 func (m *Manager) read(ctx context.Context, r *http.Request) readResult {
 	kind, token := bearer.Classify(r.Header)
-	switch kind {
-	case bearer.None:
+	if kind == bearer.None {
 		s, ok, err := m.readCookie(ctx, r)
 		return readResult{session: s, ok: ok, err: err, kind: kind}
-	case bearer.Bearer:
-		s, err := m.readDevice(ctx, token)
-		if errors.Is(err, ErrDeviceToken) {
-			return readResult{kind: kind, refused: true}
-		}
-		if err != nil {
-			return readResult{err: err, kind: kind}
-		}
-		return readResult{session: s, ok: true, kind: kind}
 	}
-	// Malformed, and any value a later change might add, fails closed.
-	return readResult{kind: kind, refused: true}
+	if m.cfg.Devices.Store == nil {
+		// Anonymous: the header is somebody else's, and the cookie is
+		// still not read.
+		return readResult{kind: kind}
+	}
+	if kind != bearer.Bearer {
+		// Malformed, and any value a later change might add, fails closed.
+		return readResult{kind: kind, refused: true}
+	}
+	s, err := m.readDevice(ctx, token)
+	if errors.Is(err, ErrDeviceToken) {
+		return readResult{kind: kind, refused: true, noToken: token == ""}
+	}
+	if err != nil {
+		return readResult{err: err, kind: kind}
+	}
+	return readResult{session: s, ok: true, kind: kind}
 }
 
-// readDevice authenticates a bearer token. Without a device store no token
-// authenticates, which is the same [ErrDeviceToken] as an unknown one.
+// readDevice authenticates a bearer token against the device store.
 func (m *Manager) readDevice(ctx context.Context, token string) (Session, error) {
-	if m.cfg.Devices.Store == nil {
-		return Session{}, ErrDeviceToken
-	}
 	d, err := m.AuthenticateDevice(ctx, token)
 	if err != nil {
 		return Session{}, err
@@ -102,7 +121,10 @@ func (m *Manager) readDevice(ctx context.Context, token string) (Session, error)
 
 // endDevice signs out the device session a bearer request carries.
 func (m *Manager) endDevice(ctx context.Context, kind bearer.Kind, token string) error {
-	if kind != bearer.Bearer || m.cfg.Devices.Store == nil {
+	if m.cfg.Devices.Store == nil {
+		return fmt.Errorf("session: end: %w", ErrDevicesDisabled)
+	}
+	if kind != bearer.Bearer {
 		return fmt.Errorf("session: end: %w", ErrDeviceToken)
 	}
 	d, err := m.AuthenticateDevice(ctx, token)
@@ -117,18 +139,77 @@ func (m *Manager) endDevice(ctx context.Context, kind bearer.Kind, token string)
 }
 
 // refuseBearer answers a bearer request whose token does not authenticate.
-// The headers are set first, so a custom refusal cannot forget them.
-func (m *Manager) refuseBearer(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("WWW-Authenticate", "Bearer")
+// The headers are set before every write, so a custom refusal cannot drop
+// them, and a refusal that writes nothing or another status still ends as a
+// 401.
+func (m *Manager) refuseBearer(w http.ResponseWriter, r *http.Request, noToken bool) {
+	challenge := challengeInvalid
+	if noToken {
+		challenge = challengeNoToken
+	}
+	headers := func(h http.Header) {
+		h.Set("WWW-Authenticate", challenge)
+		h.Set("Cache-Control", "no-store")
+	}
+	headers(w.Header())
 	if m.cfg.OnBearerRefusal != nil {
-		m.cfg.OnBearerRefusal(w, r)
-		return
+		guarded := &guardWriter{ResponseWriter: w, before: headers, status: http.StatusUnauthorized}
+		m.cfg.OnBearerRefusal(guarded, r)
+		if guarded.wrote {
+			return
+		}
+		headers(w.Header())
 	}
 	http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 }
 
-// noStore keeps a response to a bearer request out of every cache, as RFC
-// 6749 section 5.1 does for a token response.
-func noStore(w http.ResponseWriter) {
-	w.Header().Set("Cache-Control", "no-store")
+// noStore keeps a response out of every cache, as RFC 6749 section 5.1 does
+// for a token response.
+func noStore(h http.Header) {
+	h.Set("Cache-Control", "no-store")
 }
+
+// guardWriter applies before to the headers on every status it writes, so a
+// handler cannot override them, and replaces a final status with status when
+// that is set.
+type guardWriter struct {
+	http.ResponseWriter
+	before func(http.Header)
+	status int
+	wrote  bool
+}
+
+// WriteHeader applies the headers and the forced status before it writes.
+func (w *guardWriter) WriteHeader(code int) {
+	w.before(w.Header())
+	if code >= http.StatusOK {
+		if w.wrote {
+			return
+		}
+		w.wrote = true
+		if w.status != 0 {
+			code = w.status
+		}
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// Write writes the status first when nothing has, as net/http does.
+func (w *guardWriter) Write(b []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// FlushError flushes through [http.ResponseController], after the headers
+// are final.
+func (w *guardWriter) FlushError() error {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	return http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+// Unwrap lets [http.ResponseController] reach the writer underneath.
+func (w *guardWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
