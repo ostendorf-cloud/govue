@@ -16,12 +16,13 @@ func TestNewAppOriginsAccepts(t *testing.T) {
 
 	got, err := NewAppOrigins([]string{
 		"capacitor://localhost", "https://localhost", "https://app.example.test:8443", "ionic://localhost",
+		"https://localhost:1", "https://localhost:65535", "capacitor://localhost:8100",
 	}, "capacitor", "ionic")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(got.List()); n != 4 {
-		t.Errorf("List has %d entries, want 4", n)
+	if n := len(got.List()); n != 7 {
+		t.Errorf("List has %d entries, want 7", n)
 	}
 	// The list is a copy.
 	got.List()[0] = "https://changed.example.test"
@@ -70,6 +71,18 @@ func TestNewAppOriginsRefuses(t *testing.T) {
 		{"an allowed scheme with a colon", []string{"https://app.example.test"}, []string{"capacitor:"}, "capacitor:"},
 		{"a duplicate", []string{"https://app.example.test", "https://app.example.test"}, nil, "https://app.example.test"},
 		{"a duplicate custom origin", []string{"capacitor://localhost", "capacitor://localhost"}, []string{"capacitor"}, "capacitor://localhost"},
+		{"an empty port", []string{"https://localhost:"}, nil, "https://localhost:"},
+		{"port zero", []string{"https://localhost:0"}, nil, "https://localhost:0"},
+		{"port 65536", []string{"https://localhost:65536"}, nil, "https://localhost:65536"},
+		{"a huge port", []string{"https://localhost:99999999999"}, nil, "https://localhost:99999999999"},
+		{"a port with a leading zero", []string{"https://localhost:08443"}, nil, "https://localhost:08443"},
+		{"the default https port", []string{"https://localhost:443"}, nil, "https://localhost:443"},
+		{"a port that is not a number", []string{"https://localhost:abc"}, nil, "https://localhost:abc"},
+		{"a negative port", []string{"https://localhost:-1"}, nil, "https://localhost:-1"},
+		{"a custom scheme with an empty port", []string{"capacitor://localhost:"}, []string{"capacitor"}, "capacitor://localhost:"},
+		{"a custom scheme with port zero", []string{"capacitor://localhost:0"}, []string{"capacitor"}, "capacitor://localhost:0"},
+		{"a Cyrillic lookalike host", []string{"https://аpple.com"}, nil, "not ASCII"},
+		{"a Unicode host in an allowed scheme", []string{"capacitor://löcalhost"}, []string{"capacitor"}, "not ASCII"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -147,14 +160,156 @@ func TestAppOriginsRejectOverlap(t *testing.T) {
 func TestNewAppCORSRefusesTheZeroList(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewAppCORS(AppOrigins{}); err == nil {
+	if _, err := NewAppCORS(AppOrigins{}, nil); err == nil {
 		t.Error("the zero AppOrigins was accepted")
+	}
+}
+
+// Every scheme a browser handles itself stays refused as a custom scheme, even
+// when the caller names it. The list is written out here, so a scheme removed
+// from the denylist fails a test.
+func TestNewAppOriginsRefusesEveryReservedScheme(t *testing.T) {
+	t.Parallel()
+
+	for _, scheme := range []string{
+		"http", "https", "file", "data", "javascript", "blob", "about", "ftp", "ws", "wss", "filesystem", "chrome",
+		"chrome-extension", "moz-extension", "safari-web-extension", "view-source", "vbscript", "intent", "content",
+	} {
+		t.Run(scheme, func(t *testing.T) {
+			t.Parallel()
+			_, err := NewAppOrigins([]string{scheme + "://localhost"}, scheme)
+			if err == nil {
+				t.Fatalf("scheme %q was accepted as a custom scheme", scheme)
+			}
+			if !strings.Contains(err.Error(), `"`+scheme+`"`) {
+				t.Errorf("error %q does not name the scheme", err)
+			}
+		})
+	}
+}
+
+// An app origin on the list of the web policy fails construction, so a
+// deployment cannot forget the check. The error names the origin.
+func TestNewAppCORSRefusesAnOverlapWithTheWebPolicy(t *testing.T) {
+	t.Parallel()
+
+	app := mustAppOrigins(t, "https://localhost", "https://app2.example.test")
+	for _, web := range []string{"https://app2.example.test", "https://App2.Example.test/"} {
+		cors, err := NewCORS(CORSConfig{Origins: []string{"https://web.example.test", web}, Credentials: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = NewAppCORS(app, cors)
+		if err == nil {
+			t.Fatalf("an overlap with %q was accepted", web)
+		}
+		if !strings.Contains(err.Error(), "https://app2.example.test") {
+			t.Errorf("error %q does not name the origin", err)
+		}
+	}
+}
+
+// An origin on both lists, had the check not stopped it, would get the
+// credentials of the web policy. Pinned with the web policy in the chain and
+// the app origin on both lists written into the struct, so the routing alone
+// has to keep the web policy away from an app origin.
+func TestAppCORSNeverRoutesAnAppOriginThroughTheWebPolicy(t *testing.T) {
+	t.Parallel()
+
+	app := mustAppOrigins(t, "https://both.example.test")
+	web, err := NewCORS(CORSConfig{Origins: []string{"https://both.example.test"}, Credentials: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &AppCORS{origins: app, web: web} // bypasses NewAppCORS on purpose
+	h := c.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	for _, req := range []*http.Request{
+		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", nil),
+		appPreflight(t, "https://both.example.test"),
+	} {
+		req.Header.Set("Origin", "https://both.example.test")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if _, ok := rec.Header()["Access-Control-Allow-Credentials"]; ok {
+			t.Errorf("%s: an app origin was sent credentials: %v", req.Method, rec.Header())
+		}
+		if req.Method == http.MethodGet {
+			if got := rec.Header().Values("Vary"); len(got) != 1 || got[0] != "Origin" {
+				t.Errorf("Vary = %v, want one Origin", got)
+			}
+		}
+	}
+}
+
+// The web policy keeps answering its own origins and refusing the rest, behind
+// the combined handler, and the app origin gets exactly one Vary: Origin.
+func TestAppCORSWithTheWebPolicy(t *testing.T) {
+	t.Parallel()
+
+	web, err := NewCORS(CORSConfig{Origins: []string{"https://web.example.test"}, Credentials: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewAppCORS(mustAppOrigins(t, "capacitor://localhost"), web)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := c.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("served")) }))
+
+	do := func(method, origin string) *httptest.ResponseRecorder {
+		r := appPreflight(t, origin)
+		r.Method = method
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+
+		return rec
+	}
+
+	app := do(http.MethodGet, "capacitor://localhost")
+	if got := app.Header().Values("Vary"); len(got) != 1 || got[0] != "Origin" {
+		t.Errorf("app origin Vary = %v, want one Origin", got)
+	}
+	if _, ok := app.Header()["Access-Control-Allow-Credentials"]; ok {
+		t.Error("an app origin was sent credentials")
+	}
+
+	webReal := do(http.MethodGet, "https://web.example.test")
+	if webReal.Header().Get("Access-Control-Allow-Credentials") != "true" ||
+		webReal.Header().Get("Access-Control-Allow-Origin") != "https://web.example.test" {
+		t.Errorf("web origin headers = %v", webReal.Header())
+	}
+	if strings.Contains(webReal.Header().Get("Access-Control-Allow-Headers"), "Authorization") {
+		t.Error("the web policy allows Authorization")
+	}
+	if got := webReal.Header().Values("Vary"); len(got) != 1 || got[0] != "Origin" {
+		t.Errorf("web origin Vary = %v, want one Origin", got)
+	}
+
+	webPre := do(http.MethodOptions, "https://web.example.test")
+	if webPre.Code != http.StatusNoContent || webPre.Header().Get("Access-Control-Allow-Credentials") != "true" {
+		t.Errorf("web preflight = %d %v", webPre.Code, webPre.Header())
+	}
+	if strings.Contains(webPre.Header().Get("Access-Control-Allow-Headers"), "Authorization") {
+		t.Error("the web preflight allows Authorization")
+	}
+
+	for _, origin := range []string{"https://evil.example.test", "null", "capacitor://other"} {
+		rec := do(http.MethodOptions, origin)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("preflight from %q = %d, want 403 from the web policy", origin, rec.Code)
+		}
+		for key := range rec.Header() {
+			if strings.HasPrefix(key, "Access-Control-") {
+				t.Errorf("preflight from %q got %s", origin, key)
+			}
+		}
 	}
 }
 
 func appCORSHandler(t *testing.T, reached *bool) http.Handler {
 	t.Helper()
-	c, err := NewAppCORS(mustAppOrigins(t, "capacitor://localhost", "https://localhost"))
+	c, err := NewAppCORS(mustAppOrigins(t, "capacitor://localhost", "https://localhost"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

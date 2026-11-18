@@ -257,6 +257,7 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 	})
 	fail(err)
 	a.cors = cors
+	fail(a.buildAppCORS())
 
 	a.security = middleware.DefaultSecurity()
 	if cfg.allowPlainHTTP {

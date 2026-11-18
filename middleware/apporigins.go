@@ -9,17 +9,22 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // AppOrigins is the list of origins a native app sends its requests from,
 // such as the bundled origin of a Capacitor webview. It is a type of its own,
 // next to CORS and not a field of it, for one reason: an app origin must
-// never be passed where a web origin goes, and a distinct type makes that a
-// compile error instead of a convention. Nothing here converts it to a plain
-// list for csrf.Protector.TrustOrigin or for [CORSConfig.Origins]. The
-// application passes [AppOrigins.List] to devicehttp's IssueTrustedOrigins and
-// to [NewAppCORS], and nowhere else.
+// never be passed where a web origin goes, and a distinct type helps to keep
+// the two apart. That is a convention helped by the type, not a guarantee:
+// [AppOrigins.List] returns a plain []string, which the compiler would accept
+// in [CORSConfig.Origins] or csrf.Protector.TrustOrigin. What is structural is
+// the web CORS list: [NewAppCORS] takes the web [CORS] and refuses to build
+// when the two lists overlap. The application passes [AppOrigins.List] to
+// devicehttp's IssueTrustedOrigins and to csrf.Protector.TrustOriginOnRoute
+// for the one issue route, and nowhere else.
 //
 // The zero value holds no origin and is refused by [NewAppCORS].
 type AppOrigins struct {
@@ -31,12 +36,17 @@ type AppOrigins struct {
 // browser handles itself, which no app bundle origin is.
 var reservedAppSchemes = []string{
 	"http", "https", "file", "data", "javascript", "blob", "about", "ftp", "ws", "wss", "filesystem", "chrome",
+	"chrome-extension", "moz-extension", "safari-web-extension", "view-source", "vbscript", "intent", "content",
 }
 
 // NewAppOrigins validates origins and returns the list. Each entry is exactly
 // scheme://host or scheme://host:port, written the way a browser sends it:
 // lower case, with no path, no trailing slash, no query, no fragment and no
-// userinfo. The scheme is https, or one of customSchemes. A wildcard, the
+// userinfo. The host is ASCII: a browser sends an internationalised host as
+// punycode, so a Unicode host never matches and is an error. A port is
+// numeric, from 1 to 65535, without a leading zero, and never the default port
+// 443 of https, which a browser leaves out. An empty port is an error. The
+// scheme is https, or one of customSchemes. A wildcard, the
 // literal "null", http, an empty list and a duplicate are errors, and so is a
 // custom scheme that is not a lower case URL scheme or that is one of the
 // schemes a browser handles itself. Every error names the offending value.
@@ -96,6 +106,23 @@ func checkAppOrigin(origin string, customSchemes []string) error {
 	if parsed.Scheme != "https" && !slices.Contains(customSchemes, parsed.Scheme) {
 		return bad("has a scheme that is neither https nor a listed custom scheme")
 	}
+	for i := range len(origin) {
+		if origin[i] >= utf8.RuneSelf {
+			return bad("has a host that is not ASCII, a browser sends punycode")
+		}
+	}
+	if strings.HasSuffix(parsed.Host, ":") {
+		return bad("has an empty port")
+	}
+	if port := parsed.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 || port[0] == '0' {
+			return bad("has a port a browser never sends, use 1 to 65535 without a leading zero")
+		}
+		if parsed.Scheme == "https" && n == 443 {
+			return bad("names the default port 443, which a browser leaves out")
+		}
+	}
 
 	return nil
 }
@@ -119,8 +146,10 @@ func validCustomScheme(s string) bool {
 }
 
 // List returns a copy of the origins, in the order they were given. It is for
-// devicehttp's IssueTrustedOrigins and for nothing else: never for
-// csrf.Protector.TrustOrigin and never for [CORSConfig.Origins].
+// devicehttp's IssueTrustedOrigins and csrf.Protector.TrustOriginOnRoute for the
+// issue route, and for nothing else: never for csrf.Protector.TrustOrigin and
+// never for [CORSConfig.Origins]. The compiler would accept it there, so this
+// is a rule the caller keeps.
 func (a AppOrigins) List() []string { return slices.Clone(a.origins) }
 
 // Contains reports whether origin, byte for byte as a client sent it, is on
@@ -129,10 +158,13 @@ func (a AppOrigins) List() []string { return slices.Clone(a.origins) }
 func (a AppOrigins) Contains(origin string) bool { return slices.Contains(a.origins, origin) }
 
 // RejectOverlap returns an error that names the first app origin that is also
-// on another list. Call it once at startup, with the list of the web CORS
-// policy and the origins passed to csrf.Protector.TrustOrigin, and refuse to
-// start on an error. An app origin on either list would let a page of that
-// origin ride a cookie, because both of those lists carry credentials.
+// on another list. [NewAppCORS] already refuses an overlap with the web
+// [CORS] it is given. What stays a call of the application is the list this
+// package cannot see: call it once at startup with the origins passed to
+// csrf.Protector.TrustOrigin, and refuse to start on an error. An app origin on
+// either list would let a page of that origin ride a cookie, because both of
+// those lists carry credentials. The webCORS argument is for a list that does
+// not go through a [CORS] value.
 //
 // The other lists are compared the way their consumers read them: surrounding
 // space and trailing slashes dropped and letters lower cased, as NewCORS
@@ -168,50 +200,77 @@ const (
 	appCORSMaxAge = "600"
 )
 
-// AppCORS answers the CORS protocol for the origins of a native app. It is
-// the app half of a two policy setup and never replaces the web policy: a
-// request whose Origin is on the app list is answered here and goes no
-// further than this handler's own headers, any other request passes to the
-// next handler untouched. Put it in front of [CORS.Middleware]. The lists
-// are disjoint, see [AppOrigins.RejectOverlap], so the web policy never sees
-// an app origin it would answer differently.
+// AppCORS is the one CORS handler of a deployment with native apps. It holds
+// the app policy and the web [CORS] policy and routes by the Origin header: a
+// request whose Origin is on the app list is answered by the app policy and
+// goes to the next handler directly, never through the web policy. Any other
+// request goes through the web policy, or straight on when there is none. It
+// replaces [CORS.Middleware] in the chain and does not sit in front of it, so
+// no origin gets the answer of both. [NewAppCORS] refuses a web policy whose
+// origin list overlaps the app list, so the web policy could not answer an
+// app origin even if the routing were bypassed.
 //
-// It never sends Access-Control-Allow-Credentials: an app authenticates with
-// a bearer token, which is not a cookie, so credentials mode stays off and a
-// page of an app origin cannot ride a cookie even if it tried. It sends no
-// Access-Control header for an origin that is not listed, and never echoes one.
+// It never sends Access-Control-Allow-Credentials for an app origin: an app
+// authenticates with a bearer token, which is not a cookie, so credentials
+// mode stays off and a page of an app origin cannot ride a cookie even if it
+// tried. It sends no Access-Control header of its own for an origin that is not
+// listed, and never echoes one.
+//
+// Not sent: Access-Control-Expose-Headers, so a page reads the CORS safelisted
+// response headers only and cannot read Retry-After. Access-Control-Allow-
+// Private-Network is not sent either: a preflight with
+// Access-Control-Request-Private-Network gets the answer without it, and a
+// browser that enforces Private Network Access, such as Chrome, then fails the
+// request when the API is on a private network. That is not decided here.
 type AppCORS struct {
 	origins AppOrigins
+	web     *CORS
 }
 
-// NewAppCORS returns the app CORS handler for origins. It returns an error for
-// the zero AppOrigins.
-func NewAppCORS(origins AppOrigins) (*AppCORS, error) {
+// NewAppCORS returns the CORS handler for origins and the web policy web, which
+// may be nil when the deployment has no web origin. It returns an error for the
+// zero AppOrigins and for an app origin that is also an origin of web, naming
+// the origin. The comparison is the one of [AppOrigins.RejectOverlap].
+func NewAppCORS(origins AppOrigins, web *CORS) (*AppCORS, error) {
 	if len(origins.origins) == 0 {
 		return nil, errors.New("middleware: the app CORS handler needs at least one app origin")
 	}
+	if web != nil {
+		if err := origins.RejectOverlap(web.origins, nil); err != nil {
+			return nil, err
+		}
+	}
 
-	return &AppCORS{origins: origins}, nil
+	return &AppCORS{origins: origins, web: web}, nil
 }
 
 // Middleware answers a preflight of an app origin and adds the CORS headers to
-// the real response of an app origin. Any other request is passed on with
-// Vary: Origin and no other header from this handler.
+// the real response of an app origin, with one Vary: Origin. Any other request
+// is answered by the web policy.
 func (c *AppCORS) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		// Always, even without a match: a cache must never hand the answer
-		// computed for an app origin to another origin. This is the only
-		// header an unlisted origin gets from this handler.
-		h.Add("Vary", "Origin")
+	var other http.Handler
+	if c.web != nil {
+		// The web policy adds its own Vary: Origin.
+		other = c.web.Middleware(next)
+	} else {
+		other = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Always, even without a match: a cache must never hand the answer
+			// computed for an app origin to another origin.
+			w.Header().Add("Vary", "Origin")
+			next.ServeHTTP(w, r)
+		})
+	}
 
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if origin == "" || !c.origins.Contains(origin) {
-			next.ServeHTTP(w, r)
+			other.ServeHTTP(w, r)
 
 			return
 		}
 
+		h := w.Header()
+		h.Add("Vary", "Origin")
 		// The matched Origin, byte for byte: it equals a listed value.
 		h.Set("Access-Control-Allow-Origin", origin)
 

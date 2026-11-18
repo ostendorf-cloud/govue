@@ -233,6 +233,32 @@ func TestAppOriginIsNoWebOrigin(t *testing.T) {
 	}
 }
 
+// The issue route trusts the app origins and no other cross site origin: the
+// protector refuses an unlisted origin itself, before the handler's own check,
+// which stays a second layer. The message of the protector tells the two apart.
+func TestIssueFromAnUnlistedOriginIsRefusedByTheProtector(t *testing.T) {
+	t.Parallel()
+	a, clock := newAppModeApp(t, 1000, appEnv())
+	secret, _ := newAccount(t, a, clock, acctLogin, acctPassword)
+
+	for _, origin := range []string{evilOrigin, webOrigin, "capacitor://other", "https://localhost:8443", "null"} {
+		clock.Add(time.Minute)
+		w := a.serve(t, accountCall{
+			method: http.MethodPost, path: tokenPath, site: "cross-site", origin: origin,
+			body: creds(acctLogin, acctPassword, totpNow(t, secret, clock)),
+		})
+		if w.Code != http.StatusForbidden {
+			t.Errorf("issue from %q = %d %s, want 403", origin, w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "cross origin or stale request") {
+			t.Errorf("issue from %q was refused by %s, want the protector", origin, w.Body.String())
+		}
+		if hasACHeader(w) && origin != webOrigin {
+			t.Errorf("issue from %q got an Access-Control header: %v", origin, w.Header())
+		}
+	}
+}
+
 // The web policy is unchanged: its origin keeps credentials and the CSRF
 // header, gets no Authorization, and an unlisted origin gets nothing. An app
 // origin gets none of the web policy.
@@ -336,6 +362,8 @@ func TestAppOriginsStartupErrors(t *testing.T) {
 		{"a custom scheme not opted in", map[string]string{"APP_ORIGINS": iosOrigin}, iosOrigin},
 		{"http", map[string]string{"APP_ORIGINS": "http://localhost"}, "http://localhost"},
 		{"a duplicate", map[string]string{"APP_ORIGINS": androidOrigin + "," + androidOrigin}, androidOrigin},
+		{"the default https port", map[string]string{"APP_ORIGINS": "https://app2.example.test:443"}, "https://app2.example.test:443"},
+		{"a Unicode host", map[string]string{"APP_ORIGINS": "https://аpple.com"}, "not ASCII"},
 		{"a scheme without an origin", map[string]string{"APP_SCHEMES": "capacitor"}, "APP_SCHEMES"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

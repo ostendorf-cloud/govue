@@ -338,8 +338,10 @@ func TestDeviceTokensEndWithAPasswordChange(t *testing.T) {
 
 // The origins of ALLOWED_ORIGINS are web origins: the CSRF protector trusts
 // them and the CORS policy sends credentials to them. An app origin must never
-// be one of them, so the issue route does not trust them either. The CSRF
-// protector lets such an origin through, and the handler's own check refuses.
+// be one of them, so the issue route does not trust them either. Without app
+// origins the CSRF protector lets such an origin through, and the handler's own
+// check refuses. With app origins the protector refuses first, see
+// TestIssueFromAnUnlistedOriginIsRefusedByTheProtector.
 func TestDeviceTokenIssueDoesNotTrustTheWebOrigins(t *testing.T) {
 	t.Parallel()
 	a, clock := newAccountApp(t, true, 100)

@@ -220,9 +220,14 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 - App origins are a separate list with their own CORS policy: `Authorization` allowed,
   credentials off. The web policy is unchanged.
 - The app origin list never reaches `csrf.TrustOrigin`. Startup fails when an origin is both an
-  app origin and a web or trusted origin. A test pins that refusal. This is implemented as
-  `middleware.AppOrigins.RejectOverlap`, which a consumer calls at startup, and the dedicated
-  method of the token endpoint section is `csrf.Protector.ExemptOrigin`.
+  app origin and a web or trusted origin. A test pins that refusal. This is implemented in two
+  parts. The web CORS list is structural: `middleware.NewAppCORS` takes the web `CORS` and fails
+  construction on an overlap. The origins passed to `csrf.Protector.TrustOrigin` stay a call of
+  the application, `middleware.AppOrigins.RejectOverlap`, at startup.
+- The dedicated method of the token endpoint section is `csrf.Protector.TrustOriginOnRoute`. It
+  names one method, one path and the app origins, so every other origin keeps the origin half on
+  that route. A switch for every origin would open a route that sets a cookie without a session
+  to login CSRF.
 - A custom scheme is an explicit opt in of exact origins such as `capacitor://localhost`. No
   wildcard, no scheme wide rule and never `null`.
 - The preflight is answered inside the CORS middleware, before rate limit, CSRF and any session

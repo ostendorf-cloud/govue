@@ -111,15 +111,18 @@
 //     there and nothing else. An app origin must never go into
 //     csrf.Protector.TrustOrigin or into the web CORS list, which sends
 //     credentials: either would let a page of that origin ride a cookie.
-//     The application calls middleware.AppOrigins.RejectOverlap at startup
-//     with the web list and the trusted origins, and refuses to start on an
-//     error. For the protector it calls csrf.Protector.ExemptOrigin for the
-//     one issue route, which skips the origin half there and keeps the token
-//     half.
+//     middleware.NewAppCORS refuses an overlap with the web CORS policy it is
+//     given. The application calls middleware.AppOrigins.RejectOverlap at
+//     startup with the origins it passes to csrf.Protector.TrustOrigin, and
+//     refuses to start on an error. For the protector it calls
+//     csrf.Protector.TrustOriginOnRoute for the one issue route with the same
+//     app origins, which skips the origin half there for those origins only
+//     and keeps the token half.
 //   - A browser engine sends a preflight before a request with Authorization.
 //     middleware.AppCORS answers it for the app origins with Authorization
-//     and Content-Type allowed and credentials off, in front of the web CORS
-//     policy and before authentication.
+//     and Content-Type allowed and credentials off. It replaces the web CORS
+//     middleware in the chain, answers before authentication and hands every
+//     other origin to the web policy.
 //
 // # Bodies
 //
