@@ -25,6 +25,7 @@ import (
 	"github.com/ostendorf-cloud/govue/oidc"
 	"github.com/ostendorf-cloud/govue/ratelimit"
 	"github.com/ostendorf-cloud/govue/session"
+	"github.com/ostendorf-cloud/govue/session/devicehttp"
 )
 
 // maxRateLimitKeys bounds the number of distinct client addresses the rate
@@ -57,6 +58,10 @@ type app struct {
 	accounts      *account.Handlers
 	authLimiter   *ratelimit.Limiter
 	authRateLimit *middleware.RateLimit
+
+	// devices are the token handlers of a native app, over the same accounts.
+	// See buildDevices.
+	devices *devicehttp.Handlers
 
 	health *health.Registry
 
@@ -291,6 +296,7 @@ func (a *app) handler() http.Handler {
 			a.protector.Middleware, a.sessions.Middleware)
 	}
 	a.mountAccounts(mux, route, checked)
+	a.mountDevices(mux, route, checked)
 
 	mux.Handle("GET /app", route(api.Handle(a.home)))
 	mux.Handle("GET /notes", route(api.Handle(a.listNotes)))
