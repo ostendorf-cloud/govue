@@ -25,11 +25,17 @@ const (
 	passkeyOrigin = "https://app.example.test"
 )
 
-func newPasskeyApp(t *testing.T, authBurst int) (*app, *testClock) {
+func newPasskeyApp(t *testing.T, passkeyBurst int) (*app, *testClock) {
+	t.Helper()
+	return newPasskeyAppBursts(t, 100, passkeyBurst)
+}
+
+func newPasskeyAppBursts(t *testing.T, authBurst, passkeyBurst int) (*app, *testClock) {
 	t.Helper()
 
 	env := testEnv(t, 1000)
 	env["AUTH_RATE_LIMIT_BURST"] = strconv.Itoa(authBurst)
+	env["PASSKEY_RATE_LIMIT_BURST"] = strconv.Itoa(passkeyBurst)
 	env["ALLOW_SIGNUP"] = "true"
 	env["PASSKEY_RP_ID"] = passkeyRPID
 	cfg, err := loadConfig(func(key string) string { return env[key] })
@@ -188,7 +194,7 @@ func TestPasskeyRegisterAndLoginOverHTTP(t *testing.T) {
 	}
 }
 
-func TestPasskeyRoutesNeedTheAuthRateLimit(t *testing.T) {
+func TestPasskeyRoutesNeedThePasskeyRateLimit(t *testing.T) {
 	t.Parallel()
 	for _, route := range []string{"/register/begin", "/register/finish", "/login/begin", "/login/finish"} {
 		a, _ := newPasskeyApp(t, 1)
@@ -197,6 +203,121 @@ func TestPasskeyRoutesNeedTheAuthRateLimit(t *testing.T) {
 		if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" {
 			t.Fatalf("second call of %s = %d, want 429 with Retry-After", route, w.Code)
 		}
+	}
+}
+
+// TestPasskeyAndPasswordLoginHaveSeparateBuckets: an autofill login begun on
+// every page view must not use up the password login of the same client, and
+// a password guesser must not block passkey logins.
+func TestPasskeyAndPasswordLoginHaveSeparateBuckets(t *testing.T) {
+	t.Parallel()
+
+	a, _ := newPasskeyAppBursts(t, 1, 1)
+	if w := a.passkeyCall(t, passkeyPrefix+"/login/begin", map[string]any{}, ""); w.Code != http.StatusOK {
+		t.Fatalf("passkey login begin = %d", w.Code)
+	}
+	if w := a.passkeyCall(t, passkeyPrefix+"/login/begin", map[string]any{}, ""); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second passkey login begin = %d, want 429", w.Code)
+	}
+	login := creds(acctLogin, acctPassword, "000000")
+	if w := a.serve(t, accountCall{method: http.MethodPost, path: accountPrefix + "/login", body: login}); w.Code == http.StatusTooManyRequests {
+		t.Fatal("a used up passkey bucket refused the password login")
+	}
+	if w := a.serve(t, accountCall{method: http.MethodPost, path: accountPrefix + "/login", body: login}); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second password login = %d, want 429 from its own bucket", w.Code)
+	}
+
+	b, _ := newPasskeyAppBursts(t, 1, 1)
+	for range 2 {
+		b.serve(t, accountCall{method: http.MethodPost, path: accountPrefix + "/login", body: login})
+	}
+	if w := b.passkeyCall(t, passkeyPrefix+"/login/begin", map[string]any{}, ""); w.Code != http.StatusOK {
+		t.Fatalf("passkey login begin after the password bucket ran out = %d, want 200", w.Code)
+	}
+}
+
+// TestDeviceSessionCannotRegisterAPasskey: a native app's bearer token is a
+// session, but not a cookie one, and passkeys work with the cookie client
+// only. Both registration routes answer it like a request without a session.
+func TestDeviceSessionCannotRegisterAPasskey(t *testing.T) {
+	t.Parallel()
+	a, clock := newPasskeyApp(t, 100)
+	secret, cookie := newAccount(t, a, clock, acctLogin, acctPassword)
+	device := issueToken(t, a, clock, acctLogin, acctPassword, secret, "phone")
+
+	// The token works on a route that needs a session.
+	if code := notesWith(t, a, device.Token); code != http.StatusOK {
+		t.Fatalf("notes with the device token = %d", code)
+	}
+
+	// A real registration challenge, begun by the same account's browser.
+	w := a.passkeyCall(t, passkeyPrefix+"/register/begin", map[string]any{}, tokenOf(t, a, cookie), cookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cookie register begin = %d %s", w.Code, w.Body)
+	}
+	challenge := passkeyChallenge(t, w)
+
+	for _, c := range []accountCall{
+		{method: http.MethodPost, path: passkeyPrefix + "/register/begin", body: map[string]any{}},
+		{method: http.MethodPost, path: passkeyPrefix + "/register/finish", body: map[string]any{"credential": map[string]any{}}, cookie: challenge},
+	} {
+		c.site = "-"
+		c.authorization = bearerHeader(device.Token)
+		w := a.serve(t, c)
+		if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), `"unauthenticated"`) {
+			t.Fatalf("%s with a device token = %d %s, want 401 unauthenticated", c.path, w.Code, w.Body)
+		}
+	}
+}
+
+func TestOtherFactors(t *testing.T) {
+	t.Parallel()
+	a, clock := newPasskeyApp(t, 100)
+	ctx := t.Context()
+	store := a.accountStore
+
+	// Signed up, TOTP not confirmed: the password alone cannot log in.
+	w := a.serve(t, accountCall{
+		method: http.MethodPost, path: accountPrefix + "/signup",
+		body: map[string]string{"login": acctLogin, "password": acctPassword},
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("signup = %d", w.Code)
+	}
+	rec, err := store.FindByLogin(ctx, acctLogin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := account.Identity{ID: rec.ID, Login: rec.Login}
+
+	tests := []struct {
+		name string
+		id   account.Identity
+		want int
+	}{
+		{"unconfirmed totp", id, 0},
+		{"unknown login", account.Identity{ID: rec.ID, Login: "nobody@example.test"}, 0},
+		{"login of another id", account.Identity{ID: "memory-other", Login: rec.Login}, 0},
+	}
+	for _, tt := range tests {
+		if got, err := otherFactors(ctx, store, tt.id); err != nil || got != tt.want {
+			t.Fatalf("%s: got %d %v, want %d", tt.name, got, err, tt.want)
+		}
+	}
+
+	var signup account.SignupResult
+	if err := json.Unmarshal(w.Body.Bytes(), &signup); err != nil {
+		t.Fatal(err)
+	}
+	clock.Add(time.Minute)
+	if w := a.serve(t, accountCall{
+		method: http.MethodPost, path: accountPrefix + "/confirm",
+		body: creds(acctLogin, acctPassword, totpNow(t, signup.Enrolment.Secret, clock)),
+	}); w.Code != http.StatusOK {
+		t.Fatalf("confirm = %d", w.Code)
+	}
+	if got, err := otherFactors(ctx, store, id); err != nil || got != 1 {
+		t.Fatalf("confirmed totp: got %d %v, want 1", got, err)
 	}
 }
 

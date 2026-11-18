@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -245,20 +246,29 @@ func checkDisplayName(name string) error {
 	return nil
 }
 
-// checkOrigin refuses an origin a browser would never send, so a typo fails
-// at startup instead of refusing every ceremony: the origin in the client
-// data is compared byte for byte. It has to be https, or http on localhost,
-// with a lower case host that is the RP id or below it, an optional port
-// that is not the scheme's default, and nothing else.
+// checkOrigin accepts an origin only in the serialised form a browser puts
+// into the client data, and refuses everything else at startup instead of
+// normalising it: a lower case scheme, https or http on localhost, a lower
+// case host of DNS labels that is the RP id or below it, and an optional port
+// of 1 to 65535 without leading zeros that is not the scheme's default.
+//
+// The library's own comparison folds the case of the scheme and the host and
+// normalises the port, so a sloppy entry might still match. Refusing it
+// keeps the configured list equal to what browsers send, which is what a
+// reviewer reads and what the RP id suffix rule is checked against.
 func checkOrigin(origin, rpID string) error {
 	u, err := url.Parse(origin)
 	if err != nil {
 		return fmt.Errorf("origin %q is not a URL: %w", origin, err)
 	}
 	host := u.Hostname()
+	// url.Parse folds the scheme to lower case, so the raw text is checked.
+	scheme, _, _ := strings.Cut(origin, ":")
 	switch {
-	case u.Scheme == "https":
-	case u.Scheme == "http" && host == "localhost":
+	case scheme != strings.ToLower(scheme):
+		return fmt.Errorf("origin %q needs a lower case scheme", origin)
+	case scheme == "https":
+	case scheme == "http" && host == "localhost":
 	default:
 		return fmt.Errorf("origin %q is not https, plain http is allowed on localhost only", origin)
 	}
@@ -266,14 +276,43 @@ func checkOrigin(origin, rpID string) error {
 		strings.HasSuffix(origin, "?") || strings.HasSuffix(origin, "#") {
 		return fmt.Errorf("origin %q holds more than a scheme, a host and a port", origin)
 	}
-	if host == "" || host != strings.ToLower(host) {
-		return fmt.Errorf("origin %q needs a lower case host", origin)
+	if host == "" {
+		return fmt.Errorf("origin %q has no host", origin)
 	}
-	if port := u.Port(); port == "443" && u.Scheme == "https" || port == "80" && u.Scheme == "http" {
-		return fmt.Errorf("origin %q names the default port, a browser sends it without", origin)
+	if host != "localhost" {
+		for _, label := range strings.Split(host, ".") {
+			if !validLabel(label) {
+				return fmt.Errorf("origin %q needs a lower case host of DNS labels, no wildcard", origin)
+			}
+		}
+	}
+	if err := checkPort(origin, u); err != nil {
+		return err
 	}
 	if rpID != "" && host != rpID && !strings.HasSuffix(host, "."+rpID) {
 		return fmt.Errorf("origin %q is not rp id %q or a subdomain of it", origin, rpID)
+	}
+
+	return nil
+}
+
+// checkPort refuses a port a browser never serialises: an empty one after a
+// colon, one with a leading zero, one outside 1 to 65535 and the default port
+// of the scheme, which a browser leaves out.
+func checkPort(origin string, u *url.URL) error {
+	port := u.Port()
+	if port == "" {
+		if strings.HasSuffix(u.Host, ":") {
+			return fmt.Errorf("origin %q has a colon without a port", origin)
+		}
+		return nil
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 || port[0] == '0' {
+		return fmt.Errorf("origin %q needs a port of 1 to 65535 without leading zeros", origin)
+	}
+	if n == 443 && u.Scheme == "https" || n == 80 && u.Scheme == "http" {
+		return fmt.Errorf("origin %q names the default port, a browser sends it without", origin)
 	}
 
 	return nil

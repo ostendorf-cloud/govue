@@ -38,6 +38,7 @@ func (a *app) buildAccounts() error {
 	}
 
 	accounts := accounttest.NewMemoryStore(accounttest.MemoryConfig{})
+	a.accountStore = accounts
 	service, err := account.NewService(account.ServiceConfig{
 		Store:  accounts,
 		Hasher: hasher,

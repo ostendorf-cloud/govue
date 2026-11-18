@@ -77,6 +77,22 @@ func TestConfigValidation(t *testing.T) {
 		{"origin with user", func(c *Config) { c.Origins = []string{"https://u@app.example.com"} }, "more than"},
 		{"origin upper case", func(c *Config) { c.Origins = []string{"https://App.example.com"} }, "lower case host"},
 		{"origin default port", func(c *Config) { c.Origins = []string{"https://app.example.com:443"} }, "default port"},
+		{"origin default http port", func(c *Config) {
+			c.RPID = "localhost"
+			c.Origins = []string{"http://localhost:80"}
+		}, "default port"},
+		{"origin port out of range", func(c *Config) { c.Origins = []string{"https://app.example.com:99999"} }, "1 to 65535"},
+		{"origin port zero", func(c *Config) { c.Origins = []string{"https://app.example.com:0"} }, "1 to 65535"},
+		{"origin port leading zero", func(c *Config) { c.Origins = []string{"https://app.example.com:0443"} }, "1 to 65535"},
+		{"origin colon without port", func(c *Config) { c.Origins = []string{"https://app.example.com:"} }, "colon without a port"},
+		{"origin wildcard", func(c *Config) {
+			c.RPID = "example.com"
+			c.Origins = []string{"https://*.example.com"}
+		}, "no wildcard"},
+		{"origin upper case scheme", func(c *Config) { c.Origins = []string{"HTTPS://app.example.com"} }, "lower case scheme"},
+		{"origin mixed case scheme", func(c *Config) { c.Origins = []string{"Https://app.example.com"} }, "lower case scheme"},
+		{"origin empty label", func(c *Config) { c.Origins = []string{"https://app..example.com"} }, "DNS labels"},
+		{"origin highest port", func(c *Config) { c.Origins = []string{"https://app.example.com:65535"} }, ""},
 		{"app origin", func(c *Config) { c.Origins = []string{"android:apk-key-hash:abc"} }, "not https"},
 		{"missing display name", func(c *Config) { c.RPDisplayName = " " }, "rp display name is required"},
 		{"display name control", func(c *Config) { c.RPDisplayName = "a\nb" }, "not printable"},

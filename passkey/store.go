@@ -90,6 +90,17 @@ type Store interface {
 	// AddCredential stores a new credential. A credential id that is already
 	// stored, for this or any other account, returns ErrConflict and changes
 	// nothing.
+	//
+	// An account has exactly one user handle. When the account already holds
+	// a credential, cred.UserHandle has to equal its handle, or the call
+	// returns ErrConflict and changes nothing. The check and the insert are
+	// one step: two first registrations racing from two browsers each bring
+	// a new random handle, and exactly one of them may win. In SQL that is a
+	// lock on the account's credential rows, or the handle kept in an account
+	// column and written once with a conditional UPDATE. Without it an
+	// account ends up with two handles. An adapter that answers
+	// FindByUserHandle from an account column then never finds the second
+	// passkey, while a delete still counts it as a live one.
 	AddCredential(ctx context.Context, cred Credential) error
 
 	// Credentials returns every credential of the account, oldest first. An
@@ -102,6 +113,11 @@ type Store interface {
 	// would return them, so a passkey login and a password login yield the
 	// same Identity. An account that must not log in, because it is disabled
 	// or held back, answers ErrNotFound, as [account.Store.FindByLogin] does.
+	//
+	// The handle belongs to one account and the account has no other, which
+	// AddCredential guarantees. The answer holds every credential of that
+	// account, so the handle can be kept on each credential row or once in
+	// an account column, and both answer the same.
 	FindByUserHandle(ctx context.Context, handle []byte) (account.Identity, []Credential, error)
 
 	// UpdateCredential writes SignCount, LastUsedAt and Data of the credential

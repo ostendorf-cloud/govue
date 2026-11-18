@@ -14,6 +14,7 @@ import (
 	"os"
 
 	"github.com/ostendorf-cloud/govue/account"
+	"github.com/ostendorf-cloud/govue/account/accounttest"
 	"github.com/ostendorf-cloud/govue/api"
 	"github.com/ostendorf-cloud/govue/appassoc"
 	"github.com/ostendorf-cloud/govue/clientip"
@@ -59,6 +60,7 @@ type app struct {
 	// accounts are the local account handlers, with their own stricter rate
 	// limit. See buildAccounts.
 	accounts      *account.Handlers
+	accountStore  *accounttest.MemoryStore
 	authLimiter   *ratelimit.Limiter
 	authRateLimit *middleware.RateLimit
 
@@ -66,6 +68,9 @@ type app struct {
 	// Both are nil unless PASSKEY_RP_ID is set. See buildPasskeys.
 	passkeys     *passkey.Handlers
 	passkeyStore *passkeytest.MemoryStore
+	// passkeyRateLimit is the limit of the passkey begin and finish routes,
+	// a bucket of its own: see buildPasskeys.
+	passkeyRateLimit *middleware.RateLimit
 
 	// devices are the token handlers of a native app, over the same accounts.
 	// See buildDevices.
@@ -321,7 +326,7 @@ func (a *app) handler() http.Handler {
 			a.protector.Middleware, a.sessions.Middleware)
 	}
 	a.mountAccounts(mux, route, checked)
-	a.mountPasskeys(mux, route, checked)
+	a.mountPasskeys(mux, route)
 	a.mountDevices(mux, route, checked)
 
 	mux.Handle("GET /app", route(api.Handle(a.home)))

@@ -16,7 +16,8 @@
 //	}
 //
 // The guards it checks are the ones the handlers do not repeat: a credential
-// id is unique across accounts, a user handle matches only itself, the sign
+// id is unique across accounts, an account keeps one user handle, also under
+// racing first registrations, a user handle matches only itself, the sign
 // count update is a compare and set, a delete never reaches another account,
 // and the last credential survives racing deletes when it has to. The race
 // checks are a safety net, as in accounttest: what proves a SQL adapter
@@ -82,6 +83,8 @@ func Run(t *testing.T, h Harness) {
 	}{
 		{"AddAndList", checkAddAndList},
 		{"AddRefusesTakenID", checkAddRefusesTakenID},
+		{"AddRefusesSecondHandle", checkAddRefusesSecondHandle},
+		{"AddConcurrentFirstHandleOnce", checkAddConcurrentFirstHandle},
 		{"CredentialsOfUnknownAccount", checkCredentialsUnknown},
 		{"FindByUserHandleExact", checkFindExact},
 		{"FindByUserHandleDisabled", checkFindDisabled},
@@ -179,6 +182,59 @@ func checkAddRefusesTakenID(t *testing.T, h Harness) {
 	}
 }
 
+// checkAddRefusesSecondHandle: an account has one user handle. A credential
+// with another handle is refused, and the account keeps finding its passkeys
+// through the first.
+func checkAddRefusesSecondHandle(t *testing.T, h Harness) {
+	store := h.NewStore(t)
+	id := h.NewAccount(t, store)
+	first := newHandle()
+	add(t, store, newCredential(id.ID, first))
+
+	second := newHandle()
+	if err := store.AddCredential(context.Background(), newCredential(id.ID, second)); !errors.Is(err, passkey.ErrConflict) {
+		t.Fatalf("AddCredential with a second handle for one account: got %v, want passkey.ErrConflict", err)
+	}
+	if got := credentials(t, store, id.ID); len(got) != 1 {
+		t.Fatalf("the refused credential was stored: %d credentials", len(got))
+	}
+	_, _, err := store.FindByUserHandle(context.Background(), second)
+	wantNotFound(t, "FindByUserHandle of the refused handle", err)
+
+	// The same handle is still accepted.
+	add(t, store, newCredential(id.ID, first))
+}
+
+// checkAddConcurrentFirstHandle: first registrations racing from several
+// browsers each bring their own handle. Exactly one handle wins.
+func checkAddConcurrentFirstHandle(t *testing.T, h Harness) {
+	store := h.NewStore(t)
+	for round := range h.Rounds {
+		id := h.NewAccount(t, store)
+		creds := make([]passkey.Credential, h.Racers)
+		for i := range creds {
+			creds[i] = newCredential(id.ID, newHandle())
+		}
+		errs := race(h.Racers, func(i int) error {
+			return store.AddCredential(context.Background(), creds[i])
+		})
+		ok := 0
+		for _, err := range errs {
+			switch {
+			case err == nil:
+				ok++
+			case !errors.Is(err, passkey.ErrConflict):
+				t.Fatalf("unexpected error: %v", err)
+			}
+		}
+		got := credentials(t, store, id.ID)
+		if ok != 1 || len(got) != 1 {
+			t.Fatalf("round %d: %d of %d racing first registrations with their own handles succeeded, %d stored, want exactly 1",
+				round, ok, h.Racers, len(got))
+		}
+	}
+}
+
 func checkCredentialsUnknown(t *testing.T, h Harness) {
 	store := h.NewStore(t)
 	if got := credentials(t, store, "passkeytest-unknown-account"); len(got) != 0 {
@@ -271,8 +327,9 @@ func checkUpdateStaysInAccount(t *testing.T, h Harness) {
 func checkUpdateConcurrentOnce(t *testing.T, h Harness) {
 	store := h.NewStore(t)
 	id := h.NewAccount(t, store)
+	handle := newHandle()
 	for round := range h.Rounds {
-		c := newCredential(id.ID, newHandle())
+		c := newCredential(id.ID, handle)
 		add(t, store, c)
 		errs := race(h.Racers, func(i int) error {
 			next := c

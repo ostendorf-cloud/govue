@@ -107,10 +107,13 @@ task example:build   # compile the example application
   Argon2id, which the standard library lacks. The owner accepted it for local accounts.
   `github.com/go-webauthn/webauthn` v0.18.2 is imported by the `passkey` package only, for the
   WebAuthn ceremonies, and no exported name carries one of its types. The owner accepted it for
-  passkeys. Its own modules, CBOR, msgpack, JWT, `go-tpm` and `golang.org/x/crypto/ocsp` among
-  them, reach the build of `passkey` and nothing else. `passkey/passkeytest` writes its CBOR by
-  hand and imports no library package itself. Another dependency needs a reason in the pull
-  request.
+  passkeys. Its own modules, CBOR, msgpack, JWT and `go-tpm` among them, reach every build that
+  imports `passkey`: `passkey`, `passkey/passkeytest` and `example/`, and no other package.
+  Through them `golang.org/x/crypto/ocsp` and, by `go-tpm`'s transport, `golang.org/x/sys/unix`
+  enter the build of `passkey` as well. `passkey` also pulls `golang.org/x/crypto/argon2`
+  through its `account` import. `passkey/passkeytest` writes its
+  CBOR by hand and imports no library package itself. Another dependency needs a reason in the
+  pull request.
 - A package stays usable on its own. An application that wants `clientip` must not pull in
   `session` with it.
 - The secure choice is the default, never an option an application has to remember. Weakening

@@ -708,6 +708,153 @@ func TestRacingClonesWinOnce(t *testing.T) {
 	}
 }
 
+// TestRacingFirstRegistrationsKeepOneHandle begins two first registrations
+// for one account from two browsers. Each begin makes a new handle. Exactly
+// one finish succeeds, whichever comes first, the other gets the one refusal,
+// and a new begin then offers the stored handle.
+func TestRacingFirstRegistrationsKeepOneHandle(t *testing.T) {
+	for _, concurrent := range []bool{false, true} {
+		for round := range 20 {
+			p := newRP(t)
+			bodies := make([][]byte, 2)
+			cookies := make([]*http.Cookie, 2)
+			auths := []*authenticator{newAuthenticator(t), newAuthenticator(t)}
+			for i := range 2 {
+				bodies[i], cookies[i] = p.begin(p.h.RegisterBegin())
+			}
+			if parseOptions(t, bodies[0]).PublicKey.User.ID == parseOptions(t, bodies[1]).PublicKey.User.ID {
+				t.Fatal("two first begins offered the same handle, the race is not set up")
+			}
+			creds := []json.RawMessage{auths[0].create(bodies[0]), auths[1].create(bodies[1])}
+
+			codes := make([]int, 2)
+			finish := func(i int) {
+				codes[i] = p.post(p.h.RegisterFinish(), cookies[i], map[string]any{"credential": creds[i]}).Code
+			}
+			if concurrent {
+				var wg sync.WaitGroup
+				for i := range 2 {
+					wg.Go(func() { finish(i) })
+				}
+				wg.Wait()
+			} else {
+				finish(0)
+				finish(1)
+			}
+			slices.Sort(codes)
+			if !slices.Equal(codes, []int{http.StatusCreated, http.StatusBadRequest}) {
+				t.Fatalf("concurrent %t round %d: codes %v, want one 201 and one 400", concurrent, round, codes)
+			}
+
+			stored, _ := p.store.Credentials(context.Background(), alice.ID)
+			if len(stored) != 1 {
+				t.Fatalf("concurrent %t round %d: %d passkeys stored", concurrent, round, len(stored))
+			}
+			body, _ := p.begin(p.h.RegisterBegin())
+			if parseOptions(t, body).PublicKey.User.ID != b64.EncodeToString(stored[0].UserHandle) {
+				t.Fatalf("concurrent %t round %d: the next begin does not offer the stored handle", concurrent, round)
+			}
+		}
+	}
+}
+
+// handleBlindStore is a store that misses the one handle per account guard
+// of Store.AddCredential: it accepts any handle for an account.
+type handleBlindStore struct {
+	*passkeytest.MemoryStore
+	mu    sync.Mutex
+	extra []passkey.Credential
+}
+
+func (s *handleBlindStore) AddCredential(ctx context.Context, c passkey.Credential) error {
+	if err := s.MemoryStore.AddCredential(ctx, c); !errors.Is(err, passkey.ErrConflict) {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.extra = append(s.extra, c)
+	return nil
+}
+
+func (s *handleBlindStore) Credentials(ctx context.Context, accountID string) ([]passkey.Credential, error) {
+	creds, err := s.MemoryStore.Credentials(ctx, accountID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.extra {
+		if c.AccountID == accountID {
+			creds = append(creds, c)
+		}
+	}
+	return creds, err
+}
+
+// TestRegistrationRefusesASecondHandleOverAStoreWithoutTheGuard shows the
+// handler's own check: over a store that accepts any handle, the second of
+// two first registrations is still refused.
+func TestRegistrationRefusesASecondHandleOverAStoreWithoutTheGuard(t *testing.T) {
+	p := newRP(t)
+	blind := &handleBlindStore{MemoryStore: p.store}
+	p = newRP(t, func(c *passkey.Config) { c.Store = blind })
+	blind.PutAccount(alice)
+
+	first, firstCookie := p.begin(p.h.RegisterBegin())
+	second, secondCookie := p.begin(p.h.RegisterBegin())
+	a, b := newAuthenticator(t), newAuthenticator(t)
+	if w := p.post(p.h.RegisterFinish(), firstCookie, map[string]any{"credential": a.create(first)}); w.Code != http.StatusCreated {
+		t.Fatalf("first finish: %d %s", w.Code, w.Body)
+	}
+	w := p.post(p.h.RegisterFinish(), secondCookie, map[string]any{"credential": b.create(second)})
+	if w.Code != http.StatusBadRequest || strings.TrimSpace(w.Body.String()) != wantRefusedRegistration {
+		t.Fatalf("second finish with another handle: %d %s, want the one refusal", w.Code, w.Body)
+	}
+}
+
+// expiryBlindChallenges is a ChallengeStore that never checks ExpiresAt, so
+// only the handler's own recheck stands between an old challenge and a login.
+type expiryBlindChallenges struct {
+	mu sync.Mutex
+	m  map[string]passkey.Challenge
+}
+
+func (s *expiryBlindChallenges) Put(_ context.Context, id string, c passkey.Challenge) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[id] = c
+	return nil
+}
+
+func (s *expiryBlindChallenges) Take(_ context.Context, id string) (passkey.Challenge, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.m[id]
+	if !ok {
+		return passkey.Challenge{}, passkey.ErrNotFound
+	}
+	delete(s.m, id)
+	return c, nil
+}
+
+func TestHandlerRechecksExpiryOfAStoreThatDoesNot(t *testing.T) {
+	p := newRP(t, func(c *passkey.Config) {
+		c.Challenges = &expiryBlindChallenges{m: map[string]passkey.Challenge{}}
+	})
+	a := newAuthenticator(t)
+	p.mustRegister(a)
+
+	body, cookie := p.begin(p.h.LoginBegin())
+	p.advance(passkey.DefaultChallengeTTL)
+	w := p.post(p.h.LoginFinish(), cookie, map[string]any{"credential": a.get(body)})
+	if w.Code != http.StatusUnauthorized || strings.TrimSpace(w.Body.String()) != wantRefusedLogin {
+		t.Fatalf("expired challenge from an expiry blind store: %d %s, want the one refusal", w.Code, w.Body)
+	}
+
+	body, cookie = p.begin(p.h.LoginBegin())
+	p.advance(passkey.DefaultChallengeTTL - time.Second)
+	if w := p.post(p.h.LoginFinish(), cookie, map[string]any{"credential": a.get(body)}); w.Code != http.StatusOK {
+		t.Fatalf("a challenge one second before expiry: %d %s", w.Code, w.Body)
+	}
+}
+
 type failingStore struct {
 	*passkeytest.MemoryStore
 	err error

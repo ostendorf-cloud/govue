@@ -12,8 +12,10 @@ import (
 
 	"github.com/ostendorf-cloud/govue/account"
 	"github.com/ostendorf-cloud/govue/account/accounttest"
+	"github.com/ostendorf-cloud/govue/middleware"
 	"github.com/ostendorf-cloud/govue/passkey"
 	"github.com/ostendorf-cloud/govue/passkey/passkeytest"
+	"github.com/ostendorf-cloud/govue/ratelimit"
 	"github.com/ostendorf-cloud/govue/session"
 )
 
@@ -72,6 +74,18 @@ func (a *app) buildPasskeys(accounts *accounttest.MemoryStore) error {
 	a.passkeys = handlers
 	a.passkeyStore = store
 
+	// A bucket of its own, not the account limiter's. A frontend that starts
+	// a conditional autofill login on every page view calls login begin far
+	// more often than anyone types a password, and sharing the bucket would
+	// then answer 429 to the password login of the same client. The limit is
+	// the product's decision, PASSKEY_RATE_LIMIT_BURST and _PER here.
+	limiter := ratelimit.New(a.cfg.passkeyRateLimitBurst, a.cfg.passkeyRateLimitPer, maxRateLimitKeys)
+	limit, err := middleware.NewRateLimit(middleware.RateLimitConfig{Limiter: limiter, ClientIP: a.clientIPs})
+	if err != nil {
+		return fmt.Errorf("example: passkey rate limit: %w", err)
+	}
+	a.passkeyRateLimit = limit
+
 	return nil
 }
 
@@ -96,13 +110,17 @@ func otherFactors(ctx context.Context, accounts account.Store, id account.Identi
 }
 
 // mountPasskeys registers the passkey routes when passkeys are on. The begin
-// and finish routes sit behind checked, the stricter limit of the routes that
-// check a credential: a begin stores a challenge and a finish verifies a
-// signature, and the challenge store is bounded, so one client must not fill
-// it. List and delete need the general limit only.
-func (a *app) mountPasskeys(mux *http.ServeMux, route, checked func(http.Handler) http.Handler) {
+// and finish routes sit behind the passkey limit, in the place the account
+// limit has in the chain of the account routes: a begin stores a challenge and
+// a finish verifies a signature, and the challenge store is bounded, so one
+// client must not fill it. List and delete need the general limit only.
+func (a *app) mountPasskeys(mux *http.ServeMux, route func(http.Handler) http.Handler) {
 	if a.passkeys == nil {
 		return
+	}
+	checked := func(h http.Handler) http.Handler {
+		return middleware.Chain(h, a.corsMiddleware(), a.rateLimit.Middleware, a.passkeyRateLimit.Middleware,
+			a.protector.Middleware, a.sessions.Middleware)
 	}
 	mux.Handle("POST "+passkeyPrefix+"/register/begin", checked(a.passkeys.RegisterBegin()))
 	mux.Handle("POST "+passkeyPrefix+"/register/finish", checked(a.passkeys.RegisterFinish()))

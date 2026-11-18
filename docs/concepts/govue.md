@@ -1067,11 +1067,13 @@ The design of the library and the reasoning behind it.
   passkeys does not pull the library in. No exported name of `passkey` carries a type of the
   library: credentials and challenges travel as opaque bytes, so a library upgrade does not
   change the public API.
-- The library brings its own dependencies into the build of `passkey`: a CBOR codec, msgpack, a
-  JWT parser and `go-tpm` for the TPM attestation format, among others, and
-  `golang.org/x/crypto/ocsp` through its revocation checks. `passkey` asks for attestation `none`
+- The library brings its own dependencies into every build that imports `passkey`: `passkey`
+  itself, `passkey/passkeytest` and `example/`. Among them are a CBOR codec, msgpack, a JWT parser,
+  `go-tpm` for the TPM attestation format with `golang.org/x/sys/unix` through its transport, and
+  `golang.org/x/crypto/ocsp` through the revocation checks. `passkey` asks for attestation `none`
   and never uses the TPM or the metadata service, but the library's `protocol` package imports
-  them, so they are compiled in.
+  them, so they are compiled in. `passkey` also pulls `golang.org/x/crypto/argon2` through its
+  `account` import. A package that does not import `passkey` gets none of the library's modules.
 - `passkey` imports `account` for `account.Identity` only. `StartSession` has the signature of
   `account.HandlerConfig.StartSession`, so an application passes the same function to both and a
   passkey login starts the session a password and TOTP login starts. `account` does not import
@@ -1085,9 +1087,14 @@ The design of the library and the reasoning behind it.
   three are required, and none is derived from a request's `Host` header, which the client sets.
 - Startup refuses an empty RP id, one that is not a lower case host name of at least two labels
   (`localhost` excepted), an IP address, an empty origin list, an origin that is not https
-  (http on `localhost` excepted), an origin with a path, a query, user info or the default port,
-  and an origin whose host is neither the RP id nor below it. A browser compares the origin byte
-  for byte, so a typo fails at startup instead of refusing every ceremony.
+  (http on `localhost` excepted), and an origin whose host is neither the RP id nor below it.
+- An origin is accepted only in the form a browser serialises it: a lower case scheme, a lower
+  case host of DNS labels without a wildcard, and an optional port of 1 to 65535 without leading
+  zeros that is not the scheme's default. A path, a query, user info or an empty port after a
+  colon is refused. `passkey` refuses rather than normalises. The library's own comparison folds
+  the case of the scheme and the host and normalises the port, so a sloppy entry might still
+  match, but the configured list then differs from what browsers send, and that list is what a
+  reviewer reads and what the RP id rule is checked against.
 - Use the application's own host as the RP id, `app.example.com`, not a marketing parent such as
   `example.com` that the application does not control. Any host below the RP id can then ask for
   the same passkeys.
@@ -1128,6 +1135,13 @@ The design of the library and the reasoning behind it.
   `UpdateCredential` and `DeleteCredential`. It has no provider identity, no connection, no tenant
   and no list of accounts, for the reason `account.Store` gives: a passkey login reaches its
   account through the user handle and nothing else.
+- An account has exactly one user handle. `AddCredential` refuses a credential whose handle
+  differs from the account's stored one, in the same step as the insert, and the registration
+  finish checks it as well. Two first registrations from two browsers each bring a new handle.
+  Exactly one succeeds, the other gets the one refusal and begins again with the stored handle.
+  Without that, an adapter that keeps the handle in an account column would never find the second
+  passkey, while a delete still counted it as live and could remove the working one. The
+  conformance suite checks the guard and racing first registrations.
 - The user handle is 32 random bytes per account, made with the first passkey and copied onto
   every further one. It is not the account id. The authenticator stores it and a synced passkey
   copies it to every device of the person, so an id built from an email address or a sequence
@@ -1161,14 +1175,19 @@ The design of the library and the reasoning behind it.
   presence and a sign count that did not move forward, a cloned authenticator. A table test
   compares the whole answer across all of them. The code is the account login's, so a client that
   handles a refused password login handles this one.
+- The refusals are equal in content, not in time. Measured in the security review, the median
+  refusal took 341 microseconds for an unknown handle, 518 for an unknown credential, 525 for a
+  wrong origin and 651 for a bad signature. The time can tell an unknown handle from a known
+  one, but asking needs a valid 32 byte random handle first, and the credential id second.
 - A sign count of zero on both sides is allowed, since most synced passkeys keep none. Any other
   count at or below the stored one is refused. Two logins racing with one counter value both read
   the stored count, and the compare and set of `UpdateCredential` lets exactly one through. A test
   holds both at a barrier after the read.
 - Every refused registration answers 400 `invalid_passkey` with one body: the same challenge
-  failures, a challenge of another account, a wrong origin or RP id hash, no user verification
-  and a credential id already stored. A name over 64 characters or with a character that is not
-  printable is 400 `invalid_argument` with `name` in the details.
+  failures, a challenge of another account, a wrong origin or RP id hash, no user verification,
+  a credential id already stored and a user handle the account no longer has. A name over 64
+  characters or with a character that is not printable is 400 `invalid_argument` with `name` in
+  the details.
 - A store or session failure is a 500, not a refusal: it says nothing about the passkey, and
   answering 401 would tell the person a right passkey is wrong.
 - Deleting the last passkey is refused with 409 `last_factor` when `OtherFactors` reports no other
@@ -1176,7 +1195,9 @@ The design of the library and the reasoning behind it.
 - Rate limiting is the product's job. The begin and finish routes need a per client limit: a begin
   stores a challenge in a bounded store and a finish verifies a signature. Any of them may then
   answer 429 before the handler runs, which leaves the challenge and the cookie as they were.
-  `example/` puts them behind the stricter limiter of the account routes.
+  The product picks the limit. A frontend that begins a conditional autofill login on every page
+  view calls login begin far more often than anyone types a password, so the limit belongs in a
+  bucket apart from the password login.
 - Passkeys work with the cookie client only. The challenge cookie is host only and
   `SameSite=Strict`, and a login finish starts a cookie session through `StartSession`. A
   frontend on another site does not get the cookie back. In `example/`, `CurrentAccount` answers
@@ -1192,7 +1213,13 @@ The design of the library and the reasoning behind it.
   `ALLOWED_ORIGINS`, and `PASSKEY_RP_ID` without them refuses to start, as does an origin that is
   not https or not below the RP id. Without `PASSKEY_RP_ID` no passkey route exists.
 - The routes live under `/api/v1/account/passkeys`. The two begin and the two finish routes sit
-  behind the account limiter. Listing and delete have the general limit.
+  behind a limiter of their own, `PASSKEY_RATE_LIMIT_BURST` and `PASSKEY_RATE_LIMIT_PER`, a burst
+  of ten refilled over a minute by default, in the place the account limiter has for the account
+  routes. A test shows that using up one bucket leaves the other alone. Listing and delete have
+  the general limit.
+- A device session gets 401 from both registration routes: `CurrentAccount` answers no session
+  for it. A test registers through the browser of the same account and calls begin and finish
+  with the app's token.
 - The store is `passkeytest.MemoryStore`, and the challenge store is the default
   `MemoryChallengeStore`, so every passkey and challenge is gone on a restart. The session's
   `IssuedAt` is the login time the reauth window counts from. `OtherFactors` is 1 for an account
@@ -1206,6 +1233,9 @@ The design of the library and the reasoning behind it.
   `webcredentials` entry in the Apple App Site Association file that `appassoc` serves. An Android
   app needs the `get_login_creds` relation in `assetlinks.json`, and the origin it sends is
   `android:apk-key-hash:...`, which `Config` refuses today. Neither path is verified on a device.
+- Today a native app needs a cookie client for passkeys, as a browser has: the routes set a
+  challenge cookie and start a cookie session. An app that signs in with a device token does not
+  use them in this version.
 - Recovery codes are a follow up. Until then, an account that loses its TOTP device and every
   passkey is locked out, and only an operator can let the person back in.
 
@@ -1766,7 +1796,10 @@ The design of the library and the reasoning behind it.
   step: decide when the first product that wants a login after confirmation reports back.
 - The passkey user handle. Decided: 32 random bytes per account, see "Passkeys" above.
 - A native Android app's passkey origin, `android:apk-key-hash:...`. `passkey.Config` refuses
-  every origin that is not https today. Next step: decide when the first Android app needs it.
+  every origin that is not https today. The library keeps such opaque origins in a field of
+  their own, `RPOpaqueOrigins`, matched by exact string comparison and checked against the
+  prefixes it knows, `android:apk-key-hash:` among them. Next step: decide when the first
+  Android app needs it, probably as a separate `Config` field that feeds `RPOpaqueOrigins`.
 - What the first version supports for configuration beyond the environment. Nothing reads the
   environment by itself today, and whether that stays absolute is open.
 

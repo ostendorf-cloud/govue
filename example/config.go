@@ -70,6 +70,11 @@ type config struct {
 	passkeyRPID   string
 	passkeyRPName string
 
+	// passkeyRateLimitBurst and passkeyRateLimitPer are the limit of the
+	// passkey begin and finish routes, a bucket apart from the account one.
+	passkeyRateLimitBurst int
+	passkeyRateLimitPer   time.Duration
+
 	allowPlainHTTP bool
 
 	// siteDir is the output directory of the prerender step. Empty means the
@@ -151,6 +156,8 @@ func loadConfig(getenv func(string) string) (config, error) {
 	// The origins are ALLOWED_ORIGINS. passkey.New checks both in newApp.
 	cfg.passkeyRPID = l.String("PASSKEY_RP_ID", "")
 	cfg.passkeyRPName = l.String("PASSKEY_RP_NAME", "govue example")
+	cfg.passkeyRateLimitBurst = l.Int("PASSKEY_RATE_LIMIT_BURST", 10, 0, 100_000)
+	cfg.passkeyRateLimitPer = l.Duration("PASSKEY_RATE_LIMIT_PER", time.Minute, time.Second, time.Hour)
 	if cfg.passkeyRPID != "" && len(cfg.allowedOrigins) == 0 {
 		fail(errors.New("PASSKEY_RP_ID: needs ALLOWED_ORIGINS, the origins a passkey ceremony may come from"))
 	}

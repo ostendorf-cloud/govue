@@ -4,6 +4,7 @@
 package passkey
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -185,7 +186,9 @@ func (h *Handlers) RegisterBegin() http.Handler {
 
 // RegisterFinish verifies the new credential against the challenge of
 // [Handlers.RegisterBegin], stores it and answers 201 with a
-// [RegisterResult]. The challenge is taken, and the cookie cleared, before
+// [RegisterResult]. Of two first registrations racing from two browsers,
+// each with its own new user handle, exactly one succeeds. The other gets the
+// one refusal and begins again with the handle the account now has. The challenge is taken, and the cookie cleared, before
 // anything else is checked, so it is gone whatever the outcome.
 //
 // It needs the same account that began and a login within
@@ -232,6 +235,20 @@ func (h *Handlers) RegisterFinish() http.Handler {
 		cred, err := h.wa.CreateCredential(&user{handle: session.UserID, name: id.Login}, session, parsed)
 		if err != nil {
 			return refused(err)
+		}
+
+		// An account has one user handle. A registration begun before another
+		// one finished carries a handle the account no longer has: refuse it,
+		// and the person begins again with the stored handle. The store makes
+		// the same check atomic with the insert, see Store.AddCredential.
+		current, err := h.cfg.Store.Credentials(r.Context(), id.ID)
+		if err != nil {
+			return api.Internal(fmt.Errorf("passkey: list credentials: %w", err))
+		}
+		for _, c := range current {
+			if !bytes.Equal(c.UserHandle, session.UserID) {
+				return refused(errors.New("the account has another user handle"))
+			}
 		}
 
 		data, err := json.Marshal(cred)
