@@ -160,8 +160,8 @@ reuses the reasoning that already rejected a signed cookie for the web session.
     pending token is retired without a revocation. A flaky network does not lock anyone out.
   - The remaining case is rare. The delayed original rotate of a lost call reaches the server
     inside the rotate timeout, between the answer of the retry and the first use of the retry's
-    token. The retry's token is then retired and its first use is a 401. The person signs in
-    again. No device is revoked by this.
+    token. The retry's token is then overwritten and unknown, so its first use is a 401. The
+    person signs in again. No device is revoked by this.
 - A rotate refused for the minimum interval is quiet. The app keeps its current token. The
   shipped client rotates on start only when the stored token is at least one hour old, the
   default minimum interval, and otherwise when it is older than its own interval, 24 hours by
