@@ -4,12 +4,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/ostendorf-cloud/govue/api"
 	"github.com/ostendorf-cloud/govue/middleware"
@@ -17,15 +17,6 @@ import (
 	"github.com/ostendorf-cloud/govue/session"
 	"github.com/ostendorf-cloud/govue/themeboot"
 )
-
-// loginCookieName carries the signed Login state between the redirect to the
-// identity provider and the callback. It is scoped to /login, so it never
-// travels with a request anywhere else in the application.
-const loginCookieName = "oidc-login"
-
-// loginCookieLifetime bounds how long a login may take once started. Longer
-// than that, the state is gone and the browser starts over.
-const loginCookieLifetime = 10 * time.Minute
 
 // note is one item in the example's in-memory store. It exists to give the
 // notes handlers something to read and write; it is example data, not a
@@ -63,15 +54,16 @@ func (s *noteStore) add(subject, text string) note {
 	return n
 }
 
-// requireSession reads the session a request carries, or returns the api
-// error a handler can return unchanged: unauthenticated without one, and
-// unavailable when the store itself could not answer, so an outage is never
-// reported as a logged out user.
+// requireSession returns the session the route chain's session middleware
+// read, or the api error a handler can return unchanged: unauthenticated
+// without one, and unavailable when the store itself could not answer, so an
+// outage is never reported as a logged out user. The session is a cookie
+// session or a device session, and s.Subject is the account either way.
 func (a *app) requireSession(r *http.Request) (session.Session, error) {
-	s, ok, err := a.sessions.Read(r.Context(), r)
-	if err != nil {
+	if err := session.ErrorFromContext(r.Context()); err != nil {
 		return session.Session{}, api.Unavailable("session store is unavailable")
 	}
+	s, ok := session.FromContext(r.Context())
 	if !ok {
 		return session.Session{}, api.Unauthenticated("log in first")
 	}
@@ -135,7 +127,8 @@ func (a *app) home(w http.ResponseWriter, r *http.Request) error {
 }
 
 // loginStart begins an OIDC login: it mints the login state, signs it into
-// the short lived cookie session.Codec exists for, and redirects the browser
+// the codec's login cookie, which carries it to the callback and expires with
+// the codec's login lifetime, and redirects the browser
 // to the provider. next is where the browser returns to after the callback;
 // only a same site path is accepted, so this redirect can never be pointed
 // off site.
@@ -149,19 +142,9 @@ func (a *app) loginStart(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return api.Internal(err)
 	}
-	value, err := a.loginCodec.Encode(login, loginCookieLifetime)
-	if err != nil {
+	if err := a.loginCodec.SetLoginCookie(w, login); err != nil {
 		return api.Internal(err)
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     loginCookieName,
-		Value:    value,
-		Path:     "/login",
-		MaxAge:   int(loginCookieLifetime.Seconds()),
-		HttpOnly: true,
-		Secure:   !a.cfg.allowPlainHTTP,
-		SameSite: http.SameSiteLaxMode,
-	})
 
 	authURL, err := a.oidc.AuthCodeURL(r.Context(), login)
 	if err != nil {
@@ -176,16 +159,12 @@ func (a *app) loginStart(w http.ResponseWriter, r *http.Request) error {
 // loginCallback finishes the login the provider redirected back from: the
 // cookie loginStart set is decoded and cleared first, so a replay of this
 // URL finds nothing to act on, the state is checked against it, and the
-// code is exchanged for the verified identity.
+// code is exchanged for the verified identity. The codec neither reads nor
+// clears the login cookie of a bearer request, so such a request never
+// finishes a browser's login.
 func (a *app) loginCallback(w http.ResponseWriter, r *http.Request) error {
-	cookie, err := r.Cookie(loginCookieName)
-	if err != nil {
-		return api.Unauthenticated("login expired, please try again")
-	}
 	var login oidc.Login
-	decodeErr := a.loginCodec.Decode(cookie.Value, &login)
-	clearLoginCookie(w, a.cfg.allowPlainHTTP)
-	if decodeErr != nil {
+	if err := a.loginCodec.ReadLoginCookie(w, r, &login); err != nil {
 		return api.Unauthenticated("login expired, please try again")
 	}
 
@@ -216,26 +195,16 @@ func (a *app) loginCallback(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// clearLoginCookie removes the login-in-flight cookie once it has been read,
-// whether it decoded or not: a cookie that failed to decode is just as done
-// as one that succeeded.
-func clearLoginCookie(w http.ResponseWriter, allowPlainHTTP bool) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     loginCookieName,
-		Value:    "",
-		Path:     "/login",
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   !allowPlainHTTP,
-		SameSite: http.SameSiteLaxMode,
-	})
-}
-
 // logout ends the session the request carries. It is an unsafe method, so
 // the route chain's CSRF check already ran: a logout a page cannot forge is
-// exactly as much a state change as any other.
+// exactly as much a state change as any other. A bearer request signs its
+// device out and leaves the cookie alone. Without a device store a bearer
+// request has no device to sign out, which is a 401, not a server error.
 func (a *app) logout(w http.ResponseWriter, r *http.Request) error {
 	if err := a.sessions.End(r.Context(), w, r); err != nil {
+		if errors.Is(err, session.ErrDeviceToken) || errors.Is(err, session.ErrDevicesDisabled) {
+			return api.Unauthenticated("the token is not valid")
+		}
 		return api.Internal(err)
 	}
 	api.NoContent(w)

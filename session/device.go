@@ -26,7 +26,7 @@ import (
 // Device sessions are the sign in of a native app, which cannot rely on the
 // session cookie. ADR 0001 records the design. Here are the parts that need no
 // HTTP: issue, read by token, rotation with reuse detection, listing and
-// revocation. Nothing reads a bearer header yet.
+// revocation. [Manager.Read] reads the bearer header, see bearer.go.
 
 // Defaults of a [DeviceConfig]. Each is the value a left zero field takes.
 const (

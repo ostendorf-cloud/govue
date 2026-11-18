@@ -173,8 +173,10 @@ The design of the library and the reasoning behind it.
   middleware and the access log, both of which read `r.Pattern` and so have to sit directly
   outside the mux with nothing in between that replaced the request.
 - The route chain is applied to every handler registered on the mux, outermost first: CORS, the
-  rate limiter, then the CSRF protector, then the application handler. The rate limiter's 429 and
-  the CSRF protector's 403 answer on the exact route they refuse: each wraps one specific
+  rate limiter, the CSRF protector, the session middleware, then the application handler. The
+  session middleware sits after the CSRF protector, so a cookie request is checked before it is
+  read. The rate limiter's 429, the CSRF protector's 403 and the session middleware's 401 for a
+  failed bearer request answer on the exact route they refuse: each wraps one specific
   registered handler, so its answer carries that handler's real route label once the mux has
   already set `r.Pattern`. A CORS preflight is different: no `OPTIONS` pattern is registered for
   any route, so ServeMux matches the catch-all `"/"` instead, and the preflight's 204 is logged
@@ -275,8 +277,55 @@ The design of the library and the reasoning behind it.
   `Config.Devices`.
 - It is off while `DeviceConfig.Store` is nil. With a store, `EndAll` also ends the account's
   device sessions.
-- Nothing reads a bearer header yet, no route issues a token, and `csrf` and CORS are unchanged.
-  Later steps of #117 add them.
+- No route issues a token yet, and CORS is unchanged. Later steps of #117 add them.
+- `internal/bearer` holds the one predicate both `session` and `csrf` import. It reads every
+  `Authorization` value and answers none, bearer or malformed. Bearer is one value with the scheme
+  `Bearer` in any ASCII case. One or more spaces separate it from the token, as RFC 9110 allows.
+  Malformed is more than one value. Everything else is none.
+- The real guard against drift is behavioural: the contract tests in `example/` send every
+  header shape through both packages and pin that they agree. A source test that parses both
+  packages is a tripwire on top. It fails when either stops calling `Classify` or reads the
+  header itself, but a determined rewrite can get past it.
+- `csrf.Protector.ExemptBearer` skips both halves for bearer and malformed, and does not call
+  `Expected` then. It is off by default, so a consumer of `csrf` alone keeps the full check on
+  every request. It is safe only in front of `session.Middleware`, or an equivalent that never
+  reads a cookie on such a request. Behind a handler that reads a cookie of its own, a proxy that
+  injects a bearer header would open that handler to cross site requests.
+- With a device store, `Manager.Read` authenticates a bearer request by the device token only. A
+  request with both authenticates as the token's subject. `Session.Credential` says which
+  credential it was, and `Session.DeviceID` names the device.
+- Without a device store, a bearer or malformed request is anonymous: no session, no 401. A
+  product's own gateway or JWT keeps working. The cookie is never read on such a request, in any
+  configuration.
+- A device session carries no groups and no account attributes. `Session.In` is false for every
+  group, so an allow list fails closed and a deny list fails open. A product authorises a device
+  session from its own account record, looked up by `Subject`.
+- Every response produced by or behind `Manager.Middleware` for a bearer request carries exactly
+  one `Cache-Control: no-store`, whatever a handler sets and in whatever key spelling. A response
+  produced earlier in the chain, such as the rate limiter's 429, a CORS refusal or a mux redirect,
+  is outside it and carries no credential data.
+- The handler keeps `http.Flusher`, `http.Hijacker` and `io.ReaderFrom` of the writer underneath,
+  so SSE and WebSocket code that asserts them works, and `http.ResponseController` reaches it
+  through `Unwrap`. Two ways leave the guarantee, for deliberate code only: a hijacked connection
+  carries whatever its handler writes, and a write through `Unwrap` bypasses the guard.
+- `CDN-Cache-Control` and `Surrogate-Control` are not touched. A product behind a CDN that reads
+  them must not set them on a response to a bearer request.
+- With a device store, a token that does not authenticate and two headers get 401 on every route,
+  through `Config.OnBearerRefusal`. The challenge is `Bearer error="invalid_token"`, and a bare
+  `Bearer` for a request without a token (RFC 6750 section 3.1). A refusal callback that writes
+  nothing or another status still ends as that 401, and a cookie it sets is removed. A device
+  store outage passes on like a cookie store outage.
+- On a bearer request `End` signs the device out and leaves the cookie alone. `Start` and `Rotate`
+  refuse a request the middleware classified as bearer with `ErrBearerRequest`, and `Rotate`
+  refuses a device session, so a token never mints a cookie session. `Codec.ReadLoginCookie`
+  neither reads nor clears the login cookie. `Codec.SetLoginCookie` cannot see the request, so
+  keeping it off a bearer request is the caller's job.
+- No `Vary: Authorization` is added. A bearer response is never stored, so no cache can serve it
+  to another request.
+- `example/` turns `ExemptBearer` on, configures a memory device store and runs the session
+  middleware after the CSRF protector on every route. Its OIDC callback reads the login cookie
+  through the codec. A contract test sends the cross product of credentials, header shapes,
+  methods, paths, origins and the CSRF token through that chain.
 - The token is a prefix, 32 random bytes in base64url and a CRC-32 checksum. The store keeps only
   its SHA-256. A malformed token never reaches the store.
 - The default prefix `device` is neutral. A product sets its own, so secret scanning finds a
@@ -315,11 +364,14 @@ The design of the library and the reasoning behind it.
   id and the access log. Putting it there would make all of them pull a session store in with it,
   which is the coupling the `clientip` rule exists to prevent. `session` already imports
   `net/http`, and nothing in the module imports `session`, so there is no cycle either way.
-- `csrf` is unaffected and still imports nothing from `session`: it is the application's
-  `csrf.Expected` closure that reads the session.
-- The middleware refuses nothing and writes no response. It is not an authorisation gate: a public
-  route behind the same chain must not start answering 503 because a cookie could not be read, and
-  nothing is lost by that, because `FromContext` reports false for a store that could not answer.
+- `csrf` still imports nothing from `session`: it is the application's `csrf.Expected` closure
+  that reads the session. Both import `internal/bearer`, and `csrf.Protector.ExemptBearer` relies
+  on the middleware never reading the cookie on a bearer request.
+- For a cookie request the middleware refuses nothing and writes no response. It is not an
+  authorisation gate: a public route behind the same chain must not start answering 503 because a
+  cookie could not be read, and nothing is lost by that, because `FromContext` reports false for a
+  store that could not answer. A bearer request whose token fails is the one exception, see
+  "Device sessions for native apps".
 - `FromContext` is false for a request the middleware never ran on, so a handler mounted without it
   looks logged out rather than logged in as somebody.
 - `ErrorFromContext` keeps the distinction `Read` draws between a logged-out request and a store

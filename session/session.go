@@ -37,9 +37,10 @@
 //
 // A native app signs in with a device session instead, see
 // [Manager.IssueDevice]: an opaque token stored by its hash behind a
-// [DeviceStore], rotated with reuse detection. It is off until
-// [DeviceConfig.Store] is set, and nothing reads a bearer token from a request
-// yet.
+// [DeviceStore], rotated with reuse detection, and sent as a bearer token. It
+// is off until [DeviceConfig.Store] is set. A bearer request never
+// authenticates by the cookie, with or without a device store, see
+// [Manager.Read].
 //
 // Nothing here binds a session to a client IP or a user agent. Both change mid
 // session on a mobile network, behind a carrier NAT and across a VPN, so the
@@ -57,6 +58,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/ostendorf-cloud/govue/internal/bearer"
 )
 
 // Defaults an application starts from. Each is the value a left zero [Config]
@@ -102,8 +105,10 @@ type Session struct {
 	Username string
 	Name     string
 	Email    string
-	Groups   []string
-	Data     map[string]string
+	// Groups is empty for a device session: the device record holds no
+	// account attributes. See [Session.In].
+	Groups []string
+	Data   map[string]string
 
 	// IssuedAt is when the login happened. It does not move on a rotation.
 	IssuedAt time.Time
@@ -113,9 +118,24 @@ type Session struct {
 	// ExpiresAt is the absolute end of the session. A rotation does not
 	// extend it.
 	ExpiresAt time.Time
+
+	// Credential is how the request authenticated. The manager sets it on
+	// every session it returns, whatever a store holds. A store needs no
+	// copy of it.
+	Credential Credential
+	// DeviceID is the device session's id when Credential is
+	// [CredentialDevice], and empty otherwise. It is a handle for listing
+	// and revoking, never a credential. A device session has no cookie
+	// session id, so ID is empty then.
+	DeviceID string
 }
 
 // In reports whether the account is in the group.
+//
+// A device session has no groups, so In is false for every group. An allow
+// list check fails closed for it, but a deny list check such as
+// ok && !s.In("suspended") fails open. For a device session a product
+// authorises from its own account record, looked up by Subject.
 func (s Session) In(group string) bool { return slices.Contains(s.Groups, group) }
 
 // Config configures a [Manager]. Store is the only required field; every other
@@ -173,6 +193,14 @@ type Config struct {
 	// Devices configures the device sessions of native apps. They are off
 	// while Devices.Store is nil.
 	Devices DeviceConfig
+
+	// OnBearerRefusal answers a bearer request whose token does not
+	// authenticate, for an application with its own error shape. It must not
+	// set a cookie. [Manager.Middleware] sets WWW-Authenticate and
+	// Cache-Control before every write, turns any status into 401, and
+	// answers a plain text 401 itself when the function writes nothing. Nil
+	// answers a plain text 401.
+	OnBearerRefusal func(w http.ResponseWriter, r *http.Request)
 }
 
 // Manager issues, reads and ends sessions, and owns the cookie. It is safe for
@@ -244,7 +272,14 @@ func (m *Manager) CookieName() string { return m.cfg.CookieName }
 //
 // The id, the issue time, the last use and the expiry on s are overwritten. The
 // session as stored is returned.
+//
+// A request [Manager.Middleware] classified as a bearer request is refused
+// with [ErrBearerRequest] and gets no cookie. ctx has to be the request's
+// context for that check to see it.
 func (m *Manager) Start(ctx context.Context, w http.ResponseWriter, s Session) (Session, error) {
+	if bearerRequest(ctx) {
+		return Session{}, fmt.Errorf("session: start: %w", ErrBearerRequest)
+	}
 	id, err := NewID()
 	if err != nil {
 		return Session{}, err
@@ -255,11 +290,13 @@ func (m *Manager) Start(ctx context.Context, w http.ResponseWriter, s Session) (
 	s.IssuedAt = now
 	s.LastSeen = now
 	s.ExpiresAt = now.Add(m.cfg.Lifetime)
+	s.Credential, s.DeviceID = CredentialNone, ""
 
 	if err := m.cfg.Store.Save(ctx, s); err != nil {
 		return Session{}, fmt.Errorf("session: save: %w", err)
 	}
 	m.setCookie(w, s)
+	s.Credential = CredentialCookie
 	return s, nil
 }
 
@@ -276,7 +313,18 @@ func (m *Manager) Start(ctx context.Context, w http.ResponseWriter, s Session) (
 // [Manager.EndAll] would write it back and undo the end, which is the one thing
 // a disabled account must not survive. [Manager.Start] is deliberately exempt:
 // a fresh login writes whatever the authentication just established.
+//
+// A session a device token authenticated is refused: it has no cookie to
+// rotate, and rotating it would mint a cookie session from a bearer token. A
+// request [Manager.Middleware] classified as a bearer request is refused with
+// [ErrBearerRequest], whatever s is.
 func (m *Manager) Rotate(ctx context.Context, w http.ResponseWriter, s Session) (Session, error) {
+	if bearerRequest(ctx) {
+		return Session{}, fmt.Errorf("session: rotate: %w", ErrBearerRequest)
+	}
+	if s.Credential == CredentialDevice || s.DeviceID != "" {
+		return Session{}, errors.New("session: rotate: a device session has no cookie to rotate")
+	}
 	previous := s.ID
 	if previous != "" {
 		if _, err := m.cfg.Store.Get(ctx, previous); err != nil {
@@ -291,6 +339,7 @@ func (m *Manager) Rotate(ctx context.Context, w http.ResponseWriter, s Session) 
 
 	s.ID = id
 	s.LastSeen = m.cfg.Now().UTC()
+	s.Credential = CredentialNone
 
 	// The new session is saved first, so a failed write leaves the old one
 	// intact rather than destroying the login. The old id is dropped next, and
@@ -303,10 +352,12 @@ func (m *Manager) Rotate(ctx context.Context, w http.ResponseWriter, s Session) 
 	}
 	if previous != "" && previous != s.ID {
 		if err := m.cfg.Store.Delete(ctx, previous); err != nil {
+			s.Credential = CredentialCookie
 			return s, fmt.Errorf("session: delete the previous id: %w", err)
 		}
 	}
 	m.setCookie(w, s)
+	s.Credential = CredentialCookie
 	return s, nil
 }
 
@@ -330,7 +381,23 @@ func (m *Manager) Rotate(ctx context.Context, w http.ResponseWriter, s Session) 
 // most every [Config.TouchEvery], so an ordinary read does not write, and a
 // failed write back is not reported either, because the session is valid and
 // the request is not worth failing over it.
+//
+// A bearer request authenticates by its device token only, see
+// [Manager.AuthenticateDevice], and the session comes back with
+// [CredentialDevice], the device's subject and [Session.DeviceID]. The cookie
+// is not read, so a request with both authenticates as the token's subject.
+// A token that does not authenticate and a request with more than one
+// Authorization header are no session and no error, never a fallback to the
+// cookie, and [Manager.Middleware] answers them with 401. Without a device
+// store a bearer request is anonymous: no session, no error, no cookie read.
+// A device store that could not answer is the error.
 func (m *Manager) Read(ctx context.Context, r *http.Request) (Session, bool, error) {
+	res := m.read(ctx, r)
+	return res.session, res.ok, res.err
+}
+
+// readCookie is [Manager.Read] for a request that is not a bearer request.
+func (m *Manager) readCookie(ctx context.Context, r *http.Request) (Session, bool, error) {
 	cookie, err := r.Cookie(m.cfg.CookieName)
 	if err != nil || cookie.Value == "" {
 		return Session{}, false, nil
@@ -348,6 +415,8 @@ func (m *Manager) Read(ctx context.Context, r *http.Request) (Session, bool, err
 
 	// Both bounds are exclusive: a session whose expiry is exactly now is
 	// over, not valid for one last request.
+	found.Credential, found.DeviceID = CredentialCookie, ""
+
 	now := m.cfg.Now().UTC()
 	if !now.Before(found.ExpiresAt) || now.Sub(found.LastSeen) >= m.cfg.Idle {
 		// Deleting it here is housekeeping, not what makes the session
@@ -376,7 +445,15 @@ func (m *Manager) Read(ctx context.Context, r *http.Request) (Session, bool, err
 //
 // A request without a session is not an error. The cookie is cleared either
 // way, so a logout always leaves the client with nothing.
+//
+// A bearer request signs out the device session its token authenticates and
+// leaves the cookie alone: not read, not cleared. A token that does not
+// authenticate, more than one Authorization header and a bearer request
+// without a device store are an error wrapping [ErrDeviceToken].
 func (m *Manager) End(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+	if kind, token := bearer.Classify(r.Header); kind != bearer.None {
+		return m.endDevice(ctx, kind, token)
+	}
 	m.clearCookie(w)
 
 	cookie, err := r.Cookie(m.cfg.CookieName)

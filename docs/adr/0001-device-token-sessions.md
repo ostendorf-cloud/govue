@@ -181,7 +181,8 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 - Malformed: more than one value. It is handled exactly like a failed bearer request.
 - None: no `Authorization` header, or one with another scheme.
 - It never reads a query parameter or a form field. There is no `access_token` (RFC 6750).
-- Bearer and malformed skip both halves of the CSRF check. None keeps both.
+- Bearer and malformed skip both halves of the CSRF check once the application opts in, see the
+  amendment under Consequences. None keeps both.
 - Bearer and malformed authenticate by the token only, never by the cookie. On them `session`
   does not read the cookie at all: not in `Read`, `End`, `Rotate` or the `Codec` login cookie.
   The cookie is not cleared.
@@ -211,8 +212,11 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 
 ### Responses and CORS
 
-- Every response that carries a token and every response to a bearer request sends
-  `Cache-Control: no-store` (as RFC 6749 section 5.1 does for token responses).
+- Every response that carries a token sends `Cache-Control: no-store` (as RFC 6749 section 5.1
+  does for token responses). So does every response to a bearer request that is produced by or
+  behind `session.Middleware`, whatever a handler sets. A response produced earlier in the chain,
+  such as a rate limiter's 429, a CORS refusal or a mux redirect, is outside it and carries no
+  credential data. A hijacked connection is outside it too, see the amendment.
 - App origins are a separate list with their own CORS policy: `Authorization` allowed,
   credentials off. The web policy is unchanged.
 - The app origin list never reaches `csrf.TrustOrigin`. Startup fails when an origin is both an
@@ -245,6 +249,33 @@ reuses the reasoning that already rejected a signed cookie for the web session.
   hashes. The app never relies on one, so this bounds the theft signal, not the fallback.
 - Bad: web cookie session ids are still stored in the clear. Hashing them too is defence in depth
   and tracked in a separate issue.
+
+### Amendment after the review of the bearer step
+
+The security review of the bearer step found that the CSRF exemption was unconditional and that a
+bearer request without a device store was refused. The owner settled four changes:
+
+- The CSRF exemption is opt in: `csrf.Protector.ExemptBearer`, off by default. Without it a
+  bearer or malformed request gets the full cookie CSRF check like any other request, so a
+  consumer of `csrf` alone is unchanged. App mode turns it on, and only in front of
+  `session.Middleware` or an equivalent that never reads the cookie on such a request. A proxy
+  that injects a bearer header in front of a handler with its own cookie would otherwise open
+  that handler to cross site requests.
+- Without a device store, a bearer or malformed request passes `session.Middleware` as
+  anonymous: no session, no 401, and the cookie is still not read. A product's own gateway or JWT
+  keeps working. With a device store, every token failure stays the one 401 above. The claim
+  that everything is additive and off until a product configures a device store holds again,
+  with one exception: in no configuration does a bearer request authenticate by the cookie any
+  more. That is a breaking change for a consumer that relied on it.
+- The 401 carries `WWW-Authenticate: Bearer error="invalid_token"`, and a bare `Bearer` for a
+  request without a token (RFC 6750 section 3.1). This tells a caller no more than whether it
+  sent a token.
+- The no-store rule covers every response produced by or behind `session.Middleware`, as the
+  section on responses now says. A hijacked connection is the exception: it carries whatever its
+  handler writes. A write through the guard's `Unwrap` bypasses it too. Both are for deliberate
+  code only. `CDN-Cache-Control` and `Surrogate-Control` are not touched, so a product behind a
+  CDN that reads them must not set them on a response to a bearer request.
+- A refusal callback cannot set a cookie: the refusal removes any `Set-Cookie` before it writes.
 
 ### Confirmation
 
