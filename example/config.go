@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/netip"
 	"strings"
 	"time"
 
+	"github.com/ostendorf-cloud/govue/analytics"
 	"github.com/ostendorf-cloud/govue/appassoc"
 	"github.com/ostendorf-cloud/govue/clientip"
 	"github.com/ostendorf-cloud/govue/envconf"
@@ -74,9 +76,21 @@ type config struct {
 	// association file.
 	assoc appassoc.Config
 
+	// siteHost is the public host of the site, which analytics reports as the
+	// hostname of a view.
+	siteHost string
+
+	// umami is the connection to Umami. It is the zero value, which counts
+	// nothing, unless UMAMI_URL and UMAMI_WEBSITE_ID are both set.
+	umami analytics.Config
+
 	// now is the clock of the session and device stores. It is not read
 	// from the environment. Nil is time.Now, and tests replace it.
 	now func() time.Time
+
+	// umamiHTTP posts the views to Umami. It is not read from the
+	// environment. Nil is the default client, and tests replace it.
+	umamiHTTP *http.Client
 }
 
 // loadConfig reads every setting through envconf, so a misconfigured
@@ -144,6 +158,13 @@ func loadConfig(getenv func(string) string) (config, error) {
 	cfg.siteDir = l.String("SITE_DIR", "")
 
 	cfg.assoc, err = loadAssoc(l)
+	fail(err)
+
+	// Page view counting is off unless UMAMI_URL and UMAMI_WEBSITE_ID are
+	// both set. LoadConfig reports every problem with the four UMAMI_
+	// variables at once, and a half set pair is one of them.
+	cfg.siteHost = l.String("SITE_HOST", "localhost")
+	cfg.umami, err = analytics.LoadConfig(getenv)
 	fail(err)
 
 	if err := errors.Join(append(problems, l.Err())...); err != nil {

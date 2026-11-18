@@ -1663,6 +1663,106 @@ The design of the library and the reasoning behind it.
   - How Apple's CDN treats `Cache-Control`. Apple publishes nothing on it.
   - Behaviour on a real device. No iOS or Android device was used.
 
+### Analytics
+
+- The package `analytics` counts page views on the server and reports them to Umami. No script
+  runs in the browser, no cookie is set and nothing is read from the visitor's device. It is the
+  generalised form of the `internal/analytics` that ostendorf.tech runs. Umami is the one
+  statistics tool shared across the products, so the code lives here once.
+- Counting is off unless `UMAMI_URL` and `UMAMI_WEBSITE_ID` are both set. Exactly one of them is a
+  startup error, because a deployment that meant to count and typed half the pair would otherwise
+  run for months without statistics and say nothing. `UMAMI_TIMEOUT` (1s to 30s, default 5s) and
+  `UMAMI_QUEUE_SIZE` (1 to 10000, default 256) are optional. `LoadConfig(getenv)` reads them with
+  `envconf` and returns every problem at once. No message repeats the URL, because an operator
+  may have put a secret into its path.
+- The Umami URL is `https`. Plain `http` is accepted for `localhost`, a loopback address, a single
+  label name such as `umami`, and names ending in `.svc` or `.svc.cluster.local`, which only a
+  cluster resolves. Anything else over plain HTTP would carry visitor addresses in clear text.
+  Credentials, a query and a fragment are refused. The website id is the lowercase UUID shape.
+- The wiring is `analytics.New(cfg, Options{...})` and `client.Middleware`. `Middleware` has the
+  shape of every other middleware here. It sits directly around the mux, innermost in the outer
+  chain, because it reads `r.Pattern` like `metrics` and `AccessLog` do. A product with several
+  sites in one process builds one client per site.
+- A view is counted when all of these hold:
+  - The method is GET. HEAD is not counted, a crawler or a link checker sends it.
+  - The response is 200 with a `text/html` body. A 404, a 5xx, a redirect, a 304, JSON, an asset
+    and an empty 200 are not pages. A handler that sets no content type gets the type net/http
+    would sniff. A panicking handler counts nothing. A 304 is never counted: it carries no body,
+    and a revalidating visitor is therefore missing from the numbers. That undercount is
+    accepted over counting an asset.
+  - The request has no `DNT: 1` and no `Sec-GPC: 1`. Either one means the visitor is not counted
+    at all. `DNT: 0` and a missing header count.
+  - The request is no prefetch (`Sec-Purpose`, `Purpose`, `X-Purpose`, `X-Moz`) and, if the
+    browser sends `Sec-Fetch-Dest`, it says `document`. A `fetch` call or an iframe is no page
+    view.
+  - The user agent is present and names no bot, preview fetcher or script. The marker list is
+    best effort and Umami filters bots again.
+  - The client address, from `clientip`, is a public address. A private, loopback, link local
+    or shared (CGNAT) address is a probe, the cluster or a VPN. `AllowPrivateClients` turns that
+    off for a development run. Behind a proxy a product must pass a `clientip.Resolver` that
+    trusts it, or every view comes from the proxy and none is counted.
+  - The path is not `/healthz`, `/readyz`, `/livez` or `/metrics`, and `Options.Skip` does not
+    exclude it. Skip only adds to the built in list.
+- The URL sent is the route pattern, never the path. `GET /notes/{id}` is sent as `/notes/{id}`:
+  the method and a host are cut off, `{$}` is removed and the wildcard names stay. An id, a
+  token or a slug therefore never leaves the process, and the statistics group by page instead
+  of by record. A request with no pattern, because the middleware sits outside something that
+  replaced the request, is sent as the cleaned path without query. That path may hold an id.
+  A product serves its pages through a `ServeMux` with one pattern per page, as `example/` does.
+  A catch-all `/` pattern reports every page it answers as `/`.
+- The payload is the fields below and nothing else. Each one is in it for a reason Umami needs:
+  - `website` and `hostname`: the website id and the product's own public host, from `Options`,
+    never from the `Host` header, which a request controls.
+  - `url`: the route pattern, as above.
+  - `title`: only when `Options.Title` is set. A title can hold user content, so the default is
+    none.
+  - `referrer`: the origin of another site, scheme and host and no path. A path on another site
+    can hold a token. The product's own host, with or without `www`, is no referrer.
+    ostendorf.tech sends the path without the query. This package sends less.
+  - `language`: the first language tag of `Accept-Language`, if it is a well formed tag.
+  - `ip` and `userAgent`: the client address and the user agent, which Umami reads the country,
+    the browser and the system from, and hashes itself. They go to the operator's own Umami and
+    are never stored here, never logged and never sent anywhere else. The request to Umami also
+    carries the user agent as its own header, as ostendorf.tech does. The shape of the
+    payload and that Umami prefers `ip` and `userAgent` of the payload over the request's own
+    were carried over from ostendorf.tech and not checked against the Umami documentation again.
+  - Not sent: the query string, any cookie, an `Authorization` header, `X-Forwarded-For`, the
+    session, an account or a request id.
+- The send is off the request path. A view goes into a channel of `UMAMI_QUEUE_SIZE` that two
+  worker goroutines read. A full queue drops the view. Nothing in the handler waits for Umami,
+  so a slow or dead Umami costs the visitor nothing. One post is bounded by `UMAMI_TIMEOUT`. The
+  default HTTP client has no cookie jar and refuses redirects, so a visitor address never follows
+  a redirect to another host. A custom client must honour the request context.
+- A dropped view is counted in `Stats().Dropped` and reported through `Options.OnDrop`. The
+  package does not import `metrics`, which would pull Prometheus into a product that only wants
+  counting. `metrics.NewCounter` returns the function to pass, as `example/` does with
+  `analytics_views_dropped_total`.
+- A failure is logged at warn level, once per class (`timeout`, `transport`, `status_4xx`,
+  `status_5xx`, `queue_full`, `shutdown`) and then at most once a minute with the count since the
+  last line. The line holds the class, the count and the Umami host. It never holds the URL, the
+  path, a query, a visitor address or a user agent. The error of a post is reduced to its class
+  before it is stored, because `net/http` repeats the whole URL in its errors.
+- `Close(ctx)` stops accepting views and posts what is queued until `ctx` ends. After that the
+  posts in flight are cancelled, the rest are counted as dropped and `Close` returns the context
+  error. A product calls it after the server stopped, with a deadline of a few seconds.
+- What a product must say in its privacy text, as a checklist and not as legal text or legal
+  advice. The product's own counsel decides what the law asks of it:
+  - Page views are counted on the server, with no script, no cookie and nothing stored on the
+    visitor's device.
+  - What is sent to Umami: the page (the route, not the address with its query), the referring
+    site, the browser language, the user agent and the visitor's IP address, which Umami turns
+    into a hash and a country without storing the address.
+  - Who runs Umami and where, and that nothing goes to a third party. This depends on the
+    product's own Umami and is not a property of this package.
+  - A visitor who sends Do Not Track or Global Privacy Control is not counted.
+  - How long Umami keeps the data and the legal basis the product relies on. Both are the
+    product's statements. This package decides neither.
+- Not verified: Umami's own handling of `ip` and `userAgent`, the hashing and the retention
+  inside Umami, and a post against a real Umami. Tests use a fake transport and no network.
+- Stays in the product: which routes count, the privacy text, the Umami instance and website id,
+  and the retention statement. Out of scope are a client side script, events beyond page views,
+  a dashboard and a consent banner.
+
 ### Component behaviour
 
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a
