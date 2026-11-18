@@ -29,7 +29,9 @@ repeated here.
   device token: `TokenStorage` (async `get`, `set`, `clear`, one opaque string) with the in memory
   default and no persistent adapter, rotation in `web/src/api/bearer.ts`, `signIn` and `signOut`.
   A token never goes into a URL, an error, a cause or a log, and the storage is written before
-  the new token is used.
+  the new token is used. All storage access runs through one lock, and a rotation writes only
+  while the storage still holds the token it rotated. Exactly one context per storage rotates
+  (`auth.rotation: 'owner'`), every other one is `'none'`.
 - `web/src/i18n/` holds the language layer: the `createGovueI18n` plugin, the German and
   English catalogues and `catalogues.ts`, the one list of languages. `GovueLanguageSwitch`
   lives in `web/src/components/` with the other components.

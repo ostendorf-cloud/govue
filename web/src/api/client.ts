@@ -116,6 +116,9 @@ export function createClient(options: ClientOptions = {}): ApiClient | BearerCli
     if (options.credentials !== undefined || options.csrfToken !== undefined) {
       throw new TypeError('bearer mode does not take the credentials or csrfToken option')
     }
+    if (bearerAuth.rotation !== undefined && !['owner', 'none'].includes(bearerAuth.rotation)) {
+      throw new TypeError("auth.rotation must be 'owner' or 'none'")
+    }
     if (bearerAuth.rotateAfterMs !== undefined) {
       checkRotateAfter(bearerAuth.rotateAfterMs)
     }
@@ -196,7 +199,21 @@ export function createClient(options: ClientOptions = {}): ApiClient | BearerCli
     if (response.status === 204 || response.headers.get('Content-Length') === '0') {
       return undefined as T
     }
-    const text = await response.text()
+    let text: string
+    if (exchange) {
+      try {
+        text = await response.text()
+      } catch {
+        // No cause: a stream error may quote the request, and a token with it.
+        throw new ApiError({
+          code: ErrorCode.network,
+          message: 'The answer could not be read. Please try again.',
+          status: response.status,
+        })
+      }
+    } else {
+      text = await response.text()
+    }
     if (text === '') {
       return undefined as T
     }
@@ -207,7 +224,9 @@ export function createClient(options: ClientOptions = {}): ApiClient | BearerCli
         code: ErrorCode.internal,
         message: 'The answer was not valid JSON.',
         status: response.status,
-        cause,
+        // A SyntaxError quotes part of the body, and the body of an Issue or
+        // Rotate answer is the token.
+        cause: exchange ? undefined : cause,
       })
     }
   }
@@ -224,6 +243,7 @@ export function createClient(options: ClientOptions = {}): ApiClient | BearerCli
       storage: bearerAuth.storage ?? createMemoryTokenStorage(),
       rotateAfterMs: bearerAuth.rotateAfterMs ?? DEFAULT_ROTATE_AFTER_MS,
       deviceName: bearerAuth.deviceName,
+      owner: (bearerAuth.rotation ?? 'owner') === 'owner',
       onUnauthenticated: options.onUnauthenticated,
       perform,
       timeoutMs,

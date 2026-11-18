@@ -28,6 +28,17 @@ export interface BearerAuthOptions {
    * default, and the client takes that quietly.
    */
   rotateAfterMs?: number
+  /**
+   * Who rotates the token. Default 'owner'. Exactly one context per storage is
+   * the owner: it rotates, signs in, signs out and clears the storage on a
+   * 401. Every other context that reads the same storage, such as an app
+   * extension or a background runner, sets 'none'. It never rotates, uses the
+   * stored token as it is, and on a 401 calls onUnauthenticated and leaves the
+   * storage to the owner. Two rotating contexts revoke the device, since the
+   * server takes the second rotation as a replay (ADR 0001). A 'none' client
+   * refuses signIn and signOut.
+   */
+  rotation?: 'owner' | 'none'
   /** The default device name of signIn. At most 64 bytes, no control characters. */
   deviceName?: string
 }
@@ -82,14 +93,21 @@ interface BearerConfig {
   storage: TokenStorage
   rotateAfterMs: number
   deviceName?: string
+  /** True for the one context that rotates. */
+  owner: boolean
   onUnauthenticated?: () => void
   perform: Perform
   timeoutMs: number
 }
 
 export const DEFAULT_ROTATE_AFTER_MS = 24 * 3_600_000
+/**
+ * The first use after start rotates only a token at least this old, the
+ * default minimum interval of the server. A younger token would get a 409.
+ */
+export const START_MIN_AGE_MS = 3_600_000
 /** Below the server's rotate timeout of 30 seconds, as ADR 0001 requires. */
-const ROTATE_TIMEOUT_MS = 10_000
+export const ROTATE_TIMEOUT_MS = 10_000
 /** After a quiet refusal the client waits this long before it asks again. */
 const REFUSED_BACKOFF_MS = 5 * 60_000
 /** session.MaxDeviceNameBytes. */
@@ -103,7 +121,8 @@ interface TokenRecord {
   at: number
 }
 
-interface Current {
+/** A consistent read: the stored token and the generation it belongs to. */
+interface Snapshot {
   record?: TokenRecord
   generation: number
 }
@@ -178,20 +197,29 @@ function newNonce(): string {
 }
 
 export function createBearer(config: BearerConfig): BearerController {
-  const { storage, rotateAfterMs, perform } = config
+  const { storage, rotateAfterMs, perform, owner } = config
 
-  // generation moves whenever the stored token is replaced or cleared. A
-  // result that was computed for an older generation is dropped.
+  // generation moves, inside the lock, with every change of the stored token:
+  // a sign in, a sign out, a rotation, a clear after a 401. A result that was
+  // computed for an older generation is dropped.
   let generation = 0
   // started is true once the first rotation check after start is answered.
   let started = false
   let retryNotBefore = 0
   // The nonce of an attempt whose answer was lost, so the retry reuses it.
   let nonce: string | undefined
-  let flight: Promise<Current> | undefined
+  // How many sign outs are running. A 401 during one is its own doing.
+  let signingOut = 0
+  // The token a non owner told the app about already.
+  let notifiedFor: string | undefined
+  let flight: Promise<Snapshot> | undefined
   let tail: Promise<unknown> = Promise.resolve()
 
-  /** locked runs storage writes one after another. */
+  /**
+   * locked runs every storage read and write one after another. A read that
+   * starts while a write is pending waits for it, so a read never sees a value
+   * the write behind it is about to replace.
+   */
   function locked<T>(fn: () => Promise<T>): Promise<T> {
     const run = tail.then(fn)
     tail = run.then(
@@ -228,7 +256,14 @@ export function createBearer(config: BearerConfig): BearerController {
   }
 
   function notify(): void {
-    config.onUnauthenticated?.()
+    if (signingOut === 0) {
+      config.onUnauthenticated?.()
+    }
+  }
+
+  /** snapshot reads the token and the generation together, behind pending writes. */
+  function snapshot(): Promise<Snapshot> {
+    return locked(async () => ({ record: await readRecord(), generation }))
   }
 
   function due(record: TokenRecord): boolean {
@@ -236,15 +271,39 @@ export function createBearer(config: BearerConfig): BearerController {
     if (now < retryNotBefore) {
       return false
     }
-    if (!started) {
+    const age = now - record.at
+    if (age < 0) {
+      // A clock that moved back. Rotating re-stamps the token.
       return true
     }
-    const age = now - record.at
-    return age < 0 || age >= rotateAfterMs
+    return age >= (started ? rotateAfterMs : Math.min(START_MIN_AGE_MS, rotateAfterMs))
+  }
+
+  /**
+   * dropToken clears the storage for a 401 of the token of generation gen.
+   * The generation check and the clear are one step inside the lock, so of
+   * many 401s one clears and one tells the app.
+   */
+  async function dropToken(gen: number): Promise<void> {
+    let mine = false
+    try {
+      await locked(async () => {
+        if (generation !== gen) {
+          return
+        }
+        mine = true
+        generation++
+        await clearStorage()
+      })
+    } finally {
+      if (mine) {
+        notify()
+      }
+    }
   }
 
   /** rotate is one attempt. It never throws for a failure that keeps the token. */
-  async function rotate(record: TokenRecord, gen: number): Promise<Current | 'dropped'> {
+  async function rotate(record: TokenRecord, gen: number): Promise<Snapshot | 'dropped'> {
     nonce ??= newNonce()
     let answer: unknown
     try {
@@ -264,14 +323,7 @@ export function createBearer(config: BearerConfig): BearerController {
       if (error instanceof ApiError && error.status === 401) {
         started = true
         nonce = undefined
-        if (generation === gen) {
-          generation++
-          try {
-            await locked(clearStorage)
-          } finally {
-            notify()
-          }
-        }
+        await dropToken(gen)
         throw error
       }
       if (error instanceof ApiError && error.status === 409 && error.code === ROTATION_REFUSED) {
@@ -290,9 +342,16 @@ export function createBearer(config: BearerConfig): BearerController {
       return { record, generation: gen }
     }
     const next: TokenRecord = { token, at: Date.now() }
-    // The new token is in the storage before anything sends it.
+    // The new token is in the storage before anything sends it. Inside the
+    // lock the storage is read again: it must still hold the token that was
+    // rotated, and nothing may have replaced it since. Else the result is
+    // another sign in's to overwrite, and it is dropped.
     return locked(async () => {
       if (generation !== gen) {
+        return 'dropped' as const
+      }
+      const stored = await readRecord()
+      if (stored?.token !== record.token) {
         return 'dropped' as const
       }
       await writeRecord(next)
@@ -304,26 +363,30 @@ export function createBearer(config: BearerConfig): BearerController {
     })
   }
 
-  async function resolveCurrent(): Promise<Current> {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const gen = generation
-      const record = await readRecord()
-      if (record === undefined) {
-        return { generation: gen }
+  async function resolveCurrent(): Promise<Snapshot> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const snap = await snapshot()
+      if (!owner || snap.record === undefined) {
+        return snap
       }
-      if (!due(record)) {
-        return { record, generation: gen }
+      if (!due(snap.record)) {
+        started = true
+        return snap
       }
-      const result = await rotate(record, gen)
+      if (attempt === 2) {
+        // Dropped twice: something keeps replacing the token. Use what is there.
+        return snap
+      }
+      const result = await rotate(snap.record, snap.generation)
       if (result !== 'dropped') {
         return result
       }
     }
-    return { generation }
+    return snapshot()
   }
 
   /** current is the single flight: concurrent callers share one read and one rotation. */
-  function current(): Promise<Current> {
+  function current(): Promise<Snapshot> {
     flight ??= resolveCurrent().finally(() => {
       flight = undefined
     })
@@ -335,15 +398,15 @@ export function createBearer(config: BearerConfig): BearerController {
       notify()
       return
     }
-    if (generation !== gen) {
+    if (!owner) {
+      // The owner decides about the storage. Tell the app once per token.
+      if (notifiedFor !== record.token) {
+        notifiedFor = record.token
+        notify()
+      }
       return
     }
-    generation++
-    try {
-      await locked(clearStorage)
-    } finally {
-      notify()
-    }
+    await dropToken(gen)
   }
 
   function ownHeaders(headers: Record<string, string> | undefined): Record<string, string> {
@@ -362,7 +425,13 @@ export function createBearer(config: BearerConfig): BearerController {
     body: unknown,
     options: RequestOptions = {},
   ): Promise<T> {
-    const { record, generation: gen } = await current()
+    let snap = await current()
+    // A flight that began before a sign in or a rotation finished may hand
+    // out the token it replaced. Ask again, a read costs little.
+    for (let again = 0; again < 2 && snap.generation !== generation; again++) {
+      snap = await current()
+    }
+    const { record, generation: gen } = snap
     return perform<T>(
       method,
       path,
@@ -384,10 +453,20 @@ export function createBearer(config: BearerConfig): BearerController {
     })
   }
 
+  function notOwner(): ApiError {
+    return new ApiError({
+      code: ErrorCode.invalidArgument,
+      message: 'This context does not own the sign in.',
+    })
+  }
+
   async function signIn(
     credentials: SignInCredentials,
     options: SignInOptions = {},
   ): Promise<DeviceSession> {
+    if (!owner) {
+      throw notOwner()
+    }
     const deviceName = options.deviceName ?? config.deviceName
     if (deviceName !== undefined && deviceNameProblem(deviceName) !== undefined) {
       throw invalidName()
@@ -413,12 +492,18 @@ export function createBearer(config: BearerConfig): BearerController {
       })
     }
     const next: TokenRecord = { token, at: Date.now() }
-    // Any rotation or request that is out now belongs to the old sign in.
-    generation++
-    await locked(() => writeRecord(next))
-    started = true
-    nonce = undefined
-    retryNotBefore = 0
+    // One step inside the lock: the write and the new generation. A read
+    // behind it sees the new token with the new generation, and a rotation of
+    // the old token that is out now is dropped. Two sign ins end with the one
+    // whose write came last.
+    await locked(async () => {
+      await writeRecord(next)
+      generation++
+      started = true
+      nonce = undefined
+      retryNotBefore = 0
+      notifiedFor = undefined
+    })
     const info = answer as { token_id?: unknown; expires_at?: unknown }
     return {
       deviceId: typeof info.token_id === 'string' ? info.token_id : '',
@@ -427,44 +512,59 @@ export function createBearer(config: BearerConfig): BearerController {
   }
 
   async function signOut(): Promise<void> {
-    // Anything that is out now must not write or clear after this point.
-    generation++
-    let record: TokenRecord | undefined
-    try {
-      record = await readRecord()
-    } catch {
-      // Unreadable: there is nothing to tell the server, the clear below is what is left.
+    if (!owner) {
+      throw notOwner()
     }
-    let failure: Error | undefined
-    if (record !== undefined) {
-      try {
-        await perform<unknown>(
-          'DELETE',
-          '/auth/token',
-          undefined,
-          { skipUnauthenticatedHook: true },
-          {
-            bearer: true,
-            authorization: `Bearer ${record.token}`,
-            onUnauthorized: () => undefined,
-          },
-        )
-      } catch (error) {
-        // A 401 means the device is gone already, which is what was asked for.
-        if (!(error instanceof ApiError && error.status === 401)) {
-          failure =
-            error instanceof Error
-              ? error
-              : new ApiError({ code: ErrorCode.internal, message: 'The sign out failed.' })
+    signingOut++
+    try {
+      // The generation moves first, so that a rotation that is out now drops
+      // its result instead of writing a token the clear below would miss.
+      const record = await locked(async () => {
+        generation++
+        try {
+          return await readRecord()
+        } catch {
+          // Unreadable: nothing to tell the server, the clear below is what is left.
+          return undefined
+        }
+      })
+      let failure: Error | undefined
+      if (record !== undefined) {
+        try {
+          await perform<unknown>(
+            'DELETE',
+            '/auth/token',
+            undefined,
+            { skipUnauthenticatedHook: true },
+            {
+              bearer: true,
+              authorization: `Bearer ${record.token}`,
+              onUnauthorized: () => undefined,
+            },
+          )
+        } catch (error) {
+          // A 401 means the device is gone already, which is what was asked for.
+          if (!(error instanceof ApiError && error.status === 401)) {
+            failure =
+              error instanceof Error
+                ? error
+                : new ApiError({ code: ErrorCode.internal, message: 'The sign out failed.' })
+          }
         }
       }
-    }
-    // The local sign out happens whatever the call answered.
-    await locked(clearStorage)
-    nonce = undefined
-    retryNotBefore = 0
-    if (failure !== undefined) {
-      throw failure
+      // The local sign out happens whatever the call answered.
+      await locked(async () => {
+        generation++
+        nonce = undefined
+        retryNotBefore = 0
+        notifiedFor = undefined
+        await clearStorage()
+      })
+      if (failure !== undefined) {
+        throw failure
+      }
+    } finally {
+      signingOut--
     }
   }
 

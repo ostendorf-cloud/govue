@@ -1061,10 +1061,11 @@ The design of the library and the reasoning behind it.
 
 ### The bearer client of a native app
 
-- `createClient({ auth: { mode: 'bearer', storage, rotateAfterMs, deviceName } })` is the client of
-  a native app. It returns a `BearerClient`: the same `get`, `post`, `put`, `patch` and `del`, plus
-  `signIn` and `signOut`. The default is `auth: { mode: 'cookie' }`, and its requests are
-  byte for byte what they were. The option is one object, not flags, so the modes cannot mix.
+- `createClient({ auth: { mode: 'bearer', storage, rotateAfterMs, rotation, deviceName } })` is
+  the client of a native app. It returns a `BearerClient`: the same `get`, `post`, `put`, `patch`
+  and `del`, plus `signIn` and `signOut`. The default is `auth: { mode: 'cookie' }`, and its
+  requests are byte for byte what they were. The option is one object, not flags, so the modes
+  cannot mix.
   Bearer mode refuses the `credentials` and `csrfToken` options at construction, since both belong
   to the cookie.
 - A bearer request carries `Authorization: Bearer <token>`, uses `credentials: 'omit'`, sends no
@@ -1080,11 +1081,27 @@ The design of the library and the reasoning behind it.
 - govue ships the in memory adapter, `createMemoryTokenStorage`, and nothing persistent. A product
   that keeps the sign in across app starts supplies an adapter backed by the platform keychain.
   govue has no Capacitor dependency and does not ship a plugin.
-- Rotation follows ADR 0001. The client rotates on the first use after the app start and whenever
-  the stored token is older than `rotateAfterMs`, 24 hours by default. A rotation is one call to
-  `POST /auth/token/rotate` with a random nonce, single flight: concurrent requests share the one
-  in flight. The new token is written to the storage before any request uses it. A request that
-  waits for a rotation sends the new token.
+- Rotation follows ADR 0001, with the differences listed below. The client rotates whenever the
+  stored token is older than `rotateAfterMs`, 24 hours by default, and on the first use after the
+  app start when the token is at least one hour old. A rotation is one call to
+  `POST /auth/token/rotate` with a random nonce from `crypto.getRandomValues`, single flight:
+  concurrent requests share the one in flight. Its timeout is 10 seconds, below the 30 seconds of
+  the server's rotate timeout. The new token is written to the storage before any request uses
+  it. A request that waits for a rotation sends the new token.
+- One context owns the storage. `auth.rotation` is `'owner'` by default. Exactly one context per
+  storage is the owner. It rotates, signs in, signs out and clears the storage on a 401. Every
+  other context that reads the same storage, an app extension or a background runner, sets
+  `rotation: 'none'`. That client never rotates, uses the stored token as it finds it, tells the
+  app about a 401 once per token and leaves the storage to the owner. Its `signIn` and `signOut`
+  refuse. Two rotating contexts revoke the device: the second rotation carries another nonce and
+  retires the pending token of the first, and the first one's use of it is a replay. An option,
+  not a hidden default, so that a product states which context owns the token.
+- All reads and writes of the storage run one after another. A read that starts while a write is
+  pending waits for it. The generation counter moves inside that order, together with the write.
+  A rotation writes only when the generation is the one it started with and the storage still
+  holds the token it rotated, read again inside the lock. So a sign in, a sign out or another
+  writer that got there first wins, and the rotation result is dropped. Two overlapping sign ins
+  end with the one whose write came last.
 - A network error or a 5xx on the rotation keeps the old token. The next request tries again with
   the same nonce, as the server allows within its rotate timeout. A 409 `rotation_refused` is quiet:
   the token stays, nothing is signed out, and the client waits five minutes before it asks again.
@@ -1102,15 +1119,38 @@ The design of the library and the reasoning behind it.
 - A storage that throws fails closed. The client throws an `ApiError` with code `token_storage`
   and sends nothing, so a broken keychain never turns into an unauthenticated request. The error
   carries no cause, since the adapter's own error may quote the value.
-- A sign in, a sign out or a clear moves a generation counter, and a rotation or a 401 that
-  started before the move is dropped. So a sign out that overtakes a rotation is not undone by the
-  late answer, and a late 401 of the old token does not clear the new one.
+- An app answers a `token_storage` error with `signOut()` or `signIn()`. A value in the storage
+  that the client cannot read fails every request with that error and calls no
+  `onUnauthenticated`, because no server said the sign in is gone. `signOut()` clears it.
+- A 401 that an explicit `signOut()` causes does not call `onUnauthenticated`: the app asked
+  for it.
 - The token appears in no URL, no header but `Authorization`, no error message and no console
-  output. A transport error is thrown without its cause, since a failed `fetch` may quote the
-  request. The client object has no method that returns the token.
-- Not shipped: the fallback of ADR 0001 for a pending token that gets a 401 (the client does not
-  keep the previous token and retry it, a 401 signs out), a cleanup of the device that a failed
-  storage write leaves behind after an issue, and a persistent adapter.
+  output. A transport error, an unreadable body and a body that is not JSON are thrown without
+  their cause, since a failed `fetch` may quote the request and a `SyntaxError` quotes part of the
+  body, which is the token for an Issue or Rotate answer. The client object has no method that
+  returns the token.
+- Differences from ADR 0001, all of them:
+  - No fallback. A 401 for a pending token that has not succeeded yet does not send the client
+    back to its current token with a new nonce. The client keeps one token and a 401 clears it.
+    This is a documented limit. A lost rotate answer is harmless: the old token stays current, a
+    retry with the same nonce inside 30 seconds works, and later the unused pending token is
+    retired without a revocation. Only a rare case forces a new sign in: the delayed original
+    rotate reaches the server between the answer of the retry and the first use of its token.
+  - The start rule. The ADR says to rotate on every start and also that a refused rotation is
+    quiet and that the app rotates on start only when the interval has passed. The client rotates
+    on start only for a token at least one hour old, the server's default minimum interval, so a
+    fresh token costs no 409. A server with a longer minimum interval answers one quiet 409 per
+    start.
+  - The owner option above. The ADR says one context owns rotation. The client makes that an
+    option.
+- Not shipped: a cleanup of the device that a failed storage write leaves behind after an
+  issue, and a persistent adapter.
+- Limits to know. A stored time `at` in the future, from a clock that moved back, counts as due,
+  so the client asks for a rotation, gets a 409 and asks again every five minutes until the clock catches
+  up. After a network error on a rotation every request first waits for the next rotation attempt,
+  up to its 10 second timeout, until the network is back. The rotate timeout stays below the
+  server's 30 seconds, so a shorter wait would cost the retry with the same nonce nothing, but it
+  is not built.
 - A native app also needs the server half: `AppOrigins`, `AppCORS` and `TrustOriginOnRoute`, see
   "Token handlers". The web view of the app sends its own origin, which the server must list.
 

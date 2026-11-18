@@ -30,6 +30,11 @@ function issued(token: string) {
   return { token, token_id: 'dev-1', expires_at: '2026-09-01T00:00:00Z' }
 }
 
+/** aged is an issue time that makes a token due on the first use after start. */
+function aged(): number {
+  return Date.now() - 2 * HOUR
+}
+
 /** record is the value the client keeps in the storage. */
 function record(token: string, at = Date.now()): string {
   return JSON.stringify({ v: 1, token, at })
@@ -315,7 +320,7 @@ describe('cookie mode stays as it was', () => {
 
 describe('rotation', () => {
   it('rotates on the first use after start, writes before it uses the token', async () => {
-    const t = setup({ initial: record(OLD) })
+    const t = setup({ initial: record(OLD, aged()) })
     t.server.rotate = () => answer(200, issued(NEW))
 
     await t.client.get('/things')
@@ -336,7 +341,7 @@ describe('rotation', () => {
   })
 
   it('sends a valid random nonce, a new one per attempt', async () => {
-    const t = setup({ initial: record(OLD), auth: { rotateAfterMs: HOUR } })
+    const t = setup({ initial: record(OLD, aged()), auth: { rotateAfterMs: HOUR } })
     t.server.rotate = () => answer(200, issued(NEW))
 
     await t.client.get('/a')
@@ -352,7 +357,7 @@ describe('rotation', () => {
   })
 
   it('honours the interval by the stored timestamp', async () => {
-    const t = setup({ initial: record(OLD) })
+    const t = setup({ initial: record(OLD, aged()) })
     let n = 0
     t.server.rotate = () => answer(200, issued(`${NEW}-${++n}`))
 
@@ -370,7 +375,7 @@ describe('rotation', () => {
   })
 
   it('takes its own interval and rejects a bad one', async () => {
-    const t = setup({ initial: record(OLD), auth: { rotateAfterMs: HOUR } })
+    const t = setup({ initial: record(OLD, aged()), auth: { rotateAfterMs: HOUR } })
     t.server.rotate = () => answer(200, issued(NEW))
 
     await t.client.get('/start')
@@ -386,7 +391,7 @@ describe('rotation', () => {
   })
 
   it('shares one rotation between 20 concurrent requests', async () => {
-    const t = setup({ initial: record(OLD) })
+    const t = setup({ initial: record(OLD, aged()) })
     const gate = deferred<Response>()
     t.server.rotate = () => gate.promise
 
@@ -404,7 +409,7 @@ describe('rotation', () => {
   })
 
   it('uses the new token only after the storage write finished', async () => {
-    const t = setup({ initial: record(OLD) })
+    const t = setup({ initial: record(OLD, aged()) })
     const gate = deferred<void>()
     t.storage.setGate = gate.promise
     t.server.rotate = () => answer(200, issued(NEW))
@@ -423,7 +428,7 @@ describe('rotation', () => {
   })
 
   it('keeps the old token on a network error and retries with the same nonce', async () => {
-    const t = setup({ initial: record(OLD) })
+    const t = setup({ initial: record(OLD, aged()) })
     t.server.rotate = () => {
       throw new TypeError('fetch failed')
     }
@@ -481,7 +486,7 @@ describe('rotation', () => {
 
   it('clears the storage and calls onUnauthenticated once on a 401 rotation', async () => {
     const hook = vi.fn()
-    const t = setup({ initial: record(OLD), onUnauthenticated: hook })
+    const t = setup({ initial: record(OLD, aged()), onUnauthenticated: hook })
     const gate = deferred<Response>()
     t.server.rotate = () => gate.promise
 
@@ -525,7 +530,7 @@ describe('rotation', () => {
   })
 
   it('drops a rotation result that a sign out overtook', async () => {
-    const t = setup({ initial: record(OLD) })
+    const t = setup({ initial: record(OLD, aged()) })
     const gate = deferred<Response>()
     t.server.rotate = () => gate.promise
 
@@ -543,7 +548,7 @@ describe('rotation', () => {
   })
 
   it('drops a rotation result that a sign in overtook', async () => {
-    const t = setup({ initial: record(OLD) })
+    const t = setup({ initial: record(OLD, aged()) })
     const gate = deferred<Response>()
     t.server.rotate = () => gate.promise
 
@@ -689,7 +694,7 @@ describe('a failing storage fails closed', () => {
   })
 
   it('throws a typed error when the new token cannot be written and keeps the old one', async () => {
-    const t = setup({ initial: record(OLD) })
+    const t = setup({ initial: record(OLD, aged()) })
     t.server.rotate = () => answer(200, issued(NEW))
     t.storage.failSet = new Error(`disk full ${NEW}`)
 
