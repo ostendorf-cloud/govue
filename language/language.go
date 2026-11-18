@@ -28,6 +28,9 @@
 // header for other methods, because no method-less pattern matches /. The answer depends on the visitor, so it is a 302 with
 // Cache-Control: no-store and Vary: Accept-Language, Cookie.
 //
+// HandleLegal registers the redirects of the legal pages, such as /imprint
+// and /impressum, with the same language choice. See its documentation.
+//
 // The package imports no other govue package.
 package language
 
@@ -82,6 +85,16 @@ type redirector struct {
 // Redirect returns a handler that redirects / to the language variant for the
 // request. It returns an error wrapping ErrConfig when cfg is invalid.
 func Redirect(cfg Config) (http.Handler, error) {
+	rd, err := newRedirector(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return rd, nil
+}
+
+// newRedirector validates cfg and returns the redirector both Redirect and
+// HandleLegal build on.
+func newRedirector(cfg Config) (*redirector, error) {
 	langs := cfg.Languages
 	if len(langs) == 0 {
 		langs = []string{"de", "en"}

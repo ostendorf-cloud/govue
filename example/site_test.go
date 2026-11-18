@@ -457,7 +457,8 @@ func TestRootRedirectIsMountedForTheRootAlone(t *testing.T) {
 		// Another path is the catch-all's, not the redirect handler's own 404:
 		// the pattern must be "GET /{$}", never "GET /".
 		{"/x", "/", http.StatusNotFound},
-		{"/impressum", "/", http.StatusNotFound},
+		// An unprefixed page path. /impressum is a legal alias, see legal_test.go.
+		{"/%C3%BCber", "/", http.StatusNotFound},
 	} {
 		logs.Reset()
 		res := do(t, h, http.MethodGet, tc.target, nil)
@@ -548,7 +549,8 @@ func TestUnknownPathsAnswer404WithoutARedirect(t *testing.T) {
 	for _, target := range []string{
 		"/fr/",
 		"/DE/",
-		"/impressum",
+		"/%C3%BCber",
+		"/Impressum",
 		"/de/nope",
 		"/de/impressum/",
 		"/en/impressum/",

@@ -35,7 +35,9 @@ export default defineConfig({
     // scripts/ carries the CLI wrapper's own test alongside its source, not
     // under src/, since it ships to a consumer's devDependency tree only
     // through theme:generate and never through the package's own exports.
-    include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
+    // example/ is the placeholder site of the legal pages, prerendered and
+    // checked by its own test.
+    include: ['src/**/*.test.ts', 'scripts/**/*.test.ts', 'example/**/*.test.ts'],
     css: false,
   },
 })

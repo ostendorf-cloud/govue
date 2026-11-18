@@ -65,6 +65,9 @@ export {
   validateRoutes,
 } from './i18n/routes'
 export type { LocalizedRoute, RouteDef } from './i18n/routes'
+// The legal pages: paths, route records and footer links. No legal text.
+export { LEGAL_PAGES, legalLinks, legalPath, legalRouteDefs, legalRoutes } from './i18n/legal'
+export type { LegalLink, LegalPage, LegalPages, LegalRouteRecord } from './i18n/legal'
 export { LANGUAGE_STORAGE_KEY } from './i18n/languageStorage'
 export type { LanguageStorageOption } from './i18n/languageStorage'
 
@@ -85,6 +88,7 @@ export type { FooterLink } from './components/GovueFooter.vue'
 export { default as GovueHeader } from './components/GovueHeader.vue'
 export { default as GovueInput } from './components/GovueInput.vue'
 export { default as GovueLanguageSwitch } from './components/GovueLanguageSwitch.vue'
+export { default as GovueLegalPage } from './components/GovueLegalPage.vue'
 export { default as GovueLoginForm } from './components/GovueLoginForm.vue'
 export { default as GovueNav } from './components/GovueNav.vue'
 export type { NavItem } from './components/GovueNav.vue'

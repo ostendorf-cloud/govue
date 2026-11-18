@@ -4,7 +4,17 @@
   // pulls in, so this one checks the whole package with Node types added.
   // scripts/ is the theme generator's CLI, Node-only like the tests and with
   // the same need for the Node types tsconfig.app.json deliberately excludes.
-  "include": ["env.d.ts", "src/**/*", "src/**/*.vue", "vitest.setup.ts", "scripts/**/*"],
+  // example/ is the placeholder site of the legal pages, Node-only like the
+  // tests that prerender it.
+  "include": [
+    "env.d.ts",
+    "src/**/*",
+    "src/**/*.vue",
+    "vitest.setup.ts",
+    "scripts/**/*",
+    "example/**/*",
+    "example/**/*.vue"
+  ],
   "exclude": [],
   "compilerOptions": {
     "composite": true,

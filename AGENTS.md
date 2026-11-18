@@ -37,6 +37,8 @@ repeated here.
   lives in `web/src/components/` with the other components.
   A visitor-facing default text goes into both catalogues under `govue.`, never into a
   component as a string. A text prop stays as an override.
+  The legal pages (`language.HandleLegal`, `GovueLegalPage`, `govue-check-legal`) are structure
+  only: govue never ships an imprint, privacy or terms text.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.

@@ -93,6 +93,9 @@ type app struct {
 	// are nil without SITE_DIR.
 	site             *site
 	languageRedirect http.Handler
+	// legal configures the redirects of the legal pages, nil without
+	// SITE_DIR.
+	legal *language.LegalConfig
 	// siteRoot is the open site directory, nil without SITE_DIR. Pages are
 	// read from it at startup and assets on every request, so it stays open
 	// until close.
@@ -210,6 +213,11 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 		redirect, err := language.Redirect(language.Config{Languages: siteLanguages})
 		fail(err)
 		a.languageRedirect = redirect
+		// The legal redirects are checked here, on a mux of their own, so a
+		// bad configuration fails startup with the other errors. handler
+		// registers them again on the real mux.
+		a.legal = &language.LegalConfig{Config: language.Config{Languages: siteLanguages}}
+		fail(language.HandleLegal(http.NewServeMux(), *a.legal, nil))
 		// OpenRoot, not DirFS: the root refuses a symbolic link that leaves
 		// the directory, so a page or an asset can never be read from
 		// outside it. A page that links out fails startup, naming the page.
@@ -332,6 +340,18 @@ func (a *app) handler() http.Handler {
 		// sees them and the log carries their pattern.
 		mux.Handle("GET /{$}", route(a.languageRedirect))
 		a.site.mount(mux, route)
+	}
+	if a.legal != nil {
+		// /imprint, /impressum and the other legal paths redirect to the
+		// page of the visitor's language. They sit outside the route chain
+		// like the app association files: a public GET that needs no
+		// session and no CSRF check, and the session middleware would answer
+		// a bad Authorization header with 401. The outer chain still applies.
+		// The configuration was checked in newApp, so an error here is a
+		// programming mistake.
+		if err := language.HandleLegal(mux, *a.legal, nil); err != nil {
+			panic(err)
+		}
 	}
 	if a.assoc != nil {
 		// The app association files sit outside the route chain on purpose.
