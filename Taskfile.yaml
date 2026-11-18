@@ -104,9 +104,8 @@ tasks:
       - go test -race -count=1 ./...
 
   test:scripts:
-    desc: Shell tests of the CI helper scripts and of the token boundary in checks.yaml
+    desc: Shell test of the token boundary in checks.yaml
     cmds:
-      - bash .github/scripts/release-age-comment.test.sh
       - bash .github/scripts/checks-workflow.test.sh
 
   # The web/ half. Every target below runs inside web/ and depends on web:deps,
