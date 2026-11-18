@@ -291,16 +291,17 @@ The design of the library and the reasoning behind it.
   `Config.OnBearerRefusal` for the error shape. Call `csrf.Protector.ExemptBearer` and keep
   `session.Manager.Middleware` behind the protector. See "Device sessions for native apps".
 - Step 3, the app origin list and its overlap check. It comes before the token handlers, which
-  take the list. Build it with `middleware.NewAppOrigins(origins, customSchemes...)`. Call
-  `RejectOverlap(nil, origins)` at startup with every origin passed to
-  `csrf.Protector.TrustOrigin`, and with `account.HandlerConfig.TrustedOrigins` when that list
-  differs. Refuse to start on an error. Call `csrf.Protector.TrustOriginOnRoute` with
-  `http.MethodPost`, the path of the issue route and `AppOrigins.List()`. Once the web `CORS`
-  exists, build `middleware.NewAppCORS(appOrigins, webCORS)`, where `webCORS` is the `*CORS`. It
-  refuses an overlap with that policy. Use its `Middleware` in place of `CORS.Middleware`, at the
-  same place in the chain. In `example/` the list comes from `APP_ORIGINS` and `APP_SCHEMES`, for
-  example `APP_ORIGINS=capacitor://localhost` with `APP_SCHEMES=capacitor`, and
-  `https://localhost` for Android. See "App origins".
+  take the list. Build it with `middleware.NewAppOrigins(origins, customSchemes...)` into
+  `appOrigins`. Call `appOrigins.RejectOverlap(nil, trusted)` at startup, where `trusted` holds
+  every origin passed to `csrf.Protector.TrustOrigin` and to
+  `account.HandlerConfig.TrustedOrigins`. Refuse to start on an error. Call
+  `csrf.Protector.TrustOriginOnRoute` with `http.MethodPost`, the path of the issue route and
+  `appOrigins.List()`. The issue route is `POST /api/v1/auth/token` in `example/`. Once the web
+  `CORS` exists, build `middleware.NewAppCORS(appOrigins, webCORS)`, where `webCORS` is the
+  `*CORS`. It refuses an overlap with that policy. Use its `Middleware` in place of
+  `CORS.Middleware`, at the same place in the chain. In `example/` the list comes from
+  `APP_ORIGINS` and `APP_SCHEMES`, for example `APP_ORIGINS=capacitor://localhost` with
+  `APP_SCHEMES=capacitor`, and `https://localhost` for Android. See "App origins".
 - Step 4, the token handlers and their rate limit. `devicehttp.NewHandlers` takes
   `HandlerConfig{Sessions, VerifyCredentials, Now, IssueTrustedOrigins}`. Pass `AppOrigins.List()`
   from step 3 as `IssueTrustedOrigins`. `Now` is the clock of `session.Config.Now`. Mount
@@ -1654,9 +1655,8 @@ The design of the library and the reasoning behind it.
 
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a
   maintained headless primitives library beats writing a worse one. Reka UI, the Vue port of
-  Radix, is the leading candidate and is evaluated in its own issue, styled with these tokens.
-- Reka UI is wired up. `GovueDialog` and `GovueSelect` import `reka-ui`. A checkbox and a switch
-  stay hand rolled on native elements.
+  Radix, was evaluated and is adopted: `GovueDialog` and `GovueSelect` import `reka-ui`, styled
+  with these tokens. A checkbox and a switch stay hand rolled on native elements.
 
 ## Alternatives considered
 
