@@ -1059,6 +1059,98 @@ The design of the library and the reasoning behind it.
   shows as a refused request. An application with such a flow sets `csrfToken` in
   `createClient`.
 
+### Passkeys
+
+- The `passkey` package adds WebAuthn passkeys next to the password and TOTP login, never
+  instead of it. A person registers a passkey while logged in and then logs in with it. It is
+  the one importer of `github.com/go-webauthn/webauthn`, so an application without passkeys does
+  not pull the library in.
+- `passkey` imports `account` for `account.Identity` only. `StartSession` has the signature of
+  `account.HandlerConfig.StartSession`, so an application passes the same function to both and a
+  passkey login starts the session a password and TOTP login starts. `account` does not import
+  `passkey`, and neither imports `session`.
+- A passkey login requires user verification, a PIN or a biometric on the authenticator, so it
+  proves possession and knowledge or inherence in one step and counts as both factors.
+
+#### Setup
+
+- `passkey.Config` takes the relying party id `RPID`, a display name and the exact `Origins`. All
+  three are required, and none is derived from a request's `Host` header, which the client sets.
+- Startup refuses an empty RP id, one that is not a lower case host name of at least two labels
+  (`localhost` excepted), an IP address, an empty origin list, an origin that is not https
+  (http on `localhost` excepted), an origin with a path, a query, user info or the default port,
+  and an origin whose host is neither the RP id nor below it. A browser compares the origin byte
+  for byte, so a typo fails at startup instead of refusing every ceremony.
+- Use the application's own host as the RP id, `app.example.com`, not a marketing parent such as
+  `example.com` that the application does not control. Any host below the RP id can then ask for
+  the same passkeys.
+- The RP id cannot change later. Every passkey is bound to it, and a change loses all of them.
+- The public suffix list is not checked. `co.uk` passes startup and fails in the browser.
+
+#### Challenges
+
+- A challenge is single use. The begin handler stores the ceremony state in a `ChallengeStore`
+  under 32 random bytes and sends that id in an HttpOnly, `SameSite=Strict` cookie with the
+  `__Host-` prefix. The finish handler takes it, which deletes it in the same step, whatever the
+  outcome. A second finish with the same cookie finds nothing.
+- The id travels in a cookie and not in the response body. A script cannot read it, the client
+  carries no state between the two calls, and the challenge stays bound to the browser that began
+  the login.
+- A registration challenge holds the account id and finishes only for the same account. A login
+  challenge has no account, and the cookie binds it. Each holds its ceremony, so one never
+  finishes the other.
+- A challenge lives five minutes by default, 30 seconds to ten minutes by configuration.
+- `MemoryChallengeStore` is the default for one process, bounded at 10000 entries. When full it
+  drops expired entries, then the oldest live one. A flood can then push out a real challenge and
+  the person starts again. Refusing new entries instead would let the same flood stop every login
+  for a whole challenge lifetime. Several replicas without sticky sessions need a shared store
+  whose `Take` is atomic.
+
+#### The store
+
+- `passkey.Store` has five methods: `AddCredential`, `Credentials`, `FindByUserHandle`,
+  `UpdateCredential` and `DeleteCredential`. It has no provider identity, no connection, no tenant
+  and no list of accounts, for the reason `account.Store` gives: a passkey login reaches its
+  account through the user handle and nothing else.
+- The user handle is 32 random bytes per account, made with the first passkey and copied onto
+  every further one. It is not the account id. The authenticator stores it and a synced passkey
+  copies it to every device of the person, so an id built from an email address or a sequence
+  would leak it. A consumer id may also exceed the 64 bytes WebAuthn allows.
+- `UpdateCredential` is a compare and set on the sign count the login read. Of two logins racing
+  with one counter value, one wins.
+- `DeleteCredential` with `keepOne` deletes only while the account holds another passkey, decided
+  in the same step. A SQL adapter locks the account's credential rows for it, since a `DELETE`
+  with an `EXISTS` alone lets two concurrent deletes each see the other row.
+- `passkeytest.Run` is the conformance suite and `passkeytest.MemoryStore` the in memory fake.
+  The suite checks the unique credential id, the exact handle match, a disabled account, the
+  compare and set, the account scope of a write and the racing deletes.
+
+#### Handlers
+
+- Registration begin and finish, login begin and finish, list and delete, JSON like the account
+  handlers. Each checks the method, then the origin with `net/http.CrossOriginProtection`, then a
+  strict body, for the reason the account handlers give: a passkey login has no session to bind a
+  CSRF token to, and a forgotten middleware must not leave it open.
+- Registration and delete need a session whose login is at most `ReauthWindow` old, ten minutes by
+  default, through `CurrentAccount`, which returns the identity and the time of the login. A
+  stolen, long lived session cannot add its own passkey. Listing needs a session only.
+- Every refused login answers 401 `invalid_credentials` with one body: a missing, expired or used
+  challenge, an unknown credential or handle, a wrong origin or RP id hash, a bad signature, no
+  user verification and a sign count going backwards, a cloned authenticator.
+- Deleting the last passkey is refused with 409 `last_factor` when `OtherFactors` reports no other
+  way to log in, such as a confirmed TOTP secret.
+- The begin and finish routes need a per client rate limit, as `example/` wires it with the account
+  limiter.
+
+#### Native apps and recovery
+
+- A native iOS app uses the web origin through its associated domain. It needs the
+  `webcredentials` entry in the Apple App Site Association file that `appassoc` serves. An Android
+  app needs the `get_login_creds` relation in `assetlinks.json`, and the origin it sends is
+  `android:apk-key-hash:...`, which `Config` refuses today. Neither path is verified on a device.
+- Recovery codes are a follow up. Until then, an account that loses its TOTP device and every
+  passkey is locked out, and only an operator can let the person back in.
+
 ### The bearer client of a native app
 
 - `createClient({ auth: { mode: 'bearer', storage, rotateAfterMs, rotation, deviceName } })` is
@@ -1614,8 +1706,9 @@ The design of the library and the reasoning behind it.
   step: decide with the login logic.
 - Whether the TOTP confirm handler may start a session without a switch to turn that off. Next
   step: decide when the first product that wants a login after confirmation reports back.
-- The passkey user handle: the opaque account id or a random handle per account. Next step:
-  decide in the passkey work with its security review.
+- The passkey user handle. Decided: 32 random bytes per account, see "Passkeys" above.
+- A native Android app's passkey origin, `android:apk-key-hash:...`. `passkey.Config` refuses
+  every origin that is not https today. Next step: decide when the first Android app needs it.
 - What the first version supports for configuration beyond the environment. Nothing reads the
   environment by itself today, and whether that stays absolute is open.
 

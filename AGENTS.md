@@ -40,9 +40,9 @@ repeated here.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
-- Seventeen Go packages live at the module root: `account`, `api`, `appassoc`, `clientip`,
+- Eighteen Go packages live at the module root: `account`, `api`, `appassoc`, `clientip`,
   `csrf`, `envconf`, `favicon`, `health`, `httpserver`, `language`, `logging`, `metrics`,
-  `middleware`, `oidc`, `ratelimit`, `session`, `themeboot`.
+  `middleware`, `oidc`, `passkey`, `ratelimit`, `session`, `themeboot`.
 - `appassoc` serves the Apple App Site Association and Android `assetlinks.json` files from a
   typed `Config`. The files hold public identifiers only, never a secret, a token or a value
   from a request. They are exact patterns, never redirect, never set a cookie and never need a
@@ -57,6 +57,12 @@ repeated here.
   carries only the calls its logic makes for login, TOTP enrolment and password change. A new
   method needs a reason in the pull request, because what the interface lacks is what the
   package cannot reach.
+- `passkey` holds WebAuthn passkeys next to the password and TOTP login: `Config`, the five
+  method `Store`, the single use `ChallengeStore` with a bounded in memory default, and the JSON
+  handlers. It imports `account` for `Identity` only and never `session`. Its `StartSession` has
+  the signature of the account one. The RP id and the origins are required configuration and
+  never come from a request. `passkey/passkeytest` holds the conformance suite and an in memory
+  store.
 - `session/devicehttp` holds the JSON handlers of the device token sessions of native apps:
   issue, rotate, list, revoke and sign out of the calling device. It is a sub package so that
   `session` alone does not pull `api` in. It imports `session` and never `account`, and the
@@ -94,10 +100,12 @@ task example:build   # compile the example application
 
 ### Go
 
-- The standard library only, with two exceptions. `prometheus/client_golang` stays confined to
+- The standard library only, with three exceptions. `prometheus/client_golang` stays confined to
   the `metrics` package. `golang.org/x/crypto` stays confined to the `account` package, for
-  Argon2id, which the standard library lacks. The owner accepted it for local accounts. Another
-  dependency needs a reason in the pull request.
+  Argon2id, which the standard library lacks. The owner accepted it for local accounts.
+  `github.com/go-webauthn/webauthn` stays confined to the `passkey` package, for the WebAuthn
+  ceremonies. The owner accepted it for passkeys. Another dependency needs a reason in the pull
+  request.
 - A package stays usable on its own. An application that wants `clientip` must not pull in
   `session` with it.
 - The secure choice is the default, never an option an application has to remember. Weakening
