@@ -6,7 +6,7 @@ task = "3"
 # The web/ package. pnpm is the package manager, so npm is never called directly, and the
 # lockfile is written by the major pinned here.
 node = "26"
-pnpm = "10"
+pnpm = "12"
 # Pinned to the patch, not "2": a golangci-lint release is built against one Go patch and
 # cannot read the stdlib export data of a newer one, so the two versions move together.
 golangci-lint = "2.15.0"
