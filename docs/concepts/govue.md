@@ -287,11 +287,20 @@ The design of the library and the reasoning behind it.
   or not later than the account's last `EndAll`, is refused. A password change that lands between
   the check and the issue leaves no device behind. A shared store needs synchronised clocks for
   this.
+- That holds only in one order. The caller takes the check time before it reads the stored
+  credential, not after a slow hash returns. A password change calls `EndAll` after the new
+  credential is committed, not before.
 - The cap of ten devices per account ends the least recently seen one and logs it. Whoever has
   the password can use that to sign the account's apps out. A password change is the remedy.
 - `MemoryDeviceStore` is for one replica. A full one refuses to issue for everyone and never
   evicts another account's device. A restart signs every app out, so a product with apps writes a
   shared store.
+- Known limits of the memory store, which a shared store decides for itself:
+  - Its sweep drops only records past their absolute expiry. An idle record stays until a read
+    finds it or the absolute expiry passes, and it counts toward the bound until then.
+  - It remembers delete times for at most `maxDevices` accounts. Once about that many accounts
+    end their sessions within the issue delay, one floor covers every account. Every issue whose
+    check lies before the floor is then refused, which fails closed.
 - `session/sessiontest` is the conformance suite for any `DeviceStore`: the atomic operations,
   the rotation and reuse rules through a `Manager`, and their races.
 

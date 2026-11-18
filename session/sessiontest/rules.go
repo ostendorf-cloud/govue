@@ -746,6 +746,34 @@ func rulesIssueRefusesAnOldAuthentication(t *testing.T, newStore NewStore) {
 	}
 }
 
+// rulesBothRetiredListsFull rotates four times through the manager, then
+// replaces pending tokens. Every token the device held stays detectable.
+func rulesBothRetiredListsFull(t *testing.T, newStore NewStore) {
+	f := newFixture(t, newStore, nil)
+	token, _ := f.issue("u1")
+	held := []string{}
+	at := time.Duration(0)
+	for i := range session.MaxRetiredCurrent {
+		at += session.DefaultDeviceMinRotateInterval
+		f.set(at)
+		next := f.mustRotate(token, fmt.Sprintf("c%d", i))
+		f.mustAuth(next, "a pending token")
+		held = append(held, token)
+		token = next
+	}
+	at += session.DefaultDeviceMinRotateInterval
+	f.set(at)
+	for i := range session.MaxRetiredPending + 1 {
+		f.mustRotate(token, fmt.Sprintf("p%d", i))
+	}
+
+	for i, old := range held {
+		if _, slot := f.record(old); slot != session.SlotRetired {
+			t.Errorf("held token %d: slot %d, want retired", i, slot)
+		}
+	}
+}
+
 // race runs fn on n goroutines at once and waits for all of them.
 func race(n int, fn func(i int)) {
 	var wg sync.WaitGroup

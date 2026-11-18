@@ -217,18 +217,27 @@ func (d DeviceSession) view() Device {
 // authenticated and returns its token. The token is shown to the caller once
 // and never stored: the store keeps its SHA-256.
 //
-// authenticatedAt is when the credential check behind this issue ran, read
-// from the same clock as [Config.Now]. An issue whose check is
+// authenticatedAt is when the credential check behind this issue started,
+// read from the same clock as [Config.Now]. An issue whose check is
 // [MaxDeviceIssueDelay] old or more, or not later than the last [Manager.EndAll]
 // of the account, is refused with [ErrStaleAuthentication]. That keeps a
 // password change that lands between the check of the old password and the
 // issue from leaving a device behind.
 //
+// The order is the contract, and nothing here can check it:
+//
+//   - Take authenticatedAt before the stored credential is read. A time taken
+//     after a slow password hash returns lies after an EndAll that landed
+//     during the hash, and the device is issued.
+//   - A password change calls EndAll after the new credential is committed.
+//     An EndAll before the commit lies before a check that still reads the
+//     old credential.
+//
 // Issuing counts as the first rotation, so the first rotation follows one
 // [DeviceConfig.MinRotateInterval] later. Past [DeviceConfig.MaxPerSubject],
 // the account's least recently seen device session ends, and a log line names
-// it. Whoever has the password can use that to sign the account's apps out;
-// changing the password, which calls EndAll, is the remedy.
+// it. Whoever has the password can use that to sign the account's apps out.
+// Changing the password, which calls EndAll, is the remedy.
 func (m *Manager) IssueDevice(ctx context.Context, subject, name string, authenticatedAt time.Time) (string, Device, error) {
 	store := m.cfg.Devices.Store
 	if store == nil {

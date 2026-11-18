@@ -46,6 +46,46 @@ func TestRetiredBoundsFollowTheADR(t *testing.T) {
 	}
 }
 
+// TestTheCheckTimeIsTakenBeforeTheCredentialIsRead documents the contract of
+// authenticatedAt. A password change and its EndAll can land while a slow
+// password hash runs. Only a time taken before the stored credential was read
+// lies before that EndAll. A time taken after the check returned lies after
+// it, and nothing in this package can tell the difference.
+func TestTheCheckTimeIsTakenBeforeTheCredentialIsRead(t *testing.T) {
+	// hashing is a credential check that reads the stored password, hashes
+	// for a while, and sees a password change with its EndAll meanwhile.
+	hashing := func(t *testing.T, f *deviceFixture) {
+		t.Helper()
+		f.now = f.now.Add(50 * time.Millisecond)
+		if err := f.manager.EndAll(context.Background(), "u1"); err != nil {
+			t.Fatalf("EndAll: %v", err)
+		}
+		f.now = f.now.Add(50 * time.Millisecond)
+	}
+
+	t.Run("taken before the read, the issue is refused", func(t *testing.T) {
+		f := newDeviceFixture(t, nil)
+		checkedAt := f.now
+		hashing(t, f)
+		if _, _, err := f.manager.IssueDevice(context.Background(), "u1", "phone", checkedAt); !errors.Is(err, session.ErrStaleAuthentication) {
+			t.Errorf("IssueDevice = %v, want ErrStaleAuthentication", err)
+		}
+	})
+
+	t.Run("taken after the check, the issue goes through and the caller is wrong", func(t *testing.T) {
+		f := newDeviceFixture(t, nil)
+		hashing(t, f)
+		checkedAt := f.now
+		token, _, err := f.manager.IssueDevice(context.Background(), "u1", "phone", checkedAt)
+		if err != nil {
+			t.Fatalf("IssueDevice = %v: this case shows the limit, it is expected to issue", err)
+		}
+		if _, err := f.manager.AuthenticateDevice(context.Background(), token); err != nil {
+			t.Fatalf("AuthenticateDevice = %v: this case shows the limit, it is expected to authenticate", err)
+		}
+	})
+}
+
 func TestMemoryDeviceStoreRefusesEveryoneWhenFull(t *testing.T) {
 	store := session.NewMemoryDeviceStore(func() time.Time { return start }, 2)
 	for _, d := range []session.DeviceSession{

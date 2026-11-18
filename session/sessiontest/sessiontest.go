@@ -68,6 +68,9 @@ func DeviceStore(t *testing.T, newStore NewStore) {
 		{"store/DeleteSubject", storeDeleteSubject},
 		{"store/CreateRefusesAuthenticationBeforeDeleteSubject", storeCreateRefusesStaleAuthentication},
 		{"store/CreateReportsEvicted", storeCreateReportsEvicted},
+		{"store/DeleteTimeRememberedForTheIssueDelay", storeDeleteTimeRememberedForTheIssueDelay},
+		{"store/DeleteTimeNeverMovesBack", storeDeleteTimeNeverMovesBack},
+		{"store/BothRetiredListsFull", storeBothRetiredListsFull},
 		{"store/ListReturnsOnlyTheSubject", storeListReturnsOnlyTheSubject},
 		{"store/NoSharedReferences", storeNoSharedReferences},
 
@@ -104,6 +107,7 @@ func DeviceStore(t *testing.T, newStore NewStore) {
 		{"rules/RotationsCannotFlushTheRetiredCurrent", rulesRotationsCannotFlushTheRetiredCurrent},
 		{"rules/IssueAfterEndAllRefused", rulesIssueAfterEndAllRefused},
 		{"rules/IssueRefusesAnOldAuthentication", rulesIssueRefusesAnOldAuthentication},
+		{"rules/BothRetiredListsFull", rulesBothRetiredListsFull},
 
 		// The rules racing each other through the manager.
 		{"race/ConcurrentRotationsOneWins", raceConcurrentRotationsOneWins},
@@ -572,6 +576,82 @@ func storeCreateRefusesStaleAuthentication(t *testing.T, newStore NewStore) {
 	other := record("other", "u2", at)
 	if _, err := store.Create(context.Background(), other, 10, at.Add(-time.Second)); err != nil {
 		t.Errorf("Create for another subject = %v, want no effect of u1's delete", err)
+	}
+}
+
+// storeDeleteTimeRememberedForTheIssueDelay pins how long a delete time
+// lives. The suite cannot move a store's clock, so the delete lies almost one
+// issue delay in the past. A first write gives the store its chance to sweep,
+// and the delete time must survive it.
+func storeDeleteTimeRememberedForTheIssueDelay(t *testing.T, newStore NewStore) {
+	store := newStore(t)
+	now := base()
+	deletedAt := now.Add(-session.MaxDeviceIssueDelay + time.Second)
+	if err := store.DeleteSubject(context.Background(), "u1", deletedAt); err != nil {
+		t.Fatalf("DeleteSubject: %v", err)
+	}
+	create(t, store, record("other", "u2", now), 10)
+
+	stale := record("stale", "u1", now)
+	if _, err := store.Create(context.Background(), stale, 10, deletedAt); !errors.Is(err, session.ErrStaleAuthentication) {
+		t.Errorf("Create with a check at a delete one issue delay ago = %v, want ErrStaleAuthentication", err)
+	}
+}
+
+// storeDeleteTimeNeverMovesBack is a slower replica reporting an older delete
+// after a newer one. The newer one keeps counting.
+func storeDeleteTimeNeverMovesBack(t *testing.T, newStore NewStore) {
+	store := newStore(t)
+	at := base()
+	if err := store.DeleteSubject(context.Background(), "u1", at); err != nil {
+		t.Fatalf("DeleteSubject: %v", err)
+	}
+	if err := store.DeleteSubject(context.Background(), "u1", at.Add(-time.Minute)); err != nil {
+		t.Fatalf("DeleteSubject: %v", err)
+	}
+
+	d := record("d1", "u1", at)
+	if _, err := store.Create(context.Background(), d, 10, at.Add(-time.Second)); !errors.Is(err, session.ErrStaleAuthentication) {
+		t.Errorf("Create with a check before the newer delete = %v, want ErrStaleAuthentication", err)
+	}
+}
+
+// storeBothRetiredListsFull fills both lists at once: four confirmed
+// rotations, then pending replacements. Every retired current hash stays.
+func storeBothRetiredListsFull(t *testing.T, newStore NewStore) {
+	store := newStore(t)
+	at := base()
+	d := record("d1", "u1", at)
+	create(t, store, d, 10)
+
+	state := d.DeviceState
+	currents := []session.TokenHash{}
+	for i := range session.MaxRetiredCurrent {
+		next := session.DeviceState{CurrentHash: hashOf(fmt.Sprintf("c%d", i+1)), RotatedAt: at}
+		swap(t, store, d.ID, state, next, retiredCurrent(state.CurrentHash, at))
+		currents = append(currents, state.CurrentHash)
+		state = next
+	}
+	for i := range session.MaxRetiredPending + 1 {
+		next := state
+		next.PendingHash = hashOf(fmt.Sprintf("p%d", i))
+		next.PendingNonce = fmt.Sprintf("n%d", i)
+		var retire []session.RetiredHash
+		if !state.PendingHash.IsZero() {
+			retire = append(retire, retiredPending(state.PendingHash, at))
+		}
+		swap(t, store, d.ID, state, next, retire...)
+		state = next
+	}
+
+	for i, h := range currents {
+		if _, slot := lookup(t, store, h); slot != session.SlotRetired {
+			t.Errorf("retired current hash %d: slot %d, want retired", i, slot)
+		}
+	}
+	got, _ := lookup(t, store, state.CurrentHash)
+	if len(got.Retired) != session.MaxRetiredCurrent+session.MaxRetiredPending {
+		t.Errorf("retired = %d entries, want both lists full", len(got.Retired))
 	}
 }
 

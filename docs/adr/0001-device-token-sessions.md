@@ -81,6 +81,11 @@ reuses the reasoning that already rejected a signed cookie for the web session.
   five minutes, and create refuses an issue whose check is not later. The manager refuses a
   check older than five minutes. A password change that lands between the check of the old
   password and the issue leaves no device behind.
+- This holds only in one order, and the library cannot check it:
+  - The check time is taken before the stored credential is read. A time taken after a slow
+    password hash returns lies after an end of all sessions that landed during the hash.
+  - A password change ends all sessions after the new credential is committed. An end before
+    the commit lies before a check that still reads the old credential.
 - Those times come from the replicas' clocks, so a shared store needs synchronised clocks.
 - Each subject has a device cap, ten by default. Issuing past it evicts that subject's least
   recently seen device, never another subject's, and logs the device id and the subject.

@@ -26,7 +26,7 @@ var ErrDeviceStoreFull = errors.New("session: device store is full")
 // account's device sessions were all ended. A password change that lands
 // between the check of the old password and the issue must not leave a device
 // behind.
-var ErrStaleAuthentication = errors.New("session: authentication predates the end of the account's sessions")
+var ErrStaleAuthentication = errors.New("session: credential check too old or before the end of the account's sessions")
 
 // The bounds of the two retired lists of a device session. Reuse detection
 // holds while a stolen token is among them. After that it is a plain unknown
