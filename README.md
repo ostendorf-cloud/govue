@@ -9,10 +9,15 @@ Two halves, one repository, one version:
 - A Go module with the HTTP server layer an application needs and should not write again:
   timeouts, graceful shutdown, security response headers and a content security policy, liveness
   and readiness endpoints, environment configuration, structured logging, sessions, OIDC login,
-  CSRF protection, rate limiting, the client IP behind a proxy, Prometheus metrics. Every package
-  is importable on its own.
+  CSRF protection, rate limiting, the client IP behind a proxy, Prometheus metrics, local
+  accounts with TOTP (`account`), and the server half of native apps: device token sessions
+  (`session`, `session/devicehttp`), the app origin list and its CORS handler
+  (`middleware.AppOrigins`, `middleware.AppCORS`) and the app association files (`appassoc`).
+  Every package is importable on its own.
 - A Vue package with components and a design token contract, so an application themes itself by
-  filling that contract instead of inventing a palette.
+  filling that contract instead of inventing a palette. It carries the account forms
+  (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`) and the bearer client of a native
+  app (`createClient({ auth: { mode: 'bearer' } })`).
 
 It is a library, not a framework, and the difference is the direction of the calls. A framework
 owns `main` and calls the application at the lifecycle points it defines. The application
@@ -25,6 +30,10 @@ the application registers into. Nothing in this module runs that the application
 itself.
 
 The design and the reasoning behind it are in [docs/concepts/govue.md](docs/concepts/govue.md).
+A native app, such as a Capacitor app, signs in with a device token. The order of the steps to
+enable that is the section "Enabling app mode" in the same document, and
+[docs/adr/0001-device-token-sessions.md](docs/adr/0001-device-token-sessions.md) holds the
+decision.
 
 ## Install
 
