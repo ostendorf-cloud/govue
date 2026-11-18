@@ -24,6 +24,8 @@ export type {
   ApiClient,
   BearerAuthOptions,
   BearerClient,
+  BearerMemoryAuthOptions,
+  BearerStorageAuthOptions,
   ClientOptions,
   CookieAuthOptions,
   DeviceSession,

@@ -10,38 +10,61 @@ export interface CookieAuthOptions {
   mode: 'cookie'
 }
 
-/**
- * The auth option of a native app that authenticates with a device token, see
- * ADR 0001. The client sends `Authorization: Bearer <token>`, uses
- * `credentials: 'omit'`, sends no CSRF header and never reads a cookie.
- */
-export interface BearerAuthOptions {
+/** What every bearer client takes, whatever its storage. */
+interface BearerAuthBase {
   mode: 'bearer'
-  /**
-   * Where the token is kept. Default: memory only, gone when the app process
-   * ends. A product passes an adapter backed by the platform keychain.
-   */
-  storage?: TokenStorage
   /**
    * Rotate the token when the stored one is older than this. Default 24 hours.
    * The server refuses a rotation inside its own minimum interval, one hour by
    * default, and the client takes that quietly.
    */
   rotateAfterMs?: number
-  /**
-   * Who rotates the token. Default 'owner'. Exactly one context per storage is
-   * the owner: it rotates, signs in, signs out and clears the storage on a
-   * 401. Every other context that reads the same storage, such as an app
-   * extension or a background runner, sets 'none'. It never rotates, uses the
-   * stored token as it is, and on a 401 calls onUnauthenticated and leaves the
-   * storage to the owner. Two rotating contexts revoke the device, since the
-   * server takes the second rotation as a replay (ADR 0001). A 'none' client
-   * refuses signIn and signOut.
-   */
-  rotation?: 'owner' | 'none'
   /** The default device name of signIn. At most 64 bytes, no control characters. */
   deviceName?: string
 }
+
+/**
+ * A bearer client on the default in memory storage. Nobody else can read that
+ * storage, so this client is always the owner and `rotation` stays optional.
+ */
+export interface BearerMemoryAuthOptions extends BearerAuthBase {
+  /** Memory only, gone when the app process ends. */
+  storage?: undefined
+  /** Always 'owner' here. A 'none' client reads the storage of an owner and needs `storage`. */
+  rotation?: 'owner'
+}
+
+/**
+ * A bearer client on a storage the product passes, such as one backed by the
+ * platform keychain. Another context can share that storage, so the product
+ * must say whether this client rotates.
+ */
+export interface BearerStorageAuthOptions extends BearerAuthBase {
+  /** Where the token is kept. */
+  storage: TokenStorage
+  /**
+   * Required with a `storage`, no default. Exactly one context per storage is
+   * the owner, 'owner': it rotates, signs in, signs out and clears the storage
+   * on a 401. Every other context that reads the same storage, such as an app
+   * extension or a background runner, is 'none'. It never rotates, uses the
+   * stored token as it is, and on a 401 calls onUnauthenticated and leaves the
+   * storage to the owner. Two rotating contexts revoke the device, since the
+   * server takes the second rotation as a replay (ADR 0001), and a forgotten
+   * option would make a second owner. A 'none' client refuses signIn and
+   * signOut.
+   */
+  rotation: 'owner' | 'none'
+}
+
+/**
+ * The auth option of a native app that authenticates with a device token, see
+ * ADR 0001. The client sends `Authorization: Bearer <token>`, uses
+ * `credentials: 'omit'`, sends no CSRF header and never reads a cookie.
+ *
+ * A union, so that `storage` and `rotation` go together: a custom storage needs
+ * a `rotation`, and without a storage only 'owner' makes sense.
+ */
+export type BearerAuthOptions = BearerMemoryAuthOptions | BearerStorageAuthOptions
 
 /** What signIn needs: the credentials of the cookie login, same factors. */
 export interface SignInCredentials {

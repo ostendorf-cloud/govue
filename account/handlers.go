@@ -98,8 +98,10 @@ type SignupResult struct {
 
 // LoginResult is the 200 body of the login and the TOTP confirm handlers. The
 // session is whatever [HandlerConfig.StartSession] started, usually a cookie.
-// Fields may be added in a later release, a token for a native app among
-// them, so a client reads the names it knows and ignores the rest.
+// It carries the login only and no token. A native app gets its device token
+// from the token handlers of session/devicehttp, see its TokenResult. Fields
+// may be added in a later release, so a client reads the names it knows and
+// ignores the rest.
 type LoginResult struct {
 	Login string `json:"login"`
 }

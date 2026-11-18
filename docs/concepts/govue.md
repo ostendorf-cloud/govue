@@ -271,9 +271,105 @@ The design of the library and the reasoning behind it.
 - Every failure of that read is one error. A missing cookie and a value that does not verify are
   indistinguishable to the caller, which leaves one code path to get the refusal right.
 
+### Enabling app mode
+
+- App mode lets a native app, such as a Capacitor app, sign in with a device token instead of a
+  cookie. It is off until a product wires every step below, and each step links to the section
+  that explains it. This list repeats no design.
+- Step 1, an account sign in. The token is issued after the same check as the cookie login.
+  `example/` wraps `account.Service.Login` in the `devicehttp.HandlerConfig.VerifyCredentials`
+  callback. The callback returns the account id and maps the errors to
+  `devicehttp.ErrInvalidCredentials` and `devicehttp.ErrBusy`. So the token needs login,
+  password and a TOTP code. Any other check works, because the handler takes a callback. See
+  "Local accounts". The account routes refuse a cross site browser request from an app origin.
+  A request without `Origin` and `Sec-Fetch-Site` passes, as for any non browser client. Whether
+  the native HTTP plugin of Capacitor sends those headers is not verified.
+- Step 2, a device store. Set `session.Config.Devices` to `session.DeviceConfig{Store: ...}`.
+  App mode is off while `Store` is nil. A product writes a shared `session.DeviceStore` and runs
+  `sessiontest.DeviceStore` against it. `session.NewMemoryDeviceStore` serves one replica and a
+  restart signs every app out. Set `DeviceConfig.TokenPrefix` to the product's own name. Set
+  `Config.OnBearerRefusal` for the error shape. Call `csrf.Protector.ExemptBearer` and keep
+  `session.Manager.Middleware` behind the protector. See "Device sessions for native apps".
+- Step 3, the app origin list and its overlap check. It comes before the token handlers, which
+  take the list. Build it with `middleware.NewAppOrigins(origins, customSchemes...)` into
+  `appOrigins`. Call `appOrigins.RejectOverlap(nil, trusted)` at startup, where `trusted` holds
+  every origin passed to `csrf.Protector.TrustOrigin` and to
+  `account.HandlerConfig.TrustedOrigins`. Refuse to start on an error. Call
+  `csrf.Protector.TrustOriginOnRoute` with `http.MethodPost`, the path of the issue route and
+  `appOrigins.List()`. The issue route is `POST /api/v1/auth/token` in `example/`. Once the web
+  `CORS` exists, build `middleware.NewAppCORS(appOrigins, webCORS)`, where `webCORS` is the
+  `*CORS`. It refuses an overlap with that policy. Use its `Middleware` in place of
+  `CORS.Middleware`, at the same place in the chain. In `example/` the list comes from
+  `APP_ORIGINS` and `APP_SCHEMES`, for example `APP_ORIGINS=capacitor://localhost` with
+  `APP_SCHEMES=capacitor`, and `https://localhost` for Android. See "App origins".
+- Step 4, the token handlers and their rate limit. `devicehttp.NewHandlers` takes
+  `HandlerConfig{Sessions, VerifyCredentials, Now, IssueTrustedOrigins}`. Pass `AppOrigins.List()`
+  from step 3 as `IssueTrustedOrigins`. `Now` is the clock of `session.Config.Now`. Mount
+  `Issue`, `Rotate`, `SignOut`, `List` and `Revoke` as in "Token handlers". Put `Issue` behind a
+  per client limit stricter than the general one, as `example/` does with
+  `AUTH_RATE_LIMIT_BURST` and `AUTH_RATE_LIMIT_PER`.
+- Step 5, the association files. Fill `appassoc.Config`, call `appassoc.New` and
+  `Handlers.Handle(mux, nil)`, outside the route chain. They serve `appassoc.ApplePath` and
+  `appassoc.AndroidPath`. `example/` reads `APPLE_APP_ID`, `APPLE_APP_PATHS`,
+  `APPLE_APP_EXCLUDE_PATHS`, `APPLE_WEBCREDENTIALS`, `ANDROID_PACKAGE`, `ANDROID_CERT_SHA256` and
+  `ANDROID_LOGIN_CREDS`. See "App association files".
+- Step 6, the Vue client. Call
+  `createClient({ baseUrl, auth: { mode: 'bearer', storage, rotation: 'owner' } })`, with a
+  `TokenStorage` adapter that the product writes. A client with its own storage must state its
+  `rotation`. Exactly one context per storage is the `'owner'`. Every other context sets
+  `rotation: 'none'`. Sign in with
+  `signIn` and out with `signOut`. `baseUrl` defaults to `/api/v1`, which is relative to the
+  bundled origin of the app, so an app names its API there. Assumed, not tested. See "The bearer
+  client of a native app".
+
+#### What the server serves in app mode
+
+- New routes: the five token routes of step 4 and the two association files of step 5.
+- New answers: the CORS answers of `AppCORS` for the listed app origins, preflight included.
+- Cookie based and unchanged: the web session cookie, the CSRF check of every cookie request, the
+  web CORS list with its credentials and the account forms of the web app. `List` and `Revoke`
+  take a cookie session too, so the web app can end a lost phone.
+- An app origin never goes into `CORSConfig.Origins`, `csrf.Protector.TrustOrigin` or
+  `account.HandlerConfig.TrustedOrigins`. The first two are in "Token handlers". The third is
+  not named there, and follows from its doc comment: every account handler accepts those
+  origins, and the login handler starts a cookie session.
+- An origin is no app identity. The bearer token is the only authentication.
+
+#### What stays the product's job
+
+- The persistent token storage, backed by the platform keychain. govue ships none and has no
+  Capacitor dependency.
+- The rate limits, here `middleware.RateLimit` with a `ratelimit.Limiter`, and the shared
+  `DeviceStore` with its conformance run.
+- Authorisation of a device session from the product's own account record, by `Subject`. A
+  device session carries no groups.
+- The values in the association files. They are public identifiers: the Apple team id, the
+  bundle id, the Android package name and the certificate fingerprints. No secret belongs there.
+- The origin an app really sends. Check the header of the real build and list what it shows.
+- Passkeys in an app. The `webcredentials` entry exists. The relying party origins come with the
+  passkey step of #104, and nothing is promised here.
+
+#### Known limits and decisions
+
+- The ADR fallback is not built. A 401 clears the token. See "The bearer client of a native
+  app", the bullet "Differences from ADR 0001, all of them".
+- Two contexts that both rotate one storage revoke the device. See "The bearer client of a
+  native app", the bullet "One context owns the storage".
+- A custom storage must state its `rotation`, `'owner'` or `'none'`, with no default. Only the
+  default in memory storage is an `'owner'` without saying so. The owner decided this on
+  2026-11-18. See "The bearer client of a native app".
+- The Capacitor defaults were verified on 2026-11-18 against the Capacitor and Ionic pages. The
+  exact `Origin` header, `Sec-Fetch-Site` and the native HTTP plugin were not. See "App origins".
+- No `Access-Control-Expose-Headers`, so a page cannot read `Retry-After`. No
+  `Access-Control-Allow-Private-Network`, so Chrome can fail the request on a private network.
+  Both are undecided, see "App origins".
+- Any device token lists and revokes every device of its account. See "Token handlers".
+- The memory stores sign every app out on a restart. See "Device sessions for native apps".
+- The association files were not tried on an iOS or Android device. See "App association files".
+
 ### Device sessions for native apps
 
-- ADR 0001 holds the design. This section says what exists so far.
+- ADR 0001 holds the design. This section says what exists.
 - `session` has the device session layer without HTTP: `IssueDevice`, `AuthenticateDevice`,
   `RotateDevice`, `ListDevices` and `RevokeDevice` on the `Manager`, configured through
   `Config.Devices`.
@@ -961,10 +1057,10 @@ The design of the library and the reasoning behind it.
 - Bodies and answers are JSON objects with named fields, never a bare value. The request types
   are `SignupRequest`, `CredentialsRequest` and `PasswordChangeRequest`, the answers
   `SignupResult`, `LoginResult` and `PasswordChangeResult`. Fields may be added to an answer in a
-  later release, so a client ignores names it does not know. That is the room for the token mode
-  of the bearer sessions: a `token` field next to `login`, with no change to what exists. A request
-  refuses a field the type does not name. The Vue types carry an index signature for the same
-  reason.
+  later release, so a client ignores names it does not know. The token of a native app is not one
+  of them: `LoginResult` stays `login` only, and the token comes from `devicehttp`'s `Issue`
+  route. A request refuses a field the type does not name. The Vue types carry an index
+  signature for the same reason.
 - A body has to be `application/json`, one object, at most 16 KiB by default, with no unknown
   field. `api.DecodeLimit` accepts a missing content type, because a form post is caught by the
   decoder anyway. The handlers refuse it with 415, since a cross site form can post a body that
@@ -1163,14 +1259,23 @@ The design of the library and the reasoning behind it.
   concurrent requests share the one in flight. Its timeout is 10 seconds, below the 30 seconds of
   the server's rotate timeout. The new token is written to the storage before any request uses
   it. A request that waits for a rotation sends the new token.
-- One context owns the storage. `auth.rotation` is `'owner'` by default. Exactly one context per
-  storage is the owner. It rotates, signs in, signs out and clears the storage on a 401. Every
-  other context that reads the same storage, an app extension or a background runner, sets
-  `rotation: 'none'`. That client never rotates, uses the stored token as it finds it, tells the
-  app about a 401 once per token and leaves the storage to the owner. Its `signIn` and `signOut`
-  refuse. Two rotating contexts revoke the device: the second rotation carries another nonce and
-  retires the pending token of the first, and the first one's use of it is a replay. An option,
-  not a hidden default, so that a product states which context owns the token.
+- One context owns the storage. Exactly one context per storage is the owner. A client on the
+  default in memory storage nobody else can read is always the owner, so `auth.rotation` is
+  optional there and its only value is `'owner'`. A client with its own `auth.storage` must say
+  `rotation: 'owner'` or `rotation: 'none'`, with no default. A product that shares a keychain
+  adapter with an extension or a background runner and forgets the option would start a second
+  owner, and two owners on one storage revoke the device. The options type is a union, so a
+  missing `rotation` next to a `storage` is a compile error, and `createClient` throws a
+  `TypeError` for it at runtime, for a caller without types. `rotation: 'none'` without a
+  storage is refused the same way, since a `'none'` client reads the storage of an owner and has
+  none to read. The owner of the repository decided this on 2026-11-18.
+  The owner rotates, signs in, signs out and clears the storage on a 401. Every other context
+  that reads the same storage, an app extension or a background runner, sets `rotation: 'none'`.
+  That client never rotates, uses the stored token as it finds it, tells the app about a 401 once
+  per token and leaves the storage to the owner. Its `signIn` and `signOut` refuse. Two rotating
+  contexts revoke the device: the second rotation carries another nonce and retires the pending
+  token of the first, and the first one's use of it is a replay. An option, not a hidden default,
+  so that a product states which context owns the token.
 - All reads and writes of the storage run one after another. A read that starts while a write is
   pending waits for it. The generation counter moves inside that order, together with the write.
   A rotation writes only when the generation is the one it started with and the storage still
@@ -1227,7 +1332,8 @@ The design of the library and the reasoning behind it.
   server's 30 seconds, so a shorter wait would cost the retry with the same nonce nothing, but it
   is not built.
 - A native app also needs the server half: `AppOrigins`, `AppCORS` and `TrustOriginOnRoute`, see
-  "Token handlers". The web view of the app sends its own origin, which the server must list.
+  "App origins". The web view of the app sends its own origin, which the server must list. The
+  steps in order are in "Enabling app mode".
 
 ### Theming through a published token contract
 
@@ -1636,9 +1742,8 @@ The design of the library and the reasoning behind it.
 
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a
   maintained headless primitives library beats writing a worse one. Reka UI, the Vue port of
-  Radix, is the leading candidate and is evaluated in its own issue, styled with these tokens.
-- Nothing is wired up for this yet. The decision belongs to the issue that needs the first such
-  component.
+  Radix, was evaluated and is adopted: `GovueDialog` and `GovueSelect` import `reka-ui`, styled
+  with these tokens. A checkbox and a switch stay hand rolled on native elements.
 
 ## Alternatives considered
 
@@ -1671,32 +1776,38 @@ The design of the library and the reasoning behind it.
 
 - A shared session store. The in-memory store is correct for one replica only, and the `session`
   issue settled that nothing else ships here for now: `session.Store` is four methods an
-  application implements against whatever it already runs. Which backend would ship here, if any
-  ever does, stays open until a second consumer exists and the two agree on one. Next step: the
-  first application that needs more than one replica writes its own and reports what the
-  interface made awkward.
-- A theme generator. Done: `web/src/theme/` derives a full accessible light and dark role palette
-  from a handful of seed colours in OKLCH, re-verified against the same `contrast.ts` the shipped
-  themes are checked with, and `web/scripts/generate-theme.ts` is the CLI entry point. The
-  generator's code is public here; a consumer's seed configuration and the CSS it produces stay in
-  the consumer's own repository, as before.
-- End-to-end tests. jsdom cannot do focus trapping, an inert background or a real Escape on a
-  modal. Whether a browser runner is worth it here, or belongs to the consuming application, is
-  open until the first component with real focus behaviour lands.
+  application implements against whatever it already runs. The same holds for
+  `session.DeviceStore`, which an app mode product writes. Which backend would ship here, if any
+  ever does, stays open until a second consumer exists and the two agree on one. The owner
+  decides then. Next step: the first application that needs more than one replica writes its
+  own and reports what the interface made awkward.
+- Whether a device token may list and revoke only its own device. Today it can list every device
+  of the account and revoke any of them. The owner decides.
+- Whether `AppCORS` sends `Access-Control-Expose-Headers`, for `Retry-After` and the request id,
+  and `Access-Control-Allow-Private-Network`. Neither is sent. The owner decides when a product
+  needs one.
+- What a Capacitor webview sends: the exact `Origin`, `Sec-Fetch-Site`, and whether the native
+  HTTP plugin bypasses CORS. A product checks its own build and reports, see "App origins".
+- Whether the app origin belongs in the passkey relying party's allowed origins, and whether
+  passkeys work inside a Capacitor webview. Decided in the passkey work of #104, with its
+  security review.
 - Whether `api`'s error shape is the right contract for consumers that already have one of their
-  own. Next step: revisit when a second consumer appears.
-- Whether `account` folds the case of a login or leaves it to the store's uniqueness rule. Next
-  step: decide with the login logic.
+  own. Next step: revisit when a second consumer appears. The owner decides.
 - Whether the TOTP confirm handler may start a session without a switch to turn that off. Next
-  step: decide when the first product that wants a login after confirmation reports back.
+  step: the owner decides when the first product that wants a login after confirmation reports
+  back.
 - The passkey user handle: the opaque account id or a random handle per account. Next step:
   decide in the passkey work with its security review.
 - What the first version supports for configuration beyond the environment. Nothing reads the
-  environment by itself today, and whether that stays absolute is open.
+  environment by itself today, and whether that stays absolute is open. The owner decides.
 
 ## Related ADRs
 
-- [0001 Device token sessions for native apps](../adr/0001-device-token-sessions.md): the
-  bearer token a native app signs in with, and the CSRF boundary it draws.
+- [0001 Device token sessions for native apps](../adr/0001-device-token-sessions.md), accepted:
+  the bearer token a native app signs in with, and the CSRF boundary it draws. "Enabling app
+  mode" lists the steps that apply it. Two sentences of the record are out of date. The handlers
+  live in `session/devicehttp` and not in `session`, and "Token handlers" says so. The account
+  package is `account` and not `auth`, and it ends sessions through `ServiceConfig.EndSessions`,
+  not `EndAllSessions`.
 - The other decisions above are recorded here on purpose. One gets its own ADR when it turns out
   to be contested and expensive to reverse, not before.
