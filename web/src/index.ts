@@ -20,7 +20,20 @@ export type { ColorMode, ThemeName, ThemeOptions, ThemeState } from './composabl
 
 // The API client, which is the only place an app calls fetch.
 export { createClient } from './api/client'
-export type { ApiClient, ClientOptions, RequestOptions } from './api/client'
+export type {
+  ApiClient,
+  BearerAuthOptions,
+  BearerClient,
+  ClientOptions,
+  CookieAuthOptions,
+  DeviceSession,
+  RequestOptions,
+  SignInCredentials,
+  SignInOptions,
+} from './api/client'
+// The bearer mode of a native app: the token storage contract and its default.
+export { createMemoryTokenStorage } from './api/tokenStorage'
+export type { TokenStorage } from './api/tokenStorage'
 export { ApiError, ErrorCode, isApiError } from './api/errors'
 export type { ApiErrorPayload, ErrorCodeValue } from './api/errors'
 export type { Enrolment, LoginResult, SignupResult } from './api/account'

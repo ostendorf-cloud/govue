@@ -149,17 +149,32 @@ reuses the reasoning that already rejected a signed cookie for the web session.
 
 - One context of the app owns rotation, and its rotate calls are single flight. Other contexts
   read the token at send time and never rotate.
-- The client stores a new token before it sends any further request. It keeps the current token
-  until the pending one has succeeded once.
-- On a 401 for a pending token that has not succeeded yet, the client falls back to its current
-  token and rotates again with a new nonce. A second 401 clears the stored token.
-- A rotate refused for the minimum interval is quiet. The app keeps its current token, and it
-  rotates on start only when the interval has passed.
+- The client stores a new token before it sends any further request. The shipped web client
+  keeps one token only: it does not keep the current token next to the pending one. The
+  fallback this record first described, a 401 for a pending token that has not succeeded yet
+  sends the client back to its current token with a new nonce, is not built. A 401 clears the
+  stored token and calls `onUnauthenticated`. This is acceptable for these reasons, checked
+  against `session.Manager`:
+  - A lost rotate answer costs nothing. The old token stays current, and a retry with the same
+    nonce inside the rotate timeout overwrites the pending token. After that timeout the unused
+    pending token is retired without a revocation. A flaky network does not lock anyone out.
+  - The remaining case is rare. The delayed original rotate of a lost call reaches the server
+    inside the rotate timeout, between the answer of the retry and the first use of the retry's
+    token. The retry's token is then overwritten and unknown, so its first use is a 401. The
+    person signs in again. No device is revoked by this.
+- A rotate refused for the minimum interval is quiet. The app keeps its current token. The
+  shipped client rotates on start only when the stored token is at least one hour old, the
+  default minimum interval, and otherwise when it is older than its own interval, 24 hours by
+  default.
 - The `Authorization` header is built at send time from the stored token, never kept in a queue.
 - Token issue and rotate calls have no transport level retry and a timeout below the rotate
   timeout. A retry is a new call with the same nonce.
 - Every bearer request has a client timeout well below the grace, so a delayed request never
   arrives after it.
+- The shipped client takes the ownership as an option, `auth.rotation`. Exactly one context per
+  storage is the `owner`. Every other context is `none`: it never rotates, uses the stored
+  token and leaves the storage to the owner. Two rotating contexts on one storage revoke the
+  device, since the second rotation with another nonce retires the first one's pending token.
 - How a Capacitor background runner or an app extension shares the token store is not verified.
 
 ### Revocation
