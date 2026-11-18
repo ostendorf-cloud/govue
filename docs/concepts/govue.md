@@ -315,9 +315,11 @@ The design of the library and the reasoning behind it.
   `appassoc.AndroidPath`. `example/` reads `APPLE_APP_ID`, `APPLE_APP_PATHS`,
   `APPLE_APP_EXCLUDE_PATHS`, `APPLE_WEBCREDENTIALS`, `ANDROID_PACKAGE`, `ANDROID_CERT_SHA256` and
   `ANDROID_LOGIN_CREDS`. See "App association files".
-- Step 6, the Vue client. Call `createClient({ baseUrl, auth: { mode: 'bearer', storage } })`,
-  with a `TokenStorage` adapter that the product writes. Exactly one context per storage keeps
-  `rotation: 'owner'`, the default. Every other context sets `rotation: 'none'`. Sign in with
+- Step 6, the Vue client. Call
+  `createClient({ baseUrl, auth: { mode: 'bearer', storage, rotation: 'owner' } })`, with a
+  `TokenStorage` adapter that the product writes. A client with its own storage must state its
+  `rotation`. Exactly one context per storage is the `'owner'`. Every other context sets
+  `rotation: 'none'`. Sign in with
   `signIn` and out with `signOut`. `baseUrl` defaults to `/api/v1`, which is relative to the
   bundled origin of the app, so an app names its API there. Assumed, not tested. See "The bearer
   client of a native app".
@@ -355,8 +357,9 @@ The design of the library and the reasoning behind it.
   app", the bullet "Differences from ADR 0001, all of them".
 - Two contexts that both rotate one storage revoke the device. See "The bearer client of a
   native app", the bullet "One context owns the storage".
-- `rotation` defaults to `'owner'`. Whether a custom storage must state it is open, see "Open
-  questions".
+- A custom storage must state its `rotation`, `'owner'` or `'none'`, with no default. Only the
+  default in memory storage is an `'owner'` without saying so. The owner decided this on
+  2026-11-18. See "The bearer client of a native app".
 - The Capacitor defaults were verified on 2026-11-18 against the Capacitor and Ionic pages. The
   exact `Origin` header, `Sec-Fetch-Site` and the native HTTP plugin were not. See "App origins".
 - No `Access-Control-Expose-Headers`, so a page cannot read `Retry-After`. No
@@ -1298,14 +1301,23 @@ The design of the library and the reasoning behind it.
   concurrent requests share the one in flight. Its timeout is 10 seconds, below the 30 seconds of
   the server's rotate timeout. The new token is written to the storage before any request uses
   it. A request that waits for a rotation sends the new token.
-- One context owns the storage. `auth.rotation` is `'owner'` by default. Exactly one context per
-  storage is the owner. It rotates, signs in, signs out and clears the storage on a 401. Every
-  other context that reads the same storage, an app extension or a background runner, sets
-  `rotation: 'none'`. That client never rotates, uses the stored token as it finds it, tells the
-  app about a 401 once per token and leaves the storage to the owner. Its `signIn` and `signOut`
-  refuse. Two rotating contexts revoke the device: the second rotation carries another nonce and
-  retires the pending token of the first, and the first one's use of it is a replay. An option,
-  not a hidden default, so that a product states which context owns the token.
+- One context owns the storage. Exactly one context per storage is the owner. A client on the
+  default in memory storage nobody else can read is always the owner, so `auth.rotation` is
+  optional there and its only value is `'owner'`. A client with its own `auth.storage` must say
+  `rotation: 'owner'` or `rotation: 'none'`, with no default. A product that shares a keychain
+  adapter with an extension or a background runner and forgets the option would start a second
+  owner, and two owners on one storage revoke the device. The options type is a union, so a
+  missing `rotation` next to a `storage` is a compile error, and `createClient` throws a
+  `TypeError` for it at runtime, for a caller without types. `rotation: 'none'` without a
+  storage is refused the same way, since a `'none'` client reads the storage of an owner and has
+  none to read. The owner of the repository decided this on 2026-11-18.
+  The owner rotates, signs in, signs out and clears the storage on a 401. Every other context
+  that reads the same storage, an app extension or a background runner, sets `rotation: 'none'`.
+  That client never rotates, uses the stored token as it finds it, tells the app about a 401 once
+  per token and leaves the storage to the owner. Its `signIn` and `signOut` refuse. Two rotating
+  contexts revoke the device: the second rotation carries another nonce and retires the pending
+  token of the first, and the first one's use of it is a replay. An option, not a hidden default,
+  so that a product states which context owns the token.
 - All reads and writes of the storage run one after another. A read that starts while a write is
   pending waits for it. The generation counter moves inside that order, together with the write.
   A rotation writes only when the generation is the one it started with and the storage still
@@ -1817,9 +1829,6 @@ The design of the library and the reasoning behind it.
   ever does, stays open until a second consumer exists and the two agree on one. The owner
   decides then. Next step: the first application that needs more than one replica writes its
   own and reports what the interface made awkward.
-- Whether `auth.rotation` of the bearer client becomes required when a custom `storage` is given,
-  so a product states which context owns the token. Today it defaults to `'owner'`, and two
-  rotating contexts revoke the device. The owner decides.
 - Whether a device token may list and revoke only its own device. Today it can list every device
   of the account and revoke any of them. The owner decides.
 - Whether `AppCORS` sends `Access-Control-Expose-Headers`, for `Retry-After` and the request id,
