@@ -57,14 +57,27 @@
 // race is never hit: measured, a read then write store passed every one of
 // 200 runs at go test -cpu=1. The race checks therefore raise GOMAXPROCS to
 // at least four while they run and restore it afterwards. The checks of one
-// Run are not parallel tests. Other tests running in parallel at that time
-// get more processors, which changes nothing they can observe.
+// Run are not parallel tests. GOMAXPROCS is process wide. Other tests
+// running in parallel at that time get more processors, which changes
+// nothing they can observe. A test that changes GOMAXPROCS itself in that
+// time is overwritten: the value the first race check saw comes back when
+// the last one ends, whatever the other test set meanwhile. Such a test does
+// not run in parallel with a suite run.
 //
 // More processors than CPUs do not help on a machine with one CPU: the
 // threads then take turns as well. A race check there fails with a message
 // instead of passing, since a green suite that cannot see a race proves
 // nothing. Run the suite on at least two CPUs, for example a CI runner with
 // two cores or more.
+//
+// The check reads runtime.NumCPU(), which does not see a container CPU
+// quota. The default GOMAXPROCS of the Go runtime does honour a quota, rounded
+// up with a minimum of two, so a pod limited to one CPU starts at 2 and the
+// suite raises it to 4. The quota caps the total CPU time of the threads, so
+// in the same wall time fewer racing attempts overlap, and a green run there
+// is weaker evidence. That is not measured. A pod pinned to a cpuset changes
+// the affinity mask, and runtime.NumCPU() does see that. Give the job a quota
+// of two CPUs or more, or raise [Harness.Rounds].
 package accounttest
 
 import (
@@ -128,6 +141,10 @@ const minRaceProcs = 4
 // numCPU is runtime.NumCPU. This package's own tests replace it to fake a
 // machine with one CPU.
 var numCPU = runtime.NumCPU
+
+// setProcs is runtime.GOMAXPROCS. This package's own tests wrap it to record
+// every change the race checks make.
+var setProcs = runtime.GOMAXPROCS
 
 // DefaultRacers is how many calls each concurrency check starts at once when
 // [Harness.Racers] is zero, and DefaultRounds how often it repeats the race
@@ -357,15 +374,16 @@ var procs struct {
 // processor, and a store whose window between read and write is a few
 // instructions is never caught. GOMAXPROCS is process wide: tests running
 // in parallel with a race check get more processors for that time, which
-// changes nothing they can observe.
+// changes nothing they can observe. A parallel test that sets GOMAXPROCS
+// itself is overwritten when the last race check restores the first value.
 func raiseProcs() (restore func()) {
 	procs.Lock()
 	defer procs.Unlock()
 
 	if procs.users == 0 {
-		procs.prev = runtime.GOMAXPROCS(0)
+		procs.prev = setProcs(0)
 		if procs.prev < minRaceProcs {
-			runtime.GOMAXPROCS(minRaceProcs)
+			setProcs(minRaceProcs)
 		}
 	}
 	procs.users++
@@ -376,7 +394,7 @@ func raiseProcs() (restore func()) {
 
 		procs.users--
 		if procs.users == 0 && procs.prev < minRaceProcs {
-			runtime.GOMAXPROCS(procs.prev)
+			setProcs(procs.prev)
 		}
 	}
 }
