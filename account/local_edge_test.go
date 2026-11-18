@@ -95,8 +95,9 @@ func TestLogin_neverTrims(t *testing.T) {
 }
 
 // paddings are the characters a trim could remove: a space, a tab, a newline,
-// a carriage return and a no break space.
-var paddings = []string{" ", "\t", "\n", "\r", " "}
+// a carriage return and a no break space, written as an escape so that it
+// stays visible in the source.
+var paddings = []string{" ", "\t", "\n", "\r", string(rune(0xa0))}
 
 // paddedPasswords pairs a stored password with its other spelling. In every
 // pair one side differs from the other only by a leading or trailing padding
