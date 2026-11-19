@@ -65,10 +65,12 @@ The design of the library and the reasoning behind it.
 
 ### Small, independent, standard library
 
-- The Go side is the standard library, with two exceptions. `prometheus/client_golang` is
+- The Go side is the standard library, with three exceptions. `prometheus/client_golang` is
   confined to the `metrics` package, because the exposition format is not worth reimplementing.
   `golang.org/x/crypto` is confined to the `account` package, for Argon2id, which the standard
-  library lacks. Writing a memory hard hash by hand is the worse risk.
+  library lacks. Writing a memory hard hash by hand is the worse risk. `go-webauthn/webauthn`
+  is imported by the `passkey` package only, because a WebAuthn ceremony is not worth writing
+  by hand either, see "Passkeys".
 - A package stays usable alone: taking `clientip` must not pull in `session`.
 - Handlers return an error and one `api` helper writes the single error shape, so no handler
   writes error JSON and no cause reaches a client.
@@ -554,7 +556,7 @@ The design of the library and the reasoning behind it.
   accepts in `CORSConfig.Origins` or `TrustOrigin`. What is structural is the web CORS list,
   see `AppCORS` below. The decision is made in `middleware` and not in a new
   package for one reason: it sits next to `CORS` and shares its origin rules, and a package of
-  one type would only add an import. `AGENTS.md` keeps its list of seventeen packages.
+  one type would only add an import. `AGENTS.md` keeps its list of packages.
 - `NewAppOrigins(origins, customSchemes...)` validates exactly. Each entry is `scheme://host` or
   `scheme://host:port`, written the way a browser sends it: lower case, no path, no trailing
   slash, no query, no fragment, no userinfo. The host is ASCII, because a browser sends an
@@ -1154,6 +1156,278 @@ The design of the library and the reasoning behind it.
   CSRF token unless the client has `csrfToken` set, and the server answers 403, which the form
   shows as a refused request. An application with such a flow sets `csrfToken` in
   `createClient`.
+
+#### Passkeys in the web app
+
+- `GovuePasskeyButton` and the `usePasskey` composable run the WebAuthn ceremony against the
+  passkey routes under `/account/passkeys`, the contract of the server half. The button takes
+  the `client` of `createClient` like the forms, `mode` (`login` or `enrol`), an optional `name`
+  for the new passkey and an optional `path` prefix. It emits `success` with the login answer or
+  the new passkey.
+- There is no npm WebAuthn dependency. The browser side uses the native
+  `PublicKeyCredential.parseCreationOptionsFromJSON`, `parseRequestOptionsFromJSON` and
+  `credential.toJSON()`, and the binary values travel as base64url as that serialisation defines
+  them.
+- Support is detected, never assumed. `isPasskeySupported()` is true when both parse helpers and
+  `navigator.credentials` exist. The button renders nothing until it is mounted and nothing at
+  all where the check fails, so a prerendered page and the first client render agree. A product
+  that wants a fallback uses `usePasskey().supported`. `enrol` and `login` reject with
+  `unsupported` without a request.
+- A dismissed prompt (`NotAllowedError` or `AbortError`) is the quiet `cancelled` status. The
+  call resolves with `undefined`, the button emits `cancelled` and shows a short muted note in
+  its live region, and no alert. Every other failure is a `PasskeyError` with a `code` of the
+  contract (`reauthentication_required`, `invalid_passkey`, `invalid_credentials`,
+  `last_factor`, `not_found`), `unsupported`, or one of the client's own: `unauthenticated`,
+  `invalid_argument`, `permission_denied`, `rate_limited`, `unavailable`, `network`,
+  `already_registered`, `busy`, `bearer_unsupported`, `failed`. The error has a fixed English
+  message per code and no cause, so no challenge, credential or server text ends up in it. The
+  button shows the text of its code from both catalogues under `govue.passkey`.
+- A browser failure that is not a dismissal is `failed`, with `reason` set to the name of the
+  browser error from a fixed set (`SecurityError` for a wrong RP id or domain,
+  `NotSupportedError`, `ConstraintError`, `InvalidStateError`, and a few more) or `other`. It is
+  never the browser's message, so an operator can tell a misconfigured RP id from a broken answer
+  without a secret in the error. The visitor sees the generic text. `InvalidStateError` is
+  `already_registered` on enrolment, where it means an excluded authenticator, and `failed` on a
+  login. The CSRF middleware answers 403 as plain text, which the client turns into the code
+  `internal`. `usePasskey` reads the status and maps a 403 to `permission_denied`, which asks
+  for a reload. The account forms do not look at the status and show their generic text.
+- The failure text is an alert, as in the account forms. The busy text and the note of a
+  dismissed prompt are in a polite live region, and the busy text is announced once: the
+  button's own loading text is emptied. A button that turns disabled drops the focus, which is
+  the pattern of `GovueButton` in the forms too. The passkey button gives the focus back when
+  the ceremony is over and nothing else has it.
+- One ceremony runs at a time per page, because the challenge cookie is one per browser and a
+  new begin replaces it. The lock is module level, so it holds across every `usePasskey` instance
+  and every button on the page. A second `enrol` of the same instance while its own runs gets the
+  same promise. Any other call while a ceremony runs rejects with `busy`, and the button is
+  disabled while it waits.
+- A conditional login (`login({ conditional: true })`, for the autofill UI) leaves the status
+  alone. It yields to a modal ceremony in both directions. Started while one runs, it resolves
+  with `undefined`, as a cancel, and sends no request. A modal `login()` or `enrol()` that starts
+  while it waits aborts it, its begin request included, and it resolves with `undefined` too. The
+  product restarts it when it wants it again. A conditional login that has already returned from
+  the browser and waits for its finish answer is not stopped by a modal ceremony that starts
+  then: the abort reaches the browser step and the begin request, and the finish request has no
+  signal. That window is short. The server takes a challenge and clears the cookie at the first
+  finish and a new begin replaces the cookie, so one of the two finishes can fail. A failing
+  modal ceremony rejects with `invalid_passkey` (enrolment) or `invalid_credentials` (login). A
+  failing conditional login resolves with `undefined`, because its signal is aborted by then, and
+  one that succeeds resolves with the login. The product restarts it when it wants it again.
+- A conditional begin made at page load expires with the challenge lifetime of the server, 300
+  seconds by default. A person who picks a passkey from the autofill UI later gets
+  `invalid_credentials` from the finish. The product restarts the conditional login, for
+  example on that error or on a timer.
+- The `signal` option aborts the begin request and the browser step, and not the finish request,
+  which runs to its answer once the browser step has returned.
+- A client with a device token cannot run a ceremony. The challenge cookie of a begin answer
+  never comes back, because that client sends `credentials: 'omit'`, and a passkey login starts a
+  cookie session through `StartSession`, not a device token. `usePasskey` recognises such a
+  client (`isBearerClient`: only the bearer client has `signIn` and `signOut`) and rejects both
+  ceremonies with `bearer_unsupported` without a request. The button does not render for it.
+  This is the same host only cookie limit as below: a native app with a device token signs in
+  through `signIn`, not through a passkey.
+- The login routes set `skipUnauthenticatedHook`, since a 401 there is the answer to the
+  ceremony. Enrolment does not, so a lost session still reaches `onUnauthenticated`. A person
+  whose login is older than the server's window gets `reauthentication_required` and logs in
+  again, then retries. The composable also lists and removes passkeys (`list`, `remove(id)`).
+  There is no list component: a product renders the list the way its page needs.
+- The challenge cookie of the begin answer is `SameSite=Strict` and host only, and the client
+  sends it with the credentials mode of the client. The ceremony therefore works for the web app
+  on the host of the API. It does not work from a cross origin page, and a native app webview
+  on its own origin is such a page. Not verified: WebAuthn inside a Capacitor webview was not
+  tested, and a native app is expected to need its own flow.
+
+### Passkeys
+
+- The `passkey` package adds WebAuthn passkeys next to the password and TOTP login, never
+  instead of it. A person registers a passkey while logged in and then logs in with it. It is
+  the one importer of `github.com/go-webauthn/webauthn` v0.18.2, so an application without
+  passkeys does not pull the library in. No exported name of `passkey` carries a type of the
+  library: credentials and challenges travel as opaque bytes, so a library upgrade does not
+  change the public API.
+- The library brings its own dependencies into every build that imports `passkey`: `passkey`
+  itself, `passkey/passkeytest` and `example/`. Among them are a CBOR codec, msgpack, a JWT parser,
+  `go-tpm` for the TPM attestation format with `golang.org/x/sys/unix` through its transport, and
+  `golang.org/x/crypto/ocsp` through the revocation checks. `passkey` asks for attestation `none`
+  and never uses the TPM or the metadata service, but the library's `protocol` package imports
+  them, so they are compiled in. `passkey` also pulls `golang.org/x/crypto/argon2` through its
+  `account` import. A package that does not import `passkey` gets none of the library's modules.
+- `passkey` imports `account` for `account.Identity` only. `StartSession` has the signature of
+  `account.HandlerConfig.StartSession`, so an application passes the same function to both and a
+  passkey login starts the session a password and TOTP login starts. `account` does not import
+  `passkey`, and neither imports `session`.
+- A passkey login requires user verification, a PIN or a biometric on the authenticator, so it
+  proves possession and knowledge or inherence in one step and counts as both factors.
+
+#### Setup
+
+- `passkey.Config` takes the relying party id `RPID`, a display name and the exact `Origins`. All
+  three are required, and none is derived from a request's `Host` header, which the client sets.
+- Startup refuses an empty RP id, one that is not a lower case host name of at least two labels
+  (`localhost` excepted), an IP address, an empty origin list, an origin that is not https
+  (http on `localhost` excepted), and an origin whose host is neither the RP id nor below it.
+- An origin is accepted only in the form a browser serialises it: a lower case scheme, a lower
+  case host of DNS labels without a wildcard, and an optional port of 1 to 65535 without leading
+  zeros that is not the scheme's default. A path, a query, user info or an empty port after a
+  colon is refused. `passkey` refuses rather than normalises. The library's own comparison folds
+  the case of the scheme and the host and normalises the port, so a sloppy entry might still
+  match, but the configured list then differs from what browsers send, and that list is what a
+  reviewer reads and what the RP id rule is checked against.
+- Use the application's own host as the RP id, `app.example.com`, not a marketing parent such as
+  `example.com` that the application does not control. Any host below the RP id can then ask for
+  the same passkeys.
+- The RP id cannot change later. Every passkey is bound to it, and a change loses all of them.
+- The public suffix list is not checked. `co.uk` passes startup and fails in the browser.
+
+#### Challenges
+
+- A challenge is single use. The begin handler stores the ceremony state in a `ChallengeStore`
+  under 32 random bytes and sends that id in an HttpOnly, `SameSite=Strict` cookie,
+  `__Host-govue-passkey`. Without TLS, `AllowPlainHTTP` drops the prefix and the Secure attribute,
+  as for the session cookie. The finish handler clears the cookie and takes the challenge, which
+  deletes it in the same step, before it checks anything else. A success, every refusal, a missing
+  session and a stale login all use it up. A second finish with the same cookie finds nothing.
+- Only the method and the origin check run before that. A cross site request is refused without
+  reading the cookie, so it cannot burn a person's pending challenge. A test pins it.
+- A new begin replaces the cookie, so a browser runs one ceremony at a time. Two overlapping
+  ceremonies fail in a fixed way: the finish of the first one carries the second cookie, takes the
+  second challenge, fails the signature and gets the single refusal. The cookie is cleared with it,
+  so the finish of the second one gets the same refusal, and the person starts again. A test pins
+  that order.
+- The id travels in a cookie and not in the response body. A script cannot read it, the client
+  carries no state between the two calls, and the challenge stays bound to the browser that began
+  the login.
+- A registration challenge holds the account id and finishes only for the same account. A login
+  challenge has no account, and the cookie binds it. Each holds its ceremony, so one never
+  finishes the other.
+- A challenge lives five minutes by default, 30 seconds to ten minutes by configuration.
+- `MemoryChallengeStore` is the default for one process, bounded at 10000 entries. When full it
+  drops expired entries, then the oldest live one. A flood can then push out a real challenge and
+  the person starts again. Refusing new entries instead would let the same flood stop every login
+  for a whole challenge lifetime. Several replicas without sticky sessions need a shared store
+  whose `Take` is atomic.
+
+#### The store
+
+- `passkey.Store` has five methods: `AddCredential`, `Credentials`, `FindByUserHandle`,
+  `UpdateCredential` and `DeleteCredential`. It has no provider identity, no connection, no tenant
+  and no list of accounts, for the reason `account.Store` gives: a passkey login reaches its
+  account through the user handle and nothing else.
+- An account has exactly one user handle. `AddCredential` refuses a credential whose handle
+  differs from the account's stored one, in the same step as the insert, and the registration
+  finish checks it as well. Two first registrations from two browsers each bring a new handle.
+  Exactly one succeeds, the other gets the one refusal and begins again with the stored handle.
+  Without that, an adapter that keeps the handle in an account column would never find the second
+  passkey, while a delete still counted it as live and could remove the working one. The
+  conformance suite checks the guard and racing first registrations.
+- A handle also belongs to one account: `AddCredential` refuses a handle another account holds.
+  Handlers never send one, since every handle is 32 random bytes made on the server, but the
+  rule makes `FindByUserHandle` answer one account by contract, not by chance.
+- The first registration of an account has no credential row to lock. `SELECT ... FOR UPDATE`
+  over that empty set locks nothing at READ COMMITTED, and both racing inserts go through. A SQL
+  adapter locks the account row, runs the check and the insert SERIALIZABLE, or keeps the handle
+  in an account column set with a conditional `UPDATE`.
+- An account without credentials has no handle. After its last passkey is deleted, the next
+  registration brings a new random handle, and it is accepted. An adapter with a handle column
+  writes it only while the account has no credential, or clears it when the last credential is
+  deleted. A column written once and never cleared would refuse every later registration. The
+  suite and a ceremony test cover registering again after the last delete.
+- The user handle is 32 random bytes per account, made with the first passkey and copied onto
+  every further one. It is not the account id. The authenticator stores it and a synced passkey
+  copies it to every device of the person, so an id built from an email address or a sequence
+  would leak it. A consumer id may also exceed the 64 bytes WebAuthn allows.
+- `UpdateCredential` is a compare and set on the sign count the login read. Of two logins racing
+  with one counter value, one wins.
+- `DeleteCredential` with `keepOne` deletes only while the account holds another passkey, decided
+  in the same step. A SQL adapter locks the account's credential rows for it, since a `DELETE`
+  with an `EXISTS` alone lets two concurrent deletes each see the other row.
+- `passkeytest.Run` is the conformance suite and `passkeytest.MemoryStore` the in memory fake.
+  The suite checks the unique credential id, the exact handle match, a disabled account, the
+  compare and set, the account scope of a write and the racing deletes.
+
+#### Handlers
+
+- Registration begin and finish, login begin and finish, list and delete, JSON like the account
+  handlers. Each checks the method, then the origin with `net/http.CrossOriginProtection`, then a
+  strict body, for the reason the account handlers give: a passkey login has no session to bind a
+  CSRF token to, and a forgotten middleware must not leave it open.
+- Registration, at begin and at finish, and delete need a session whose login is at most
+  `ReauthWindow` old, ten minutes by default, through `CurrentAccount`, which returns the
+  identity and the time of the login. A stolen, long lived session cannot add its own passkey.
+  Listing needs a session only.
+- Registration asks for a discoverable credential, user verification and attestation `none`, and
+  lists the account's passkeys in `excludeCredentials`. Login is discoverable: no login name, an
+  empty `allowCredentials` and user verification required.
+- Every refused login answers 401 `invalid_credentials` with one answer, status, headers and body:
+  a missing, unknown, expired or used challenge, a registration challenge, an overlapping
+  ceremony, an unknown credential or handle, a credential under another account's handle, a
+  disabled account, a wrong origin or RP id hash, a bad signature, no user verification or
+  presence and a sign count that did not move forward, a cloned authenticator. A table test
+  compares the whole answer across all of them. The code is the account login's, so a client that
+  handles a refused password login handles this one.
+- The refusals are equal in content, not in time. Measured in the security review, the median
+  refusal took 341 microseconds for an unknown handle, 518 for an unknown credential, 525 for a
+  wrong origin and 651 for a bad signature. The time can tell an unknown handle from a known
+  one, but asking needs a valid 32 byte random handle first, and the credential id second.
+- A sign count of zero on both sides is allowed, since most synced passkeys keep none. Any other
+  count at or below the stored one is refused. Two logins racing with one counter value both read
+  the stored count, and the compare and set of `UpdateCredential` lets exactly one through. A test
+  holds both at a barrier after the read.
+- Every refused registration answers 400 `invalid_passkey` with one body: the same challenge
+  failures, a challenge of another account, a wrong origin or RP id hash, no user verification,
+  a credential id already stored and a user handle the account no longer has. A name over 64
+  characters or with a character that is not printable is 400 `invalid_argument` with `name` in
+  the details.
+- A store or session failure is a 500, not a refusal: it says nothing about the passkey, and
+  answering 401 would tell the person a right passkey is wrong.
+- Deleting the last passkey is refused with 409 `last_factor` when `OtherFactors` reports no other
+  way to log in, such as a confirmed TOTP secret.
+- Rate limiting is the product's job. The begin and finish routes need a per client limit: a begin
+  stores a challenge in a bounded store and a finish verifies a signature. Any of them may then
+  answer 429 before the handler runs, which leaves the challenge and the cookie as they were.
+  The product picks the limit. A frontend that begins a conditional autofill login on every page
+  view calls login begin far more often than anyone types a password, so the limit belongs in a
+  bucket apart from the password login.
+- Passkeys work with the cookie client only. The challenge cookie is host only and
+  `SameSite=Strict`, and a login finish starts a cookie session through `StartSession`. A
+  frontend on another site does not get the cookie back. In `example/`, `CurrentAccount` answers
+  no session for a device session, so a native app cannot register a passkey with its token.
+- `passkeytest.Authenticator` is a software passkey for tests: one ES256 key, attestation `none`
+  and fields for the origin, the RP id hash, the counter and the flags. Its CBOR is written by
+  hand, so `passkeytest` does not import the library. The tests of `passkey` and `example/` run
+  every ceremony through it.
+
+#### In `example/`
+
+- `PASSKEY_RP_ID` turns passkeys on, `PASSKEY_RP_NAME` names the relying party. The origins are
+  `ALLOWED_ORIGINS`, and `PASSKEY_RP_ID` without them refuses to start, as does an origin that is
+  not https or not below the RP id. Without `PASSKEY_RP_ID` no passkey route exists.
+- The routes live under `/api/v1/account/passkeys`. The two begin and the two finish routes sit
+  behind a limiter of their own, `PASSKEY_RATE_LIMIT_BURST` and `PASSKEY_RATE_LIMIT_PER`, a burst
+  of ten refilled over a minute by default, in the place the account limiter has for the account
+  routes. A test shows that using up one bucket leaves the other alone. Listing and delete have
+  the general limit.
+- A device session gets 401 from both registration routes: `CurrentAccount` answers no session
+  for it. A test registers through the browser of the same account and calls begin and finish
+  with the app's token.
+- The store is `passkeytest.MemoryStore`, and the challenge store is the default
+  `MemoryChallengeStore`, so every passkey and challenge is gone on a restart. The session's
+  `IssuedAt` is the login time the reauth window counts from. `OtherFactors` is 1 for an account
+  with a password and a confirmed TOTP secret.
+- The account login and the passkey login share one `startSession` function. A test signs up,
+  logs in with TOTP, registers a passkey and logs in with it, and compares the two sessions.
+
+#### Native apps and recovery
+
+- A native iOS app uses the web origin through its associated domain. It needs the
+  `webcredentials` entry in the Apple App Site Association file that `appassoc` serves. An Android
+  app needs the `get_login_creds` relation in `assetlinks.json`, and the origin it sends is
+  `android:apk-key-hash:...`, which `Config` refuses today. Neither path is verified on a device.
+- Today a native app needs a cookie client for passkeys, as a browser has: the routes set a
+  challenge cookie and start a cookie session. An app that signs in with a device token does not
+  use them in this version.
+- Recovery codes are a follow up. Until then, an account that loses its TOTP device and every
+  passkey is locked out, and only an operator can let the person back in.
 
 ### The bearer client of a native app
 
@@ -1933,8 +2207,12 @@ The design of the library and the reasoning behind it.
 - Whether the TOTP confirm handler may start a session without a switch to turn that off. Next
   step: the owner decides when the first product that wants a login after confirmation reports
   back.
-- The passkey user handle: the opaque account id or a random handle per account. Next step:
-  decide in the passkey work with its security review.
+- The passkey user handle. Decided: 32 random bytes per account, see "Passkeys" above.
+- A native Android app's passkey origin, `android:apk-key-hash:...`. `passkey.Config` refuses
+  every origin that is not https today. The library keeps such opaque origins in a field of
+  their own, `RPOpaqueOrigins`, matched by exact string comparison and checked against the
+  prefixes it knows, `android:apk-key-hash:` among them. Next step: decide when the first
+  Android app needs it, probably as a separate `Config` field that feeds `RPOpaqueOrigins`.
 - What the first version supports for configuration beyond the environment. Nothing reads the
   environment by itself today, and whether that stays absolute is open. The owner decides.
 
