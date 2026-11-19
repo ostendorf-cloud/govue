@@ -48,9 +48,17 @@ repeated here.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
-- Eighteen Go packages live at the module root: `account`, `api`, `appassoc`, `clientip`,
-  `csrf`, `envconf`, `favicon`, `health`, `httpserver`, `language`, `logging`, `metrics`,
-  `middleware`, `oidc`, `passkey`, `ratelimit`, `session`, `themeboot`.
+- Nineteen Go packages live at the module root: `account`, `analytics`, `api`, `appassoc`,
+  `clientip`, `csrf`, `envconf`, `favicon`, `health`, `httpserver`, `language`, `logging`,
+  `metrics`, `middleware`, `oidc`, `passkey`, `ratelimit`, `session`, `themeboot`.
+- `analytics` counts page views on the server and posts them to Umami. It is off unless
+  `UMAMI_URL` and `UMAMI_WEBSITE_ID` are both set, and one of them alone is a startup error. It
+  sets no cookie, honours Do Not Track and Global Privacy Control, and never sends a query
+  string or an id: the URL is the route pattern, and a view with no pattern is not counted. The
+  client address is masked to /24 or /48 unless `Options.FullIP` is set. It imports `clientip`
+  only. A change to what
+  the payload holds is a change to every product's privacy text and needs a reason in the pull
+  request and an update of the checklist in the concept doc.
 - `appassoc` serves the Apple App Site Association and Android `assetlinks.json` files from a
   typed `Config`. The files hold public identifiers only, never a secret, a token or a value
   from a request. They are exact patterns, never redirect, never set a cookie and never need a

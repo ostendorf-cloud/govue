@@ -194,6 +194,32 @@ func TestMiddleware_TracksInFlight(t *testing.T) {
 	}
 }
 
+func TestNewCounter_CountsThroughTheReturnedFunction(t *testing.T) {
+	t.Parallel()
+
+	registry := prometheus.NewRegistry()
+	inc := NewCounter(registry, "example_events_total", "Events seen.")
+	inc()
+	inc()
+
+	if got := scrape(t, registry); !strings.Contains(got, "example_events_total 2") {
+		t.Errorf("scrape does not hold the counter at 2:\n%s", got)
+	}
+}
+
+func TestNewCounter_PanicsOnADuplicateName(t *testing.T) {
+	t.Parallel()
+
+	registry := prometheus.NewRegistry()
+	NewCounter(registry, "example_events_total", "Events seen.")
+	defer func() {
+		if recover() == nil {
+			t.Error("a second counter with the same name did not panic")
+		}
+	}()
+	NewCounter(registry, "example_events_total", "Events seen.")
+}
+
 func TestNewRegistry_HoldsTheRuntimeCollectors(t *testing.T) {
 	t.Parallel()
 

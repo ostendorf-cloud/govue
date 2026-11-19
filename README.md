@@ -13,6 +13,8 @@ Two halves, one repository, one version:
   accounts with TOTP (`account`), and the server half of native apps: device token sessions
   (`session`, `session/devicehttp`), the app origin list and its CORS handler
   (`middleware.AppOrigins`, `middleware.AppCORS`) and the app association files (`appassoc`).
+  Page views are counted on the server and sent to Umami, with no cookie and no script
+  (`analytics`, see [Analytics](docs/concepts/govue.md#analytics)).
   Every package is importable on its own.
 - A Vue package with components and a design token contract, so an application themes itself by
   filling that contract instead of inventing a palette. It carries the account forms
