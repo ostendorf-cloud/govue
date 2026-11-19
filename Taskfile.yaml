@@ -99,8 +99,15 @@ tasks:
         {{.FAVICON_DIR}}/apple-touch-icon.png
 
   test:go:
-    desc: Go test
+    desc: Go test, including the PostgreSQL tests when GOVUE_TEST_DATABASE_URL is set
     cmds:
+      # go test hides a skip unless -v is set, so the missing server is said here.
+      - |
+        if [ -z "${GOVUE_TEST_DATABASE_URL:-}" ]; then
+          echo "WARNING: GOVUE_TEST_DATABASE_URL is not set." >&2
+          echo "WARNING: the tests against a real PostgreSQL will be SKIPPED, not run." >&2
+          echo "WARNING: start one with 'docker compose -f example/compose.yaml up -d postgres', see AGENTS.md." >&2
+        fi
       - go test -race -count=1 ./...
 
   test:scripts:
