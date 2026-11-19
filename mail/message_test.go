@@ -137,6 +137,10 @@ func TestAddressesRefused(t *testing.T) {
 		{"list in from", func(m *Message) { m.From = "a@example.org, b@example.org" }},
 		{"group", func(m *Message) { m.To = []string{"team: a@example.org, b@example.org;"} }},
 		{"empty group", func(m *Message) { m.ReplyTo = "team:;" }},
+		{"group of one", func(m *Message) { m.ReplyTo = "g: a@example.org;" }},
+		{"group of one in to", func(m *Message) { m.To = []string{"g: a@example.org;"} }},
+		{"group of one in from", func(m *Message) { m.From = "g: noreply@example.org;" }},
+		{"local part over 64", func(m *Message) { m.ReplyTo = strings.Repeat("l", MaxLocalPartBytes+1) + "@example.net" }},
 		{"no address", func(m *Message) { m.ReplyTo = "visitor" }},
 		{"non ascii local part", func(m *Message) { m.ReplyTo = "björn@example.net" }},
 		{"non ascii domain", func(m *Message) { m.ReplyTo = "a@büro.example" }},
@@ -317,6 +321,187 @@ func TestMessageIDAndDate(t *testing.T) {
 	}
 	if d := parse(t, got.data).Header.Get("Date"); d != "Thu, 19 Nov 2026 11:30:00 +0000" {
 		t.Errorf("Date = %q", d)
+	}
+}
+
+// A long non ASCII value is folded into encoded words: no line passes 78
+// bytes, and the words decode back to the value.
+func TestLongEncodedHeadersFold(t *testing.T) {
+	t.Parallel()
+
+	long := func(n int) string { return strings.Repeat("ü", n) }
+	m := validMessage()
+	m.From = long(MaxNameBytes/2) + " <noreply@example.org>"
+	m.To = []string{long(MaxNameBytes/2) + " <owner@example.org>", "日本語 <b@example.org>"}
+	m.ReplyTo = long(MaxNameBytes/2) + " <visitor@example.net>"
+	m.Subject = long(MaxSubjectBytes / 2)
+	m.Headers = map[string]string{"X-A": long(MaxHeaderValueBytes / 2), "X-Long-Header-Name": "日本語 " + long(100)}
+	raw, err := Build(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, _, _ := strings.Cut(string(raw), "\r\n\r\n")
+	for _, line := range strings.Split(head, "\r\n") {
+		if len(line) > 78 {
+			t.Errorf("header line of %d bytes: %.40q", len(line), line)
+		}
+	}
+	msg := parse(t, raw)
+	dec := new(mime.WordDecoder)
+	for name, want := range map[string]string{
+		"Subject":            m.Subject,
+		"X-A":                m.Headers["X-A"],
+		"X-Long-Header-Name": m.Headers["X-Long-Header-Name"],
+	} {
+		if got, err := dec.DecodeHeader(msg.Header.Get(name)); err != nil || got != want {
+			t.Errorf("%s decodes to %q, %v", name, got, err)
+		}
+	}
+	for name, want := range map[string]string{
+		"From": long(MaxNameBytes / 2), "To": long(MaxNameBytes / 2), "Reply-To": long(MaxNameBytes / 2),
+	} {
+		list, err := msg.Header.AddressList(name)
+		if err != nil || len(list) == 0 || list[0].Name != want {
+			t.Errorf("%s = %v, %v", name, list, err)
+		}
+	}
+	if list, _ := msg.Header.AddressList("To"); len(list) != 2 || list[1].Name != "日本語" {
+		t.Errorf("To = %v", list)
+	}
+}
+
+// Whatever the limits allow, no line of the message passes 998 bytes.
+func TestNoLineOver998(t *testing.T) {
+	t.Parallel()
+
+	m := validMessage()
+	m.From = strings.Repeat("😀", MaxNameBytes/4) + " <" + strings.Repeat("a", MaxLocalPartBytes) + "@example.org>"
+	m.Subject = strings.Repeat("😀", MaxSubjectBytes/4)
+	m.Headers = map[string]string{"X-A": strings.Repeat("😀", MaxHeaderValueBytes/4)}
+	raw, err := Build(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(raw), "\r\n") {
+		if len(line) > 998 {
+			t.Errorf("line of %d bytes", len(line))
+		}
+	}
+}
+
+// A literal encoded word in a subject or header value is encoded itself, so a
+// reader shows the text and never decodes a forged word.
+func TestLiteralEncodedWordIsEncoded(t *testing.T) {
+	t.Parallel()
+
+	forged := "=?utf-8?q?a=0D=0ABcc:_evil@example.net?="
+	m := validMessage()
+	m.Subject = forged
+	m.Headers = map[string]string{"X-A": "x " + forged}
+	m.From = "\"" + forged + "\" <noreply@example.org>"
+	raw, err := Build(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "=?utf-8?q?a=0D") {
+		t.Errorf("the forged word is on the wire:\n%s", raw)
+	}
+	msg := parse(t, raw)
+	dec := new(mime.WordDecoder)
+	if got, _ := dec.DecodeHeader(msg.Header.Get("Subject")); got != forged {
+		t.Errorf("Subject decodes to %q, want the literal text", got)
+	}
+	if got, _ := dec.DecodeHeader(msg.Header.Get("X-A")); got != "x "+forged {
+		t.Errorf("X-A decodes to %q", got)
+	}
+	if list, err := msg.Header.AddressList("From"); err != nil || len(list) != 1 || list[0].Name != forged {
+		t.Errorf("From = %v, %v", list, err)
+	}
+	if _, ok := msg.Header["Bcc"]; ok {
+		t.Error("a Bcc header exists")
+	}
+}
+
+// An encoded word is decoded before the check, so one that decodes to a
+// control character is refused like the character itself.
+func TestDecodedNameRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, word := range []string{
+		"=?utf-8?q?a=0Db?=", "=?utf-8?q?a=0Ab?=", "=?utf-8?q?a=00b?=", "=?utf-8?q?a=1Bb?=",
+		"=?utf-8?q?a=E2=80=A8b?=", "=?utf-8?q?a=E2=80=A9b?=", "=?utf-8?q?a=C2=85b?=",
+		"=?utf-8?q?a=E2=80=AEb?=", "=?utf-8?q?a=E2=80=8Bb?=", "=?utf-8?b?YQ0KQmNjOiB4?=",
+	} {
+		for field, set := range map[string]func(m *Message){
+			"From":     func(m *Message) { m.From = word + " <noreply@example.org>" },
+			"To":       func(m *Message) { m.To = []string{word + " <owner@example.org>"} },
+			"Reply-To": func(m *Message) { m.ReplyTo = word + " <v@example.net>" },
+		} {
+			m := validMessage()
+			set(&m)
+			raw, err := Build(m)
+			if !errors.Is(err, ErrInvalid) {
+				t.Errorf("%s %s: err = %v, built %q", field, word, err, raw)
+			} else if !strings.Contains(err.Error(), field) {
+				t.Errorf("%s %s: error does not name the field: %v", field, word, err)
+			}
+		}
+	}
+}
+
+// Format characters are invisible: bidi controls, zero width characters, the
+// BOM. They are refused in every name, the subject and every extra header.
+func TestFormatCharactersRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, r := range []string{
+		string(rune(0x202a)), string(rune(0x202b)), string(rune(0x202c)), string(rune(0x202d)),
+		string(rune(0x202e)), string(rune(0x2066)), string(rune(0x2067)), string(rune(0x2068)),
+		string(rune(0x2069)), string(rune(0x200b)), string(rune(0x200c)), string(rune(0x200d)),
+		string(rune(0x2060)), string(rune(0xfeff)), string(rune(0x00ad)),
+	} {
+		for field, set := range map[string]func(m *Message){
+			"Subject":  func(m *Message) { m.Subject = "a" + r + "b" },
+			"X-A":      func(m *Message) { m.Headers = map[string]string{"X-A": "a" + r + "b"} },
+			"From":     func(m *Message) { m.From = "a" + r + "b <noreply@example.org>" },
+			"To":       func(m *Message) { m.To = []string{"\"a" + r + "b\" <owner@example.org>"} },
+			"Reply-To": func(m *Message) { m.ReplyTo = "a" + r + "b <v@example.net>" },
+		} {
+			m := validMessage()
+			set(&m)
+			_, err := Build(m)
+			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), field) {
+				t.Errorf("%s %U: err = %v", field, []rune(r)[0], err)
+			}
+		}
+	}
+}
+
+// The Date is the time the message is built, not a fixed value.
+func TestDateFollowsBuildTime(t *testing.T) {
+	t.Parallel()
+
+	rnd := func() io.Reader { return strings.NewReader(strings.Repeat("x", 16)) }
+	first, err := build(validMessage(), time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), rnd())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := build(validMessage(), time.Date(2026, 6, 7, 8, 9, 10, 0, time.UTC), rnd())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := parse(t, first.data).Header.Get("Date"), parse(t, second.data).Header.Get("Date")
+	if a == b || a != "Fri, 02 Jan 2026 03:04:05 +0000" || b != "Sun, 07 Jun 2026 08:09:10 +0000" {
+		t.Errorf("dates = %q, %q", a, b)
+	}
+
+	raw, err := Build(validMessage())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := parse(t, raw).Header.Date()
+	if err != nil || time.Since(d) > time.Minute || time.Since(d) < -time.Minute {
+		t.Errorf("Build Date = %v, %v", d, err)
 	}
 }
 

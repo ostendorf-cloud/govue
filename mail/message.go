@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"mime/quotedprintable"
 	"net/mail"
 	"net/textproto"
@@ -38,6 +37,16 @@ const (
 	MaxNameBytes = 200
 	// MaxAddressBytes bounds the address itself, RFC 5321's path limit.
 	MaxAddressBytes = 254
+	// MaxLocalPartBytes bounds the part of an address before the @, RFC 5321's
+	// limit.
+	MaxLocalPartBytes = 64
+)
+
+// The line lengths of RFC 5322: a generated line stays within the
+// recommendation where it can, and never goes past the hard limit.
+const (
+	softLineBytes = 78
+	hardLineBytes = 998
 )
 
 // ErrInvalid is wrapped by every error a message is refused with. The error
@@ -99,7 +108,40 @@ func checkText(field, s string) error {
 			return invalid(field, "contains a control character")
 		}
 	}
+	for _, r := range s {
+		// Format characters (bidi controls, zero width characters, the BOM)
+		// are invisible and let a name or subject show something else than
+		// it holds. The line and paragraph separators are the Zl and Zp
+		// categories.
+		if unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
+			return invalid(field, "contains a format character")
+		}
+	}
 	return nil
+}
+
+// hasGroupSyntax reports a semicolon outside a quoted string and a comment.
+// Only a group ends in one, and net/mail's single address parser accepts a
+// group of one member.
+func hasGroupSyntax(s string) bool {
+	quoted, depth := false, 0
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '\\' && (quoted || depth > 0):
+			i++
+		case quoted:
+			quoted = c != '"'
+		case c == '"' && depth == 0:
+			quoted = true
+		case c == '(':
+			depth++
+		case c == ')' && depth > 0:
+			depth--
+		case c == ';' && depth == 0:
+			return true
+		}
+	}
+	return false
 }
 
 // parseAddress accepts exactly one mailbox: not a list, not a group.
@@ -113,12 +155,18 @@ func parseAddress(field, raw string) (*mail.Address, error) {
 	if len(raw) > MaxAddressBytes+MaxNameBytes+4 {
 		return nil, invalid(field, "is too long")
 	}
+	if hasGroupSyntax(raw) {
+		return nil, invalid(field, "is not a single address")
+	}
 	a, err := mail.ParseAddress(raw)
 	if err != nil {
 		return nil, invalid(field, "is not a single address")
 	}
 	if len(a.Address) > MaxAddressBytes || !addrSpec.MatchString(a.Address) {
 		return nil, invalid(field, "is not a plain ASCII address")
+	}
+	if local, _, _ := strings.Cut(a.Address, "@"); len(local) > MaxLocalPartBytes {
+		return nil, invalid(field, "has too long a local part")
 	}
 	if len(a.Name) > MaxNameBytes {
 		return nil, invalid(field, "has too long a name")
@@ -191,14 +239,14 @@ func build(m Message, now time.Time, random io.Reader) (built, error) {
 
 	var buf bytes.Buffer
 	lines := []struct{ name, value string }{
-		{"From", from.String()},
+		{"From", formatAddress(from, len("From: "))},
 		{"To", joinAddresses(to)},
 	}
 	if replyTo != nil {
-		lines = append(lines, struct{ name, value string }{"Reply-To", replyTo.String()})
+		lines = append(lines, struct{ name, value string }{"Reply-To", formatAddress(replyTo, len("Reply-To: "))})
 	}
 	lines = append(lines,
-		struct{ name, value string }{"Subject", mime.QEncoding.Encode("utf-8", m.Subject)},
+		struct{ name, value string }{"Subject", encodeValue(len("Subject: "), m.Subject)},
 		struct{ name, value string }{"Date", now.UTC().Format(time.RFC1123Z)},
 		struct{ name, value string }{"Message-ID", "<" + hex.EncodeToString(id[:]) + "@" + domain + ">"},
 		struct{ name, value string }{"MIME-Version", "1.0"},
@@ -240,6 +288,11 @@ func writeHeader(buf *bytes.Buffer, name, value string) error {
 	if strings.ContainsRune(value, 0) || hasBareBreak(value) {
 		return invalid(name, "contains a control character")
 	}
+	for _, line := range strings.Split(name+": "+value, "\r\n") {
+		if len(line) > hardLineBytes {
+			return invalid(name, "needs a line over 998 bytes")
+		}
+	}
 	buf.WriteString(name + ": " + value + "\r\n")
 	return nil
 }
@@ -253,9 +306,93 @@ func hasBareBreak(s string) bool {
 func joinAddresses(list []*mail.Address) string {
 	parts := make([]string, len(list))
 	for i, a := range list {
-		parts[i] = a.String()
+		prefix := 1 // the folding space
+		if i == 0 {
+			prefix = len("To: ")
+		}
+		parts[i] = formatAddress(a, prefix)
 	}
 	return strings.Join(parts, ",\r\n ")
+}
+
+// needsWords reports text that must travel as RFC 2047 words: non ASCII, or a
+// literal "=?" that a reader could take for an encoded word the sender forged.
+func needsWords(s string) bool {
+	if strings.Contains(s, "=?") {
+		return true
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return true
+		}
+	}
+	return false
+}
+
+// encodeValue returns s as a header value, as RFC 2047 words folded with
+// CRLF and a space when it needs them. prefix is the length of the line before
+// the value.
+func encodeValue(prefix int, s string) string {
+	if !needsWords(s) {
+		return s
+	}
+	words, _ := encodeWords(prefix, s)
+	return words
+}
+
+// encodeWords writes s as "=?utf-8?q?...?=" words. No word is longer than 75
+// bytes, so a line stays within 78 bytes whenever the prefix leaves room for
+// one, and always within 998. It returns the length of the last line too.
+// Only letters and digits stay as they are, so no input can form a "=?".
+func encodeWords(prefix int, s string) (string, int) {
+	const overhead = len("=?utf-8?q?") + len("?=")
+	budget := max(softLineBytes-prefix, overhead+4*3) // room for one rune
+	var out strings.Builder
+	var word strings.Builder
+	lineLen := prefix
+	flush := func() {
+		out.WriteString("=?utf-8?q?" + word.String() + "?=")
+		lineLen += overhead + word.Len()
+		word.Reset()
+	}
+	for _, r := range s {
+		var enc strings.Builder
+		var buf [utf8.UTFMax]byte
+		for _, b := range buf[:utf8.EncodeRune(buf[:], r)] {
+			switch {
+			case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+				enc.WriteByte(b)
+			case b == ' ':
+				enc.WriteByte('_')
+			default:
+				fmt.Fprintf(&enc, "=%02X", b)
+			}
+		}
+		if word.Len() > 0 && word.Len()+enc.Len() > budget-overhead {
+			flush()
+			out.WriteString("\r\n ")
+			lineLen = 1
+			budget = softLineBytes - 1
+		}
+		word.WriteString(enc.String())
+	}
+	flush()
+	return out.String(), lineLen
+}
+
+// formatAddress renders one mailbox from the parsed parts, so nothing of the
+// input survives except the name and the address. A name that needs words is
+// folded, and the address goes on its own line when it would not fit.
+func formatAddress(a *mail.Address, prefix int) string {
+	if !needsWords(a.Name) {
+		return a.String()
+	}
+	words, last := encodeWords(prefix, a.Name)
+	angle := "<" + a.Address + ">"
+	if last+1+len(angle) > softLineBytes {
+		return words + "\r\n " + angle
+	}
+	return words + " " + angle
 }
 
 func extraHeaders(in map[string]string) (map[string]string, error) {
@@ -280,7 +417,7 @@ func extraHeaders(in map[string]string) (map[string]string, error) {
 		if len(value) > MaxHeaderValueBytes {
 			return nil, invalid(canonical, "is too long")
 		}
-		out[canonical] = mime.QEncoding.Encode("utf-8", value)
+		out[canonical] = encodeValue(len(canonical)+2, value)
 	}
 	return out, nil
 }

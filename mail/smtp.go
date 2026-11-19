@@ -57,28 +57,33 @@ func (s *SMTP) Send(ctx context.Context, m Message) (err error) {
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	tlsCfg := &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12, RootCAs: cfg.RootCAs}
 
+	// One deadline covers the dial and the whole conversation, so a Send never
+	// takes twice the timeout and a custom dialer is bound too.
+	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+	defer cancel()
+	defer func() {
+		// A deadline or cancel ends a pending read as an i/o timeout, which
+		// would hide why the conversation ended. This runs before cancel.
+		if err != nil && ctx.Err() != nil {
+			err = fmt.Errorf("%w (%w)", err, context.Cause(ctx))
+		}
+	}()
+
 	dial := cfg.DialContext
 	if dial == nil {
-		d := &net.Dialer{Timeout: cfg.Timeout}
+		d := &net.Dialer{}
 		dial = d.DialContext
 	}
 	conn, err := dial(ctx, "tcp", addr)
 	if err != nil {
 		return s.wrap("dial", err)
 	}
-	deadline := time.Now().Add(cfg.Timeout)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
-	}
-	_ = conn.SetDeadline(deadline)
-	// A cancel unblocks a pending read or write at once.
-	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Unix(1, 0)) })
-	defer func() {
-		// The deadline error alone would hide why the conversation ended.
-		if !stop() && err != nil {
-			err = fmt.Errorf("%w (%w)", err, context.Cause(ctx))
-		}
-	}()
+	// Only the context ends the connection: no deadline is set on it, so the
+	// error never races between an i/o timeout and the context error. The
+	// closure holds the raw connection, which TLS wraps later.
+	raw := conn
+	stop := context.AfterFunc(ctx, func() { _ = raw.SetDeadline(time.Unix(1, 0)) })
+	defer stop()
 
 	secure := false
 	if cfg.Security == ImplicitTLS {

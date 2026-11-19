@@ -81,8 +81,9 @@ type fakeServer struct {
 	commands   []string // "tls:EHLO x" or "plain:EHLO x"
 	plain      []string // every line read before TLS
 	dataCount  int
-	data       string
-	authSecret string // what an AUTH carried, decoded
+	data       string   // the data with the dot stuffing undone, LF line ends
+	rawLines   []string // the data lines as they came on the wire
+	authSecret string   // what an AUTH carried, decoded
 }
 
 func newFake(t *testing.T) *fakeServer {
@@ -199,13 +200,24 @@ func (f *fakeServer) serve(raw net.Conn) {
 			say("250 ok")
 		case "DATA":
 			say("354 go")
-			body, err := r.ReadDotBytes()
-			if err != nil {
-				return
+			// Read the lines as they came, so a test sees the dot stuffing,
+			// and undo it the way a server does.
+			var raw, body []string
+			for {
+				line, err := r.ReadLine()
+				if err != nil {
+					return
+				}
+				if line == "." {
+					break
+				}
+				raw = append(raw, line)
+				body = append(body, strings.TrimPrefix(line, "."))
 			}
 			f.mu.Lock()
 			f.dataCount++
-			f.data = string(body)
+			f.rawLines = raw
+			f.data = strings.Join(body, "\n") + "\n"
 			f.mu.Unlock()
 			switch {
 			case f.hangAtData:
@@ -254,6 +266,20 @@ func (f *fakeServer) handleAuth(line string, r *textproto.Reader, say func(strin
 		return
 	}
 	say("235 ok")
+}
+
+// countCommands counts the commands with this verb.
+func (f *fakeServer) countCommands(verb string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.commands {
+		_, line, _ := strings.Cut(c, ":")
+		if strings.HasPrefix(strings.ToUpper(line), verb) {
+			n++
+		}
+	}
+	return n
 }
 
 // sawCommand reports whether a command with this verb arrived at all.

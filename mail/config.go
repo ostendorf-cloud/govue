@@ -11,6 +11,7 @@ import (
 	"net"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/ostendorf-cloud/govue/envconf"
 )
@@ -136,7 +137,7 @@ func (c Config) Validate() error {
 	var problems []error
 	if c.Host == "" {
 		problems = append(problems, errors.New("host is required"))
-	} else if strings.ContainsAny(c.Host, " \t\r\n/@?#[]\\") {
+	} else if strings.ContainsAny(c.Host, ":/@?#[]\\") || strings.ContainsFunc(c.Host, unicode.IsSpace) {
 		problems = append(problems, errors.New("host is not a host name"))
 	}
 	if c.Port < 1 || c.Port > 65535 {

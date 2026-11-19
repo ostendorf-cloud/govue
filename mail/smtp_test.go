@@ -6,11 +6,13 @@ package mail
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/mail"
 	"os"
 	"strings"
 	"testing"
@@ -310,8 +312,147 @@ func TestConfigTimeout(t *testing.T) {
 	if !errors.Is(err, os.ErrDeadlineExceeded) {
 		t.Fatalf("err = %v, want a deadline error", err)
 	}
-	if time.Since(start) > 4*time.Second {
+	// One timeout covers the dial and the conversation: never twice.
+	if time.Since(start) > 2*time.Second {
+		t.Errorf("took %v, want about 1s", time.Since(start))
+	}
+}
+
+// Config.Timeout bounds a custom dialer too, which gets a context that ends
+// with it.
+func TestConfigTimeoutCoversDial(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{Host: testHost, Timeout: time.Second, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(10 * time.Second):
+			return nil, errors.New("dial was not bounded")
+		}
+	}}
+	start := time.Now()
+	err := newSender(t, cfg).Send(context.Background(), validMessage())
+	var se *Error
+	if !errors.As(err, &se) || se.Stage != "dial" || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want a dial error with DeadlineExceeded", err)
+	}
+	if time.Since(start) > 3*time.Second {
 		t.Errorf("took %v", time.Since(start))
+	}
+}
+
+// A cancel ends a pending read at once, long before Config.Timeout.
+func TestContextCancelStopsAtOnce(t *testing.T) {
+	t.Parallel()
+
+	f := newFake(t)
+	f.silent = true
+	cfg := f.config()
+	cfg.Timeout = time.Minute
+	ctx, cancel := context.WithCancel(t.Context())
+	var canceled time.Time
+	time.AfterFunc(100*time.Millisecond, func() {
+		canceled = time.Now()
+		cancel()
+	})
+	err := newSender(t, cfg).Send(ctx, validMessage())
+	returned := time.Now()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want Canceled", err)
+	}
+	if d := returned.Sub(canceled); d > time.Second {
+		t.Errorf("Send returned %v after the cancel", d)
+	}
+}
+
+// The body cannot end the data early: a line of one dot is doubled on the
+// wire, and the server sees one message from one envelope.
+func TestDotStuffing(t *testing.T) {
+	t.Parallel()
+
+	f := newFake(t)
+	m := validMessage()
+	m.Body = "first\n.\nsecond\r.\r\n..two\n.\r\nMAIL FROM:<x@evil.example>\r\nRSET\r\n.\r\n"
+	if err := newSender(t, f.config()).Send(t.Context(), m); err != nil {
+		t.Fatal(err)
+	}
+	if f.countCommands("DATA") != 1 || f.countCommands("MAIL") != 1 || f.dataCount != 1 || f.sawCommand("RSET") {
+		t.Fatalf("commands = %v, dataCount = %d", f.commands, f.dataCount)
+	}
+	var doubled, three int
+	for _, line := range f.rawLines {
+		switch line {
+		case "..":
+			doubled++
+		case "...two":
+			three++
+		case ".":
+			t.Error("a bare dot line reached the server inside the data")
+		}
+	}
+	if doubled != 4 || three != 1 {
+		t.Errorf("doubled = %d, three = %d, lines = %q", doubled, three, f.rawLines)
+	}
+	if !strings.Contains(f.data, "\nMAIL FROM:<x@evil.example>\n") {
+		t.Errorf("the body did not arrive intact: %q", f.data)
+	}
+}
+
+// The Date is the time of the send, not a fixed value.
+func TestSendDateIsNow(t *testing.T) {
+	t.Parallel()
+
+	f := newFake(t)
+	if err := newSender(t, f.config()).Send(t.Context(), validMessage()); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := mail.ReadMessage(strings.NewReader(f.data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := msg.Header.Date()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := time.Since(d); diff > time.Minute || diff < -time.Minute {
+		t.Errorf("Date = %v, now %v", d, time.Now())
+	}
+}
+
+// A server that echoes the AUTH string or the password in base64 leaks
+// neither through Reply or Error().
+func TestAuthEchoScrubbed(t *testing.T) {
+	t.Parallel()
+
+	plain := base64.StdEncoding.EncodeToString([]byte("\x00mailer\x00" + secretPassword))
+	pwOnly := base64.StdEncoding.EncodeToString([]byte(secretPassword))
+	for name, echo := range map[string]string{
+		"auth string":       plain,
+		"auth no padding":   strings.TrimRight(plain, "="),
+		"password":          pwOnly,
+		"password no pad":   strings.TrimRight(pwOnly, "="),
+		"plain password":    secretPassword,
+		"in the middle":     "x " + plain + " y",
+		"auth string twice": plain + plain,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFake(t)
+			f.authReply = "535 bad " + echo
+			err := newSender(t, credentials(f.config())).Send(t.Context(), validMessage())
+			var se *Error
+			if !errors.As(err, &se) || se.Stage != "auth" {
+				t.Fatalf("err = %v", err)
+			}
+			for _, text := range []string{se.Reply, err.Error(), fmt.Sprintf("%+v %#v", err, se)} {
+				if strings.Contains(text, strings.TrimRight(plain, "=")) || strings.Contains(text, strings.TrimRight(pwOnly, "=")) ||
+					strings.Contains(text, secretPassword) {
+					t.Errorf("credential in %q", text)
+				}
+			}
+		})
 	}
 }
 

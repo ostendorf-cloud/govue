@@ -4,6 +4,7 @@
 package mail
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/textproto"
@@ -59,10 +60,23 @@ func (s *SMTP) wrap(stage string, err error) error {
 	return &Error{Stage: stage, Err: scrubbed{msg: s.scrub(err.Error()), err: err}}
 }
 
-// scrub removes the password from text a server or a library produced.
+// scrub removes the password from text a server or a library produced. It
+// also removes the base64 forms a server may echo: the AUTH PLAIN string and
+// the password alone, with and without padding.
 func (s *SMTP) scrub(text string) string {
-	if pw := s.cfg.Password.Reveal(); pw != "" {
-		text = strings.ReplaceAll(text, pw, redacted)
+	pw := s.cfg.Password.Reveal()
+	if pw == "" {
+		return text
+	}
+	plain := []byte("\x00" + s.cfg.Username + "\x00" + pw)
+	for _, secret := range []string{
+		base64.StdEncoding.EncodeToString(plain),
+		base64.RawStdEncoding.EncodeToString(plain),
+		base64.StdEncoding.EncodeToString([]byte(pw)),
+		base64.RawStdEncoding.EncodeToString([]byte(pw)),
+		pw,
+	} {
+		text = strings.ReplaceAll(text, secret, redacted)
 	}
 	return text
 }
