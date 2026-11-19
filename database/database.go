@@ -107,10 +107,11 @@ func (db *DB) Close() {
 // registry.Add("database", 0, db.Check). It fails while the database does
 // not answer, and with ErrNotMigrated until Migrate or MigrateUntilReady has
 // applied the schema in this process. After that it fails when an applied
-// file differs from its recorded checksum or a recorded version has no file,
-// see ErrChangedMigration, unless Config.AllowChangedMigrations is set. It
-// reads the small schema_migrations table on each call. Its error goes to the log, never to the
-// client: health names the check and nothing else.
+// file differs from its recorded checksum, see ErrChangedMigration. Recorded
+// versions above the last file are ignored: code older than the schema stays
+// ready, which a rolling deploy and a rollback need. It reads the small
+// schema_migrations table on each call. Its error goes to the log, never to
+// the client: health names the check and nothing else.
 //
 // The ping needs a connection from the pool. When every connection is busy,
 // it waits for one until health's timeout for the check ends, and readiness
@@ -128,14 +129,13 @@ func (db *DB) Check(ctx context.Context) error {
 	return db.verifyApplied(ctx)
 }
 
-// verifyApplied fails when an applied file changed or a recorded version has
-// no file, so a pod that runs other files than the database holds is not
-// ready. The option AllowChangedMigrations accepts both. A rollback to code
-// that predates a recorded version is therefore unready too, which is the
-// point: its schema is newer than its files.
+// verifyApplied fails when an applied file changed. It checks the versions
+// this code has a file for, also under AllowChangedMigrations: the run that
+// accepted an edit stored the new checksum, so a pod of the other version
+// that still holds the old file turns unready until it is rolled over.
 func (db *DB) verifyApplied(ctx context.Context) error {
 	files := db.files.Load()
-	if db.allowChanged || files == nil || db.ledger == nil {
+	if files == nil || db.ledger == nil {
 		return nil
 	}
 	rows, err := db.ledger.records(ctx)

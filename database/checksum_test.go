@@ -68,14 +68,18 @@ func TestCompare(t *testing.T) {
 		rows        []record
 		wantFill    []int
 		wantChanged []int
-		wantMissing []int
+		wantNewer   []int
 	}{
-		{"nothing recorded", nil, nil, nil, nil},
-		{"all equal", []record{{1, "0001_a.sql", "s1"}, {2, "0002_b.sql", "s2"}}, nil, nil, nil},
-		{"legacy row", []record{{1, "0001_a.sql", ""}, {2, "0002_b.sql", "s2"}}, []int{1}, nil, nil},
-		{"changed", []record{{1, "0001_a.sql", "s1"}, {2, "0002_b.sql", "old"}}, nil, []int{2}, nil},
-		{"missing", []record{{1, "0001_a.sql", "s1"}, {4, "0004_d.sql", "s4"}}, nil, nil, []int{4}},
-		{"all three", []record{{1, "0001_a.sql", ""}, {2, "0002_b.sql", "old"}, {5, "0005_e.sql", ""}}, []int{1}, []int{2}, []int{5}},
+		{name: "nothing recorded"},
+		{name: "all equal", rows: []record{{version: 1, sum: "s1"}, {version: 2, sum: "s2"}}},
+		{name: "legacy row", rows: []record{{version: 1, noSum: true}, {version: 2, sum: "s2"}}, wantFill: []int{1}},
+		{name: "changed", rows: []record{{version: 1, sum: "s1"}, {version: 2, sum: "old"}}, wantChanged: []int{2}},
+		{name: "empty string is a change, not a fill", rows: []record{{version: 1, sum: ""}}, wantChanged: []int{1}},
+		{name: "newer than the code", rows: []record{{version: 1, sum: "s1"}, {version: 4, sum: "s4"}}, wantNewer: []int{4}},
+		{
+			name: "all three", rows: []record{{version: 1, noSum: true}, {version: 2, sum: "old"}, {version: 5, noSum: true}},
+			wantFill: []int{1}, wantChanged: []int{2}, wantNewer: []int{5},
+		},
 	}
 	versions := func(ms []migration) []int {
 		var out []int
@@ -84,22 +88,21 @@ func TestCompare(t *testing.T) {
 		}
 		return out
 	}
-	same := slices.Equal[[]int]
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			got := compare(files, tc.rows)
-			if !same(versions(got.fill), tc.wantFill) {
+			if !slices.Equal(versions(got.fill), tc.wantFill) {
 				t.Errorf("fill = %v, want %v", versions(got.fill), tc.wantFill)
 			}
-			if !same(versions(got.changed), tc.wantChanged) {
+			if !slices.Equal(versions(got.changed), tc.wantChanged) {
 				t.Errorf("changed = %v, want %v", versions(got.changed), tc.wantChanged)
 			}
-			if !same(got.missing, tc.wantMissing) {
-				t.Errorf("missing = %v, want %v", got.missing, tc.wantMissing)
+			if !slices.Equal(got.newer, tc.wantNewer) {
+				t.Errorf("newer = %v, want %v", got.newer, tc.wantNewer)
 			}
-			if wantErr := len(tc.wantChanged)+len(tc.wantMissing) > 0; (got.err() != nil) != wantErr {
+			if wantErr := len(tc.wantChanged) > 0; (got.err() != nil) != wantErr {
 				t.Errorf("err() = %v, want an error: %v", got.err(), wantErr)
 			}
 		})
@@ -113,12 +116,12 @@ func TestComparisonErrorNamesTheFileOnly(t *testing.T) {
 
 	const secret = "fake-secret-in-file"
 	files := []migration{{version: 1, name: "0001_a.sql", sql: "select '" + secret + "'", sum: "deadbeefsum"}}
-	err := compare(files, []record{{1, "0001_a.sql", "oldbeefsum"}, {2, "0002_gone.sql", "x"}}).err()
-	if !errors.Is(err, ErrChangedMigration) || !errors.Is(err, ErrMissingMigration) {
-		t.Fatalf("err = %v, want both sentinels", err)
+	err := compare(files, []record{{version: 1, name: "0001_a.sql", sum: "oldbeefsum"}}).err()
+	if !errors.Is(err, ErrChangedMigration) {
+		t.Fatalf("err = %v, want ErrChangedMigration", err)
 	}
 	msg := err.Error()
-	for _, want := range []string{"0001_a.sql", "version 1", "0002_gone.sql", "version 2", "database: "} {
+	for _, want := range []string{"0001_a.sql", "version 1", "database: "} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q lacks %q", msg, want)
 		}
@@ -138,8 +141,9 @@ type fakeLedger struct {
 
 func (l fakeLedger) records(context.Context) ([]record, error) { return l.rows, l.err }
 
-// Check after a migration: the edit of an applied file and a version with no
-// file make readiness fail, and the option accepts both.
+// Check after a migration: the edit of an applied file makes readiness fail,
+// also under the option. A database ahead of the code does not: an old pod
+// stays ready during a rolling deploy and after a rollback.
 func TestCheckComparesTheRecordedRows(t *testing.T) {
 	t.Parallel()
 
@@ -152,12 +156,13 @@ func TestCheckComparesTheRecordedRows(t *testing.T) {
 		wantErr error
 		wantAny bool
 	}{
-		{name: "equal", rows: []record{{1, "0001_a.sql", "s1"}, {2, "0002_b.sql", "s2"}}},
-		{name: "legacy row is not a failure", rows: []record{{1, "0001_a.sql", ""}}},
-		{name: "changed", rows: []record{{1, "0001_a.sql", "old"}}, wantErr: ErrChangedMigration},
-		{name: "missing", rows: []record{{3, "0003_c.sql", "s3"}}, wantErr: ErrMissingMigration},
-		{name: "changed with the option", rows: []record{{1, "0001_a.sql", "old"}}, allow: true},
-		{name: "missing with the option", rows: []record{{3, "0003_c.sql", "s3"}}, allow: true},
+		{name: "equal", rows: []record{{version: 1, sum: "s1"}, {version: 2, sum: "s2"}}},
+		{name: "legacy row is not a failure", rows: []record{{version: 1, noSum: true}}},
+		{name: "changed", rows: []record{{version: 1, sum: "old"}}, wantErr: ErrChangedMigration},
+		{name: "empty checksum", rows: []record{{version: 1, sum: ""}}, wantErr: ErrChangedMigration},
+		{name: "changed with the option", rows: []record{{version: 1, sum: "old"}}, allow: true, wantErr: ErrChangedMigration},
+		{name: "newer schema stays ready", rows: []record{{version: 1, sum: "s1"}, {version: 2, sum: "s2"}, {version: 3, name: "0003_c.sql", sum: "s3"}}},
+		{name: "newer schema and a changed file", rows: []record{{version: 1, sum: "old"}, {version: 3, sum: "s3"}}, wantErr: ErrChangedMigration},
 		{name: "ledger fails", ledger: errors.New("boom"), wantAny: true},
 	}
 	for _, tc := range cases {
@@ -184,14 +189,12 @@ func TestCheckComparesTheRecordedRows(t *testing.T) {
 func TestRetryReturnsAtOnceOnAChangedMigration(t *testing.T) {
 	t.Parallel()
 
-	for _, sentinel := range []error{ErrChangedMigration, ErrMissingMigration} {
-		calls := 0
-		err := retry(t.Context(), slog.New(slog.DiscardHandler), time.Hour, func(context.Context) error {
-			calls++
-			return errors.Join(errors.New("database: migration x"), sentinel)
-		})
-		if !errors.Is(err, sentinel) || calls != 1 {
-			t.Errorf("retry() = %v after %d calls, want %v after one", err, calls, sentinel)
-		}
+	calls := 0
+	err := retry(t.Context(), slog.New(slog.DiscardHandler), time.Hour, func(context.Context) error {
+		calls++
+		return errors.Join(errors.New("database: migration x"), ErrChangedMigration)
+	})
+	if !errors.Is(err, ErrChangedMigration) || calls != 1 {
+		t.Errorf("retry() = %v after %d calls, want ErrChangedMigration after one", err, calls)
 	}
 }

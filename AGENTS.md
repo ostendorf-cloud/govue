@@ -58,8 +58,8 @@ repeated here.
   `==` and `reflect.DeepEqual` therefore do not compare a `Config` with a password. The default
   `sslmode` is `verify-full` with `DB_SSLROOTCERT`, a PEM file or `system`. The product keeps its
   schema and its queries. The runner stores a SHA-256 of each applied file's bytes and refuses a
-  changed file or a recorded version with no file, `Check` reports it, and only the code option
-  `AllowChangedMigrations` overrides it, never an environment variable.
+  changed file, `Check` reports it, a schema newer than the code is left alone, and only the code
+  option `AllowChangedMigrations` overrides the refusal, never an environment variable.
   `database/dbtest` gives a test a fresh database on the server named by
   `GOVUE_TEST_DATABASE_URL`, start one with `docker compose -f example/compose.yaml up -d postgres`.
 - `analytics` counts page views on the server and posts them to Umami. It is off unless

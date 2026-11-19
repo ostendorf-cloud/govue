@@ -45,12 +45,11 @@ const (
 // ErrChangedMigration is wrapped by the error of a run that found a file
 // whose checksum differs from the one recorded when it was applied. The error
 // names the file and its version, never its content.
+//
+// A recorded version with no file is not an error: it means the database is
+// ahead of this code, for example during a rolling deploy or after a rollback,
+// and code that predates a version must keep running on a newer schema.
 var ErrChangedMigration = errors.New("file changed after it was applied")
-
-// ErrMissingMigration is wrapped by the error of a run that found a recorded
-// version with no file, for example after a rollback to code that predates
-// it.
-var ErrMissingMigration = errors.New("recorded as applied but has no file")
 
 type migration struct {
 	version int
@@ -117,36 +116,39 @@ func readMigrations(fsys fs.FS, dir string) ([]migration, error) {
 	return out, nil
 }
 
-// record is one row of schema_migrations. An empty sum is a row written
-// before checksums existed.
+// record is one row of schema_migrations. A row without a checksum (null)
+// was written before checksums existed. An empty string is not that: it is a
+// checksum that matches no file.
 type record struct {
 	version int
 	name    string
 	sum     string
+	noSum   bool
 }
 
 // comparison is what compare found.
 type comparison struct {
-	fill    []migration    // recorded without a checksum
-	changed []migration    // recorded with another checksum
-	missing []int          // recorded versions with no file
-	names   map[int]string // recorded names of the missing versions
+	fill    []migration // recorded without a checksum (null)
+	changed []migration // recorded with another checksum
+	newer   []int       // recorded versions above the highest file
 }
 
-// compare checks every recorded row against the files. It touches nothing.
+// compare checks every recorded row against the files. It touches nothing. A
+// row above the highest file is the database being ahead of the code: it is
+// listed in newer and never an error. The numbering has no gap, so every
+// recorded version without a file is above the highest one.
 func compare(files []migration, rows []record) comparison {
 	byVersion := make(map[int]migration, len(files))
 	for _, m := range files {
 		byVersion[m.version] = m
 	}
-	res := comparison{names: map[int]string{}}
+	var res comparison
 	for _, r := range rows {
 		m, ok := byVersion[r.version]
 		switch {
 		case !ok:
-			res.missing = append(res.missing, r.version)
-			res.names[r.version] = r.name
-		case r.sum == "":
+			res.newer = append(res.newer, r.version)
+		case r.noSum:
 			res.fill = append(res.fill, m)
 		case r.sum != m.sum:
 			res.changed = append(res.changed, m)
@@ -155,15 +157,12 @@ func compare(files []migration, rows []record) comparison {
 	return res
 }
 
-// err is nil when nothing is changed or missing. A row to fill is no error.
-// The messages carry names and versions, never content.
+// err is nil when no file changed. A row to fill and a newer row are no
+// error. The messages carry names and versions, never content or a checksum.
 func (c comparison) err() error {
 	var errs []error
 	for _, m := range c.changed {
 		errs = append(errs, fmt.Errorf("database: migration %s (version %d): %w", m.name, m.version, ErrChangedMigration))
-	}
-	for _, v := range c.missing {
-		errs = append(errs, fmt.Errorf("database: migration %s (version %d): %w", c.names[v], v, ErrMissingMigration))
 	}
 	return errors.Join(errs...)
 }
@@ -197,6 +196,8 @@ func readRecords(ctx context.Context, q querier) ([]record, error) {
 		}
 		if sum != nil {
 			r.sum = *sum
+		} else {
+			r.noSum = true
 		}
 		out = append(out, r)
 	}
@@ -213,8 +214,10 @@ func readRecords(ctx context.Context, q querier) ([]record, error) {
 //
 // Before it applies anything, it compares the recorded checksum of every
 // applied file with the file and refuses on a difference, see
-// ErrChangedMigration and Config.AllowChangedMigrations. Migrate logs
-// nothing: MigrateUntilReady takes the logger.
+// ErrChangedMigration and Config.AllowChangedMigrations. Recorded versions
+// above the last file are left alone. Migrate has no logger and logs nothing,
+// so an accepted change or a filled checksum is logged by MigrateUntilReady
+// only.
 func (db *DB) Migrate(ctx context.Context, fsys fs.FS, dir string) error {
 	files, err := readMigrations(fsys, dir)
 	if err != nil {
@@ -226,9 +229,10 @@ func (db *DB) Migrate(ctx context.Context, fsys fs.FS, dir string) error {
 func (db *DB) apply(ctx context.Context, logger *slog.Logger, files []migration) error {
 	// Inside the lock as well: two pods starting together would otherwise race
 	// on create table if not exists, which PostgreSQL answers with a duplicate
-	// key error on its catalogue rather than with a no-op. The checksum column
-	// is added by an idempotent statement, so a table made before checksums
-	// existed gets it.
+	// key error on its catalogue rather than with a no-op. A table made before
+	// checksums existed gets the column. The alter runs only when the column
+	// is missing: it takes an ACCESS EXCLUSIVE lock and needs table ownership,
+	// which a start with nothing to add must not need.
 	err := db.tx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock($1)", migrationLock); err != nil {
 			return fmt.Errorf("lock: %w", err)
@@ -241,6 +245,20 @@ func (db *DB) apply(ctx context.Context, logger *slog.Logger, files []migration)
 				checksum   text
 			)`); err != nil {
 			return err
+		}
+		// The table is the one create table made or found, in the first schema of
+		// the search path, which current_schema() names.
+		var hasColumn bool
+		if err := tx.QueryRow(ctx, `
+			select exists (
+				select 1 from information_schema.columns
+				where table_schema = current_schema()
+				  and table_name = 'schema_migrations'
+				  and column_name = 'checksum')`).Scan(&hasColumn); err != nil {
+			return fmt.Errorf("look for the checksum column: %w", err)
+		}
+		if hasColumn {
+			return nil
 		}
 		_, err := tx.Exec(ctx, "alter table schema_migrations add column if not exists checksum text")
 		return err
@@ -265,12 +283,15 @@ func (db *DB) apply(ctx context.Context, logger *slog.Logger, files []migration)
 }
 
 // verify compares the recorded rows with files in one transaction under the
-// lock. A row without a checksum gets it from its file. A changed file or a
-// recorded version with no file is an error, unless AllowChangedMigrations is
-// set: then the new checksum replaces the stored one, so the edit is accepted
-// once and the option can be removed afterwards.
+// lock. A row without a checksum gets it from its file. A changed file is an
+// error, unless AllowChangedMigrations is set: then the new checksum replaces
+// the stored one, so the edit is accepted once and the option can be removed
+// afterwards. Recorded versions above the last file are only logged: the
+// database is ahead of this code, which is fine. The log lines come after the
+// commit, so a rolled back run claims nothing.
 func (db *DB) verify(ctx context.Context, logger *slog.Logger, files []migration) error {
-	return db.tx(ctx, func(tx pgx.Tx) error {
+	var res comparison
+	err := db.tx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock($1)", migrationLock); err != nil {
 			return fmt.Errorf("database: verify migrations: lock: %w", err)
 		}
@@ -278,17 +299,9 @@ func (db *DB) verify(ctx context.Context, logger *slog.Logger, files []migration
 		if err != nil {
 			return fmt.Errorf("database: verify migrations: %w", err)
 		}
-		res := compare(files, rows)
-		if err := res.err(); err != nil {
-			if !db.allowChanged {
-				return err
-			}
-			for _, m := range res.changed {
-				logWarn(ctx, logger, "applied migration changed, accepted by AllowChangedMigrations", "file", m.name, "version", m.version)
-			}
-			for _, v := range res.missing {
-				logWarn(ctx, logger, "recorded migration has no file, accepted by AllowChangedMigrations", "version", v)
-			}
+		res = compare(files, rows)
+		if err := res.err(); err != nil && !db.allowChanged {
+			return err
 		}
 		// Changed files are written only when the option accepted them: without
 		// it, the error above returned already.
@@ -300,11 +313,21 @@ func (db *DB) verify(ctx context.Context, logger *slog.Logger, files []migration
 				return fmt.Errorf("database: record checksum of %s: %w", m.name, err)
 			}
 		}
-		for _, m := range res.fill {
-			logInfo(ctx, logger, "recorded the checksum of an applied migration", "file", m.name, "version", m.version)
-		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	for _, m := range res.changed {
+		logWarn(ctx, logger, "applied migration changed, accepted by AllowChangedMigrations", "file", m.name, "version", m.version)
+	}
+	for _, m := range res.fill {
+		logInfo(ctx, logger, "recorded the checksum of an applied migration", "file", m.name, "version", m.version)
+	}
+	if len(res.newer) > 0 {
+		logWarn(ctx, logger, "the database holds migrations newer than this code, left alone", "versions", res.newer)
+	}
+	return nil
 }
 
 func logWarn(ctx context.Context, logger *slog.Logger, msg string, args ...any) {
@@ -375,7 +398,8 @@ func (db *DB) tx(ctx context.Context, fn func(pgx.Tx) error) error {
 //
 // A broken set of files, a gap, a repeat or a bad name, returns at once:
 // waiting does not fix it. So does an applied file that changed, see
-// ErrChangedMigration, and a recorded version with no file. Everything else
+// ErrChangedMigration. A recorded version above the last file is logged and
+// left alone: the database is ahead of this code. Everything else
 // is retried and never given up on: a database that starts after the pod does
 // is the normal case in a cluster, and Check reports the gap meanwhile. The
 // pause starts at one second, doubles up to thirty seconds, and ends early
@@ -400,8 +424,8 @@ func (db *DB) MigrateUntilReady(ctx context.Context, logger *slog.Logger, fsys f
 
 // retry calls attempt until it returns nil or ctx ends. Each attempt has its
 // own timeout. The pause between two attempts starts at pause, or
-// defaultPause when it is zero, and doubles up to maxPause. A changed or
-// missing migration ends it at once.
+// defaultPause when it is zero, and doubles up to maxPause. A changed
+// migration ends it at once.
 func retry(ctx context.Context, logger *slog.Logger, pause time.Duration, attempt func(context.Context) error) error {
 	wait := pause
 	if wait <= 0 {
@@ -415,7 +439,7 @@ func retry(ctx context.Context, logger *slog.Logger, pause time.Duration, attemp
 			return nil
 		}
 		// A decision for a person: waiting does not fix it.
-		if errors.Is(err, ErrChangedMigration) || errors.Is(err, ErrMissingMigration) {
+		if errors.Is(err, ErrChangedMigration) {
 			return err
 		}
 		if ctx.Err() != nil {
