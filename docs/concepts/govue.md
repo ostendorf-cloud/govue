@@ -150,6 +150,46 @@ The design of the library and the reasoning behind it.
   otherwise make resolution itself expensive, a cost an attacker should not be able to impose
   just by padding a header.
 
+#### Known devices and the per login ceiling
+
+- A per login ceiling, all attempts at one login from any client, bounds a distributed guessing
+  attack on the second factor. It also lets that attacker hold it dry, so the owner is refused
+  with correct credentials. Raising it only raises the number of addresses needed. Each consumer
+  wired such a ceiling itself, in a middleware that reads the login from the body.
+- `HandlerConfig.Ceiling` moves it into the handlers: `func(r, login) error`, called by signup,
+  confirmation and login after the body is read. `HandlerConfig.KnownDevices` is optional and
+  off by default. It needs `Ceiling` and lets a request from a known device skip it. With
+  neither set nothing changes: no cookie is read or set. The strict per client limits stay in
+  the consumer's middleware.
+- The cookie is signed, not stored. It holds `v1`, a 128 bit `crypto/rand` device id, an expiry
+  and an HMAC-SHA-256. The HMAC covers the id, the expiry, the account id and the account's
+  password hash, and the last two are not in the cookie. The handler looks the account up by the
+  login of the body, with `FindByLogin`, only when the request carries the cookie, and checks the
+  signature against that record. A cookie of another account, a changed byte, an expired one, a
+  disabled account and an unknown login are all unknown, and the ceiling applies.
+- No store method was added. The password hash is the account side secret that is already
+  there: a password change invalidates every cookie of the account, and so does the rehash after
+  a login with outdated parameters, which sets a fresh cookie in the same answer. The cost: no
+  revocation of one device and no `Revoke(accountID)` without changing the password. Rotating
+  the key revokes everything. A server side list or an epoch needs a store method and is left
+  to a consumer that needs it.
+- The cookie is `__Host-govue_device` (`govue_device` with `AllowPlainHTTP`), HttpOnly, Secure,
+  SameSite=Lax, `Path=/`, no `Domain`, default lifetime 90 days from the last successful sign
+  in, at most 400 days. Lax means a frontend on another origin in `TrustedOrigins` does not send
+  it, and gets no skip.
+- Logout and a successful password change send a clearing cookie. A person who signs out is
+  unknown on the next login, which is the conservative choice. One browser holds one cookie, so
+  a second account on it replaces the first one's.
+- The threat it leaves: a stolen cookie skips the ceiling of that one account, nothing else.
+  The password, the TOTP code and the client limits still hold. The HMAC key is a secret the
+  consumer supplies, 32 bytes at least, the same on every replica.
+- Text for a privacy page: after a successful sign in a cookie `__Host-govue_device` is stored
+  on the device. It holds a random device number, an expiry and a signature, and no personal
+  data. It lets the device sign in while the account is under guessing attack, is HttpOnly and
+  sent to this site only, lasts 90 days from the last sign in, and is deleted on sign out and on
+  a password change. It is not used for tracking. A consumer adds the cookie to its privacy text
+  in the same change that turns the feature on.
+
 ### ratelimit bounds its own memory, not only the request rate
 
 - `ratelimit.Limiter` is a token bucket per key, and a caller that keys by something attacker

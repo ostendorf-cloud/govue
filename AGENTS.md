@@ -83,7 +83,10 @@ repeated here.
   store. `Store.SetPasswordHash` is a compare and set on the old hash. Its `Store` interface
   carries only the calls its logic makes for login, TOTP enrolment and password change. A new
   method needs a reason in the pull request, because what the interface lacks is what the
-  package cannot reach.
+  package cannot reach. `KnownDevices` is optional and off by default: a signed device cookie
+  that lets a known browser skip the consumer's per login `Ceiling`. It needs no store method,
+  the HMAC covers the password hash. It is a cookie, so a change to what it holds is a change to
+  every consumer's privacy text.
 - `passkey` holds WebAuthn passkeys next to the password and TOTP login: `Config`, the five
   method `Store`, the single use `ChallengeStore` with a bounded in memory default, and the JSON
   handlers. It imports `account` for `Identity` only and never `session`. Its `StartSession` has
