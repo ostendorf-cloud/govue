@@ -1683,11 +1683,37 @@ The design of the library and the reasoning behind it.
   socket" and is recorded under Deviations in `AGENTS.md`. A fake would prove the fake: the
   transaction, the lock and the rollback are the server's behaviour.
 
+### HEAD on the API client
+
+- `client.head(path, options)` sends a HEAD request and resolves with `{ status, headers }`, never
+  a body. Both the cookie and the bearer client have it. The call still goes through
+  `createClient`, the one place an app calls `fetch`.
+- A HEAD answer has no body, so a refusal is mapped from the status alone: 400 to
+  `invalid_argument`, 401 to `unauthenticated`, 403 to `permission_denied`, 404 to `not_found`,
+  409 to `conflict`, 413 to `request_too_large`, 415 to `unsupported_media_type`, 429 to
+  `too_many_requests`, 503 to `unavailable` and every other status to `internal`. The `ApiError`
+  carries the status. A 401 still calls `onUnauthenticated`.
+- A network failure, a timeout and an abort map as for `get`. HEAD is safe, so no CSRF header
+  is sent. `RequestOptions.cache` is new and applies to every method: it is passed to `fetch`
+  as given, and left out when unset.
+- The server decides what HEAD means. The Go side is unchanged.
+
+```ts
+// Is a one time secret waiting? The route answers 200 or 404 and never consumes it.
+try {
+  await client.head(`/secrets/${id}`, { cache: 'no-store' })
+  waiting.value = true
+} catch (error) {
+  if (!isApiError(error) || error.code !== ErrorCode.notFound) throw error
+  waiting.value = false
+}
+```
+
 ### The bearer client of a native app
 
 - `createClient({ auth: { mode: 'bearer', storage, rotateAfterMs, rotation, deviceName } })` is
-  the client of a native app. It returns a `BearerClient`: the same `get`, `post`, `put`, `patch`
-  and `del`, plus `signIn` and `signOut`. The default is `auth: { mode: 'cookie' }`, and its
+  the client of a native app. It returns a `BearerClient`: the same `get`, `post`, `put`, `patch`,
+  `del` and `head`, plus `signIn` and `signOut`. The default is `auth: { mode: 'cookie' }`, and its
   requests are byte for byte what they were. The option is one object, not flags, so the modes
   cannot mix.
   Bearer mode refuses the `credentials` and `csrfToken` options at construction, since both belong

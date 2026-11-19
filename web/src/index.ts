@@ -29,6 +29,7 @@ export type {
   ClientOptions,
   CookieAuthOptions,
   DeviceSession,
+  HeadResult,
   RequestOptions,
   SignInCredentials,
   SignInOptions,

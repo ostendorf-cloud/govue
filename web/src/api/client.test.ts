@@ -273,4 +273,108 @@ describe('createClient', () => {
     expect(error.code).toBe(ErrorCode.network)
     expect(error.message).toContain('cancelled')
   })
+
+  describe('head', () => {
+    it('resolves with the status and the headers and no body', async () => {
+      respond = () => Promise.resolve(answer(200, undefined, { 'X-Thing': 'seven' }))
+      const client = createClient({ fetch: fetchStub, csrfToken: () => 'token-42' })
+
+      const result = await client.head('/things/7')
+
+      expect(result.status).toBe(200)
+      expect(result.headers.get('X-Thing')).toBe('seven')
+      expect(result).not.toHaveProperty('body')
+      expect(calls[0].url).toBe('/api/v1/things/7')
+      expect(calls[0].init.method).toBe('HEAD')
+      expect(calls[0].init.body).toBeUndefined()
+      expect(calls[0].init.credentials).toBe('same-origin')
+    })
+
+    it('adds no CSRF header, HEAD being safe', async () => {
+      const client = createClient({ fetch: fetchStub, csrfToken: () => 'token-42' })
+
+      await client.head('/things/7')
+
+      expect((calls[0].init.headers as Record<string, string>)['X-CSRF-Token']).toBeUndefined()
+    })
+
+    it('passes the cache mode through and leaves it out when not given', async () => {
+      const client = createClient({ fetch: fetchStub })
+
+      await client.head('/things/7', { cache: 'no-store' })
+      await client.head('/things/7')
+
+      expect(calls[0].init.cache).toBe('no-store')
+      expect('cache' in calls[1].init).toBe(false)
+    })
+
+    it.each([
+      [404, ErrorCode.notFound],
+      [429, ErrorCode.tooManyRequests],
+      [500, ErrorCode.internal],
+      [502, ErrorCode.internal],
+      [503, ErrorCode.unavailable],
+    ])('maps %i to its code from the status alone', async (status, code) => {
+      respond = () => Promise.resolve(answer(status))
+      const client = createClient({ fetch: fetchStub })
+
+      const error = (await client.head('/things/7').catch((caught: unknown) => caught)) as ApiError
+
+      expect(isApiError(error)).toBe(true)
+      expect(error.code).toBe(code)
+      expect(error.status).toBe(status)
+    })
+
+    it('calls the unauthenticated hook on a 401 like the other methods', async () => {
+      respond = () => Promise.resolve(answer(401))
+      const onUnauthenticated = vi.fn()
+      const client = createClient({ fetch: fetchStub, onUnauthenticated })
+
+      const error = (await client.head('/things/7').catch((caught: unknown) => caught)) as ApiError
+
+      expect(error.code).toBe(ErrorCode.unauthenticated)
+      expect(onUnauthenticated).toHaveBeenCalledTimes(1)
+    })
+
+    it('turns a failed connection into a transport error', async () => {
+      respond = () => Promise.reject(new TypeError('Failed to fetch'))
+      const client = createClient({ fetch: fetchStub })
+
+      const error = (await client.head('/things/7').catch((caught: unknown) => caught)) as ApiError
+
+      expect(error.code).toBe(ErrorCode.network)
+      expect(error.isTransport).toBe(true)
+    })
+
+    it("passes the caller's cancellation through", async () => {
+      respond = (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            reject(new DOMException('aborted', 'AbortError'))
+          })
+        })
+      const controller = new AbortController()
+      const client = createClient({ fetch: fetchStub })
+
+      const pending = client.head('/things/7', { signal: controller.signal })
+      controller.abort()
+      const error = (await pending.catch((caught: unknown) => caught)) as ApiError
+
+      expect(error.code).toBe(ErrorCode.network)
+      expect(error.message).toContain('cancelled')
+    })
+
+    it('works on the bearer client with the token and no cookie', async () => {
+      const client = createClient({
+        fetch: fetchStub,
+        auth: { mode: 'bearer' },
+      })
+
+      const result = await client.head('/things/7', { cache: 'no-store' })
+
+      expect(result.status).toBe(200)
+      expect(calls[0].init.credentials).toBe('omit')
+      expect(calls[0].init.cache).toBe('no-store')
+    })
+  })
 })

@@ -71,11 +71,23 @@ export interface RequestOptions {
   headers?: Record<string, string>
   signal?: AbortSignal
   /**
+   * The fetch cache mode of this request, passed through as given. Left out,
+   * the browser decides. 'no-store' for a read that must not be cached.
+   */
+  cache?: RequestCache
+  /**
    * Do not call `onUnauthenticated` when this request is answered with 401.
    * Default false. For a request whose 401 is its own answer and not a lost
    * session, such as a failed login.
    */
   skipUnauthenticatedHook?: boolean
+}
+
+/** What `head` resolves with: the status and the headers, never a body. */
+export interface HeadResult {
+  /** The HTTP status, always a success status: a refusal is thrown. */
+  status: number
+  headers: Headers
 }
 
 export interface ApiClient {
@@ -84,6 +96,12 @@ export interface ApiClient {
   put<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T>
   patch<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T>
   del<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T>
+  /**
+   * Asks whether a resource is there, without a body. A refusal is thrown as
+   * an ApiError whose code comes from the status alone, since a HEAD answer
+   * has no body to read it from. HEAD is safe, so no CSRF token is sent.
+   */
+  head(path: string, options?: RequestOptions): Promise<HeadResult>
 }
 
 /**
@@ -206,6 +224,7 @@ export function createClient(options: ClientOptions = {}): ApiClient | BearerCli
         credentials: exchange ? 'omit' : credentials,
         body: body === undefined ? undefined : JSON.stringify(body),
         signal,
+        ...(requestOptions.cache === undefined ? {} : { cache: requestOptions.cache }),
       })
     } catch (cause) {
       throw transportError(cause, timeout, exchange !== undefined)
@@ -217,6 +236,12 @@ export function createClient(options: ClientOptions = {}): ApiClient | BearerCli
       } else {
         options.onUnauthenticated?.()
       }
+    }
+    if (method === 'HEAD') {
+      if (!response.ok) {
+        throw statusRefusal(response.status)
+      }
+      return { status: response.status, headers: response.headers } as T
     }
     if (!response.ok) {
       throw await refusal(response)
@@ -282,6 +307,7 @@ export function createClient(options: ClientOptions = {}): ApiClient | BearerCli
     put: (path, body, requestOptions) => request('PUT', path, body, requestOptions),
     patch: (path, body, requestOptions) => request('PATCH', path, body, requestOptions),
     del: (path, body, requestOptions) => request('DELETE', path, body, requestOptions),
+    head: (path, requestOptions) => request('HEAD', path, undefined, requestOptions),
   }
   if (!bearer) {
     return client
@@ -326,6 +352,28 @@ async function refusal(response: Response): Promise<ApiError> {
     status: response.status,
     details: error.details,
     requestId: error.request_id,
+  })
+}
+
+/** The codes the Go api package pairs with a status, for an answer without a body. */
+const STATUS_CODES: Record<number, string> = {
+  400: ErrorCode.invalidArgument,
+  401: ErrorCode.unauthenticated,
+  403: ErrorCode.permissionDenied,
+  404: ErrorCode.notFound,
+  409: ErrorCode.conflict,
+  413: ErrorCode.requestTooLarge,
+  415: ErrorCode.unsupportedMediaType,
+  429: ErrorCode.tooManyRequests,
+  503: ErrorCode.unavailable,
+}
+
+/** statusRefusal maps the status alone, the way a HEAD answer needs it. */
+function statusRefusal(status: number): ApiError {
+  return new ApiError({
+    code: STATUS_CODES[status] ?? ErrorCode.internal,
+    message: status === 404 ? 'Not found.' : 'Something went wrong. Please try again.',
+    status,
   })
 }
 
