@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/ostendorf-cloud/govue/envconf"
 )
@@ -62,8 +64,10 @@ func (m SSLMode) verifies() bool {
 
 // SystemRoots is the SSLRootCert value that verifies against the system's
 // root certificates instead of a file, libpq's sslrootcert=system. It is
-// accepted with verify-full only: verify-ca against every public CA would
-// accept any certificate any of them ever signed.
+// accepted with verify-full only. pgx v5.13 switches any mode to
+// verify-full when it sees sslrootcert=system, disable and require
+// included, so another mode would not mean what it says. libpq 16 refuses
+// the combination for the same reason.
 const SystemRoots = "system"
 
 // maxRootCertBytes bounds the root certificate file. A CA bundle is a few
@@ -222,10 +226,12 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// hostProblems refuses the host spellings pgx would read as something else:
-// a path is a unix socket, where TLS is silently off even under verify-full,
-// brackets fail only later when the pool is built, and a comma makes a list
-// of fallback hosts.
+// hostProblems refuses the host spellings pgx would read as something else
+// or that fail only on the first connection: a path is a unix socket, where
+// TLS is silently off even under verify-full, brackets fail only later when
+// the pool is built, a comma makes a list of fallback hosts, and a colon
+// outside an IPv6 address, whitespace or an @ would be looked up as a name
+// that cannot exist.
 func (c Config) hostProblems() []error {
 	var problems []error
 	if strings.HasPrefix(c.Host, "/") {
@@ -236,6 +242,15 @@ func (c Config) hostProblems() []error {
 	}
 	if strings.Contains(c.Host, ",") {
 		problems = append(problems, fmt.Errorf("host (%s) %q is a list of hosts, which is not supported", EnvHost, c.Host))
+	}
+	if strings.Contains(c.Host, ":") && !strings.ContainsAny(c.Host, "[]") && net.ParseIP(c.Host) == nil {
+		problems = append(problems, fmt.Errorf("host (%s) %q holds a colon outside an IPv6 address: put the port into %s", EnvHost, c.Host, EnvPort))
+	}
+	if strings.ContainsFunc(c.Host, unicode.IsSpace) {
+		problems = append(problems, fmt.Errorf("host (%s) %q holds whitespace", EnvHost, c.Host))
+	}
+	if strings.Contains(c.Host, "@") {
+		problems = append(problems, fmt.Errorf("host (%s) %q holds an @: the user goes into %s", EnvHost, c.Host, EnvUser))
 	}
 	return problems
 }

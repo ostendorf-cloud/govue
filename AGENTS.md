@@ -53,11 +53,12 @@ repeated here.
   `metrics`, `middleware`, `oidc`, `passkey`, `ratelimit`, `session`, `themeboot`.
 - `database` holds the PostgreSQL connection of a product: `Config` and `LoadConfig` with the
   `DB_*` variables, the pgx pool, the migration runner over an `fs.FS` and `Check` for
-  readiness. The password is a `database.Secret`, a pointer holder that never prints, also
-  through an unexported field. The default `sslmode` is `verify-full` with `DB_SSLROOTCERT`, a
-  PEM file or `system`. The product keeps its schema and its queries. `database/dbtest` gives a test
-  a fresh database on the server named by `GOVUE_TEST_DATABASE_URL`, start one with
-  `docker compose -f example/compose.yaml up -d postgres`.
+  readiness. The password is a `database.Secret`, held in a closure, so no fmt verb, encoder,
+  slog handler or reflection walk prints it, also through an unexported field or a pointer.
+  `==` and `reflect.DeepEqual` therefore do not compare a `Config` with a password. The default
+  `sslmode` is `verify-full` with `DB_SSLROOTCERT`, a PEM file or `system`. The product keeps its
+  schema and its queries. `database/dbtest` gives a test a fresh database on the server named by
+  `GOVUE_TEST_DATABASE_URL`, start one with `docker compose -f example/compose.yaml up -d postgres`.
 - `appassoc` serves the Apple App Site Association and Android `assetlinks.json` files from a
   typed `Config`. The files hold public identifiers only, never a secret, a token or a value
   from a request. They are exact patterns, never redirect, never set a cookie and never need a

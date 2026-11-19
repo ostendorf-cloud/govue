@@ -67,8 +67,10 @@ func TestParse(t *testing.T) {
 	if cfg.Password.Reveal() != fake {
 		t.Error("parse() lost the password")
 	}
+	// Config holds a Secret, which == cannot compare: the printed form
+	// carries every other field.
 	cfg.Password = database.Secret{}
-	if cfg != want {
+	if cfg.String() != want.String() {
 		t.Errorf("parse() = %s, want %s", cfg, want)
 	}
 

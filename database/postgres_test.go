@@ -178,8 +178,8 @@ func TestPostgresEachFileWaitsForTheLock(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	err = migrator.ApplyFile(ctx, 2, "0002_author.sql", "alter table notes add column author text")
 	cancel()
-	if err == nil {
-		t.Fatal("file 2 was applied while another migrator held the lock")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ApplyFile() error = %v, want it to wait for the lock until its deadline", err)
 	}
 	if n := countRows(t, holder, "select count(*) from information_schema.columns where table_name = 'notes' and column_name = 'author'"); n != 0 {
 		t.Error("file 2 ran while another migrator held the lock")

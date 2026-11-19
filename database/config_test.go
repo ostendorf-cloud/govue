@@ -6,10 +6,12 @@ package database
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -43,9 +45,9 @@ func envOf(m map[string]string) func(string) string {
 
 // sameConfig compares two configs field by field, the password by value.
 func sameConfig(a, b Config) bool {
-	pa, pb := a.Password.Reveal(), b.Password.Reveal()
-	a.Password, b.Password = Secret{}, Secret{}
-	return a == b && pa == pb
+	return a.Host == b.Host && a.Port == b.Port && a.Name == b.Name && a.User == b.User &&
+		a.Password.Reveal() == b.Password.Reveal() && a.SSLMode == b.SSLMode &&
+		a.SSLRootCert == b.SSLRootCert && a.MaxConns == b.MaxConns && a.ConnectTimeout == b.ConnectTimeout
 }
 
 func TestLoadConfigReadsEveryVariable(t *testing.T) {
@@ -211,8 +213,14 @@ func TestHostShapes(t *testing.T) {
 		{"/tmp", "unix socket path"},
 		{"[::1]", "without brackets"},
 		{"[fd00::5]", "without brackets"},
+		{"::1]", "without brackets"},
+		{"[::1", "without brackets"},
 		{"a.invalid,b.invalid", "list of hosts"},
 		{",", "list of hosts"},
+		{"db.example.invalid:5433", "colon outside an IPv6 address"},
+		{"10.0.0.5:5432", "colon outside an IPv6 address"},
+		{"db example", "holds whitespace"},
+		{"user@db.example.invalid", "holds an @"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.host, func(t *testing.T) {
@@ -235,6 +243,19 @@ func TestHostShapes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Surrounding whitespace is trimmed by envconf, so it reaches only a Config
+// written in code, and Validate refuses it there.
+func TestValidateRefusesSurroundingWhitespaceInTheHost(t *testing.T) {
+	t.Parallel()
+
+	for _, host := range []string{" db.example.invalid", "db.example.invalid\t", "db.example.invalid\n"} {
+		cfg := Config{Host: host, Name: "n", User: "u", Password: fakeSecret, SSLMode: SSLDisable}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "holds whitespace") {
+			t.Errorf("Validate(host %q) error = %v, want the whitespace refused", host, err)
+		}
 	}
 }
 
@@ -434,6 +455,123 @@ func TestConfigNeverPrintsItsPassword(t *testing.T) {
 	}
 }
 
+// dump walks v the way a reflection dumper with methods off does, go-spew
+// with DisableMethods as a test library's diff uses it: every field,
+// exported or not, every pointer and interface followed, no method called.
+func dump(b *strings.Builder, v reflect.Value, depth int) {
+	if depth > 20 {
+		return
+	}
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if !v.IsNil() {
+			dump(b, v.Elem(), depth+1)
+		}
+	case reflect.Struct:
+		for i := range v.NumField() {
+			b.WriteString(v.Type().Field(i).Name + "=")
+			dump(b, v.Field(i), depth+1)
+			b.WriteString(" ")
+		}
+	case reflect.Slice, reflect.Array:
+		for i := range v.Len() {
+			dump(b, v.Index(i), depth+1)
+		}
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			dump(b, iter.Key(), depth+1)
+			dump(b, iter.Value(), depth+1)
+		}
+	case reflect.String:
+		b.WriteString(v.String())
+	case reflect.Func:
+		// reflect offers a func's code pointer, never what it captured.
+		fmt.Fprintf(b, "func(%#x)", v.Pointer())
+	default:
+		fmt.Fprintf(b, "%v", v)
+	}
+}
+
+// A dumper that follows pointers and ignores every method still finds no
+// password, also in a test assertion's diff of two configs.
+func TestSecretHidesFromReflectionDumpers(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{Host: "db.example.invalid", Password: fakeSecret}
+	for name, v := range map[string]any{
+		"secret":           fakeSecret,
+		"secret pointer":   &fakeSecret,
+		"config":           cfg,
+		"config pointer":   &cfg,
+		"outer":            outer{Addr: ":8080", DB: cfg, Ptr: &cfg, db: cfg, ptr: &cfg, any: cfg},
+		"map and slice":    map[string][]Config{"db": {cfg}},
+		"struct with hold": struct{ s Secret }{fakeSecret},
+	} {
+		var b strings.Builder
+		dump(&b, reflect.ValueOf(v), 0)
+		if leak, ok := leaks(b.String()); ok {
+			t.Errorf("%s: the reflection dump leaks the password (%q):\n%s", name, leak, b.String())
+		}
+		if g := fmt.Sprintf("%#v", struct{ s Secret }{fakeSecret}); strings.Contains(g, "fake-p") {
+			t.Errorf("%%#v of a struct holding a Secret leaks it: %s", g)
+		}
+	}
+	var b strings.Builder
+	dump(&b, reflect.ValueOf(cfg), 0)
+	if !strings.Contains(b.String(), "db.example.invalid") {
+		t.Errorf("the dump lost the host, so the test proves nothing:\n%s", b.String())
+	}
+}
+
+// xmlHolder is a named type, which encoding/xml needs for an element.
+type xmlHolder struct {
+	S Secret
+}
+
+// Secret's own text form is what xml and yaml use.
+func TestSecretMarshalText(t *testing.T) {
+	t.Parallel()
+
+	for name, s := range map[string]Secret{"set": fakeSecret, "empty": {}} {
+		got, err := s.MarshalText()
+		if err != nil {
+			t.Fatalf("%s: MarshalText() error = %v", name, err)
+		}
+		if _, ok := leaks(string(got)); ok || string(got) != s.String() {
+			t.Errorf("%s: MarshalText() = %q, want %q", name, got, s.String())
+		}
+	}
+	// A Secret holds a func, so it cannot be a map key. encoding/xml takes
+	// the text form for an element.
+	out, err := xml.Marshal(xmlHolder{S: fakeSecret})
+	if err != nil {
+		t.Fatalf("xml.Marshal() error = %v", err)
+	}
+	if _, ok := leaks(string(out)); ok || !strings.Contains(string(out), "[redacted]") {
+		t.Errorf("xml = %s, want the password as [redacted]", out)
+	}
+}
+
+// Config's JSON is an object of its fields, not the one string MarshalText
+// would make of it.
+func TestConfigJSONIsAnObject(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{Host: "db.example.invalid", Port: 5432, Password: fakeSecret, SSLMode: SSLVerifyFull}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("Config JSON is not an object: %s", raw)
+	}
+	if got["Host"] != "db.example.invalid" || got["Password"] != "[redacted]" || got["SSLMode"] != "verify-full" {
+		t.Errorf("Config JSON = %s, want its fields with the password redacted", raw)
+	}
+}
+
 // The renderings above also keep the rest of the config visible, so the
 // test does not pass by printing nothing.
 func TestConfigPrintsItsOtherFields(t *testing.T) {
@@ -480,5 +618,13 @@ func TestSecret(t *testing.T) {
 	copied := s
 	if copied.Reveal() != fakePassword {
 		t.Error("a copy lost the secret")
+	}
+	// The documented price of the closure: DeepEqual sees two different
+	// funcs, and only two zero Secrets are equal.
+	if reflect.DeepEqual(NewSecret("x"), NewSecret("x")) {
+		t.Error("DeepEqual of two set Secrets is true: the value is no longer a closure")
+	}
+	if !reflect.DeepEqual(Secret{}, NewSecret("")) {
+		t.Error("DeepEqual of two zero Secrets is false")
 	}
 }
