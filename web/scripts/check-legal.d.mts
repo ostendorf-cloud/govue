@@ -16,6 +16,8 @@ export interface Args {
   help: boolean
 }
 
+export function anchorHrefs(html: string): string[]
+export function linkTarget(href: string): string | undefined
 export function parseArgs(argv: string[]): Args
 export function checkLegal(options: {
   dir: string
