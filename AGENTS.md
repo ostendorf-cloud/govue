@@ -48,9 +48,17 @@ repeated here.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
-- Twenty Go packages live at the module root: `account`, `analytics`, `api`, `appassoc`,
+- Twenty-one Go packages live at the module root: `account`, `analytics`, `api`, `appassoc`,
   `clientip`, `csrf`, `database`, `envconf`, `favicon`, `health`, `httpserver`, `language`,
-  `logging`, `metrics`, `middleware`, `oidc`, `passkey`, `ratelimit`, `session`, `themeboot`.
+  `logging`, `metrics`, `middleware`, `oidc`, `passkey`, `pow`, `ratelimit`, `session`,
+  `themeboot`.
+- `pow` issues and verifies stateless proof of work challenges, the ALTCHA shape, signed with
+  HMAC-SHA-256 over a domain separator and the site name. Keys are at least 32 bytes, the first
+  signs and all verify. Replay is limited by the expiry plus a single use `Seen`, by default a
+  bounded in memory set that is per process and refuses with `ErrBusy` rather than forget.
+  Proof of work is a speed bump, the rate limits are the control. It sets no cookie and stores
+  nothing about a visitor. `pow/testdata/vectors.json` is shared with the Vue solver. It imports
+  no other govue package.
 - `database` holds the PostgreSQL connection of a product: `Config` and `LoadConfig` with the
   `DB_*` variables, the pgx pool, the migration runner over an `fs.FS` and `Check` for
   readiness. The password is a `database.Secret`, held in a closure, so no fmt verb, encoder,

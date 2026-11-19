@@ -2372,6 +2372,43 @@ The design of the library and the reasoning behind it.
   and the retention statement. Out of scope are a client side script, events beyond page views,
   a dashboard and a consent banner.
 
+### Proof of work
+
+- The `pow` package issues and verifies stateless proof of work challenges for a public form,
+  first for the contact form series. It keeps the ALTCHA shape so a site that already runs it
+  migrates without a break: `challenge = sha256(salt + n)`, `signature = HMAC-SHA-256(key, ...)`,
+  and the salt is a 24 digit hex nonce plus `?expires=<unix>&issued=<unix>`. The browser searches
+  `n` in `0..maxnumber`. The package imports nothing outside the standard library and no other
+  govue package.
+- The HMAC input is `govue/pow\x00v1\x00` + audience + `\x00` + challenge. The domain separator
+  is the version, and the audience is the site name. A key reused across sites cannot redeem
+  another site's challenge. The salt is bound to the challenge by the hash, so the expiry cannot
+  be changed without breaking the signature.
+- `pow.New` takes a `Config`. Keys are required and at least 32 bytes each. The first key signs,
+  every key verifies, so a rotation lists the new key first and keeps the old one for one TTL.
+  Defaults: `maxnumber` 300000, TTL 10 minutes, minimum age 3 seconds.
+- `Verify` runs in a fixed order and each refusal has its own error: `ErrMalformed`,
+  `ErrSignature` (also for another audience), `ErrWrong`, `ErrExpired`, `ErrTooFast`,
+  `ErrReplay`, `ErrBusy`. The first three wrap `ErrInvalid`. The signature is compared in
+  constant time against every key. The single use record is written last, so a request that fails
+  for another reason does not burn the solution.
+- Replay is limited by the expiry window plus a single use record. The default record is
+  `MemorySeen`, bounded at 100000 entries. A full record refuses with `ErrBusy` and never forgets
+  an unexpired entry, because forgetting would allow a replay. It is per process: with several
+  replicas a solution can be used once per replica until it expires. A consumer that needs one
+  global answer passes its own `Seen`. Statelessness is the owner decision: nothing about an
+  issued challenge is stored.
+- Limits. Proof of work is a speed bump: native code solves 300000 hashes in milliseconds, so it
+  only slows a naive script. The rate limits of the route and a global ceiling are the real
+  control. There is no binding to an address or a session, because mobile clients change
+  networks. The challenge route is unauthenticated and costs the server one HMAC.
+- Privacy facts a consumer's page can quote: the server stores no challenge and nothing about
+  the visitor, the single use record holds one hash until expiry and is not linked to a person,
+  no cookie is set, no browser storage is used and no third party is called.
+- `pow/testdata/vectors.json` is the shared contract with the browser solver (#198): a fixed
+  key, audience, clock and challenge, hash vectors and verify cases with the expected outcome.
+  The Go test reads it, and `go test ./pow -run TestVectors -update` rewrites it.
+
 ### Component behaviour
 
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a

@@ -1,0 +1,239 @@
+{
+  "comment": "Shared vectors of the pow package, written by go test -update. challenge = hex(sha256(salt + number)). signature = hex(hmac_sha256(key, 'govue/pow\\x00v1\\x00' + audience + '\\x00' + challenge)). now is Unix seconds. Every case runs on a fresh service.",
+  "version": 1,
+  "material": "0123456789abcdef0123456789abcdef",
+  "audience": "example.test",
+  "maxNumber": 10000,
+  "minAgeSeconds": 3,
+  "hashes": [
+    {
+      "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+      "number": 4242,
+      "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e"
+    },
+    {
+      "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+      "number": 0,
+      "challenge": "6d0686005d8fa423d0533d56c04d04fc4d7605b14b16f551928912d22cbf39ed"
+    },
+    {
+      "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+      "number": 10000,
+      "challenge": "9d8d7e352d07a4d5ca079101b9c453b0dfb547ede15a208f1a7ffae2e4cbb635"
+    },
+    {
+      "salt": "",
+      "number": 1,
+      "challenge": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+    }
+  ],
+  "cases": [
+    {
+      "name": "valid",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 4242,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "ok"
+    },
+    {
+      "name": "valid at minimum age",
+      "now": 1790000003,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 4242,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "ok"
+    },
+    {
+      "name": "valid one second before expiry",
+      "now": 1790000599,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 4242,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "ok"
+    },
+    {
+      "name": "expired at the expiry second",
+      "now": 1790000600,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 4242,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "expired"
+    },
+    {
+      "name": "too fast",
+      "now": 1790000002,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 4242,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "too_fast"
+    },
+    {
+      "name": "other audience",
+      "now": 1790000005,
+      "audience": "other.test",
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 4242,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "signature"
+    },
+    {
+      "name": "signature of another key",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 4242,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "43bab5fe0da7201e005e179b6f0ca3f58ea284d8955a51dc955383319669af9d"
+      },
+      "want": "signature"
+    },
+    {
+      "name": "wrong number",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 4243,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "wrong"
+    },
+    {
+      "name": "salt changed",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 4242,
+        "salt": "00112233445566778899aabc?expires=1790000600\u0026issued=1790000000",
+        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "wrong"
+    },
+    {
+      "name": "unknown algorithm",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-1",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 4242,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "malformed"
+    },
+    {
+      "name": "negative number",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": -1,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "malformed"
+    },
+    {
+      "name": "number above maximum",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 10001,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "malformed"
+    },
+    {
+      "name": "challenge not hex",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "zz988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 4242,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "malformed"
+    },
+    {
+      "name": "upper case signature",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 4242,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "A3c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "malformed"
+    },
+    {
+      "name": "empty salt",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "number": 4242,
+        "salt": "",
+        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+      },
+      "want": "malformed"
+    },
+    {
+      "name": "salt without expiry",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "f094ff518fcdea63aa15a12a18489fbadd7d396afbaf6b3091814b77c4e836d9",
+        "number": 7,
+        "salt": "00112233445566778899aabb?issued=1790000000",
+        "signature": "e9abb157e14d4d05363159661664d03ac4a8f2ab29903041273d3f7da4f15c44"
+      },
+      "want": "malformed"
+    }
+  ],
+  "challenge": {
+    "algorithm": "SHA-256",
+    "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+    "maxnumber": 10000,
+    "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+    "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+  },
+  "solution": {
+    "algorithm": "SHA-256",
+    "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+    "number": 4242,
+    "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+    "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+  }
+}
