@@ -4,6 +4,7 @@
 package dbtest
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -95,6 +96,59 @@ func TestParse(t *testing.T) {
 		if strings.Contains(err.Error(), "fake") {
 			t.Errorf("%s: parse() error quotes the URL: %v", b.name, err)
 		}
+	}
+}
+
+// fakeServer records what create does, in order.
+type fakeServer struct {
+	db     string
+	events *[]string
+}
+
+func (f fakeServer) Exec(_ context.Context, sql string) error {
+	*f.events = append(*f.events, "exec on "+f.db+": "+sql)
+	return nil
+}
+
+func (f fakeServer) Close() { *f.events = append(*f.events, "close "+f.db) }
+
+// The drop connects to the admin database, never to the test database it
+// drops, ends other sessions with force, and runs after the cleanups a test
+// registers later, such as the pool close of Open. The CI run against a real
+// server is the proof that PostgreSQL accepts it; this pins the order.
+func TestCreateDropsFromTheAdminDatabaseAfterThePoolIsClosed(t *testing.T) {
+	t.Parallel()
+
+	admin := database.Config{
+		Host: "db.example.invalid", Name: "postgres", User: "govue",
+		Password: database.NewSecret("fake-password"), SSLMode: database.SSLDisable,
+	}
+	var events []string
+	open := func(_ context.Context, cfg database.Config) (server, error) { //nolint:unparam // the signature is create's
+		events = append(events, "open "+cfg.Name)
+		return fakeServer{db: cfg.Name, events: &events}, nil
+	}
+
+	var got database.Config
+	t.Run("test", func(t *testing.T) {
+		got = create(t, admin, open, "govue_test_ab12")
+		t.Cleanup(func() { events = append(events, "test closes its pool on "+got.Name) })
+	})
+
+	want := []string{
+		"open postgres",
+		`exec on postgres: create database "govue_test_ab12"`,
+		"close postgres",
+		"test closes its pool on govue_test_ab12",
+		"open postgres",
+		`exec on postgres: drop database if exists "govue_test_ab12" with (force)`,
+		"close postgres",
+	}
+	if strings.Join(events, "\n") != strings.Join(want, "\n") {
+		t.Errorf("events:\n%s\nwant:\n%s", strings.Join(events, "\n"), strings.Join(want, "\n"))
+	}
+	if got.Name != "govue_test_ab12" || admin.Name != "postgres" {
+		t.Errorf("returned name %q, admin name %q, want the test database and an unchanged admin", got.Name, admin.Name)
 	}
 }
 

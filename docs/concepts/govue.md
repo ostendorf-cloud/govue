@@ -1582,7 +1582,10 @@ The design of the library and the reasoning behind it.
   bookkeeping table and around a single file once the table exists, concurrent migrators,
   `Check` before and after the schema, a wrong password, and the database per test.
 - `dbtest.Config` and `dbtest.Open` read the server from `GOVUE_TEST_DATABASE_URL`, create a
-  fresh database per test and drop it with force afterwards. The role needs `CREATEDB`. Without
+  fresh database per test and drop it afterwards with `DROP DATABASE ... WITH (FORCE)`, from a
+  connection to the database the URL names, never to the one it drops. `WITH (FORCE)` needs
+  PostgreSQL 13 or later, and CI and `example/compose.yaml` run 17. A test closes the pools it
+  opens before it ends, and `dbtest.Open` does that for its own. The role needs `CREATEDB`. Without
   the variable the test is skipped with a message naming it, and `task test:go` prints a
   warning first, because `go test` hides a skip. With `CI` set to `true` or `1` and the variable
   missing the test fails, so the suite cannot go green by skipping. The `test` job runs a

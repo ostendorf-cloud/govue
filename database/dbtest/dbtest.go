@@ -39,8 +39,17 @@ const EnvURL = "GOVUE_TEST_DATABASE_URL"
 const setupTimeout = 30 * time.Second
 
 // Config creates an empty database on the configured server and returns the
-// settings that reach it. The database is dropped, with force, when the test
-// ends.
+// settings that reach it. The database is dropped when the test ends.
+//
+// The drop runs from a connection to the database the URL names, never to
+// the test database, and uses DROP DATABASE ... WITH (FORCE), which ends
+// every session still connected to it. WITH (FORCE) needs PostgreSQL 13 or
+// later. The CI service container and example/compose.yaml run 17. A caller
+// still closes the pools it opens on the returned Config before the test
+// ends, with t.Cleanup or defer: a cleanup registered after Config runs
+// before the drop, because cleanups run last in, first out. A drop that
+// fails is a test error naming the database, so a leftover database never
+// goes unnoticed.
 //
 // With no server configured the test is skipped, loudly, unless the CI
 // environment variable is set, in which case it fails.
@@ -58,40 +67,80 @@ func Config(t testing.TB) database.Config {
 	if err != nil {
 		t.Fatalf("dbtest: %v", err)
 	}
+	return create(t, admin, openServer, "govue_test_"+randomSuffix(t))
+}
+
+// server is the part of the admin connection create needs. Tests replace it.
+type server interface {
+	Exec(ctx context.Context, sql string) error
+	Close()
+}
+
+// openServer opens a real connection through database.Open.
+func openServer(ctx context.Context, cfg database.Config) (server, error) {
+	db, err := database.Open(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return poolServer{db: db}, nil
+}
+
+// poolServer is the real server, a pool on the admin database.
+type poolServer struct{ db *database.DB }
+
+// Exec runs sql on the admin database.
+func (p poolServer) Exec(ctx context.Context, sql string) error {
+	if _, err := p.db.Pool().Exec(ctx, sql); err != nil {
+		return fmt.Errorf("exec: %w", err)
+	}
+	return nil
+}
+
+// Close closes the pool.
+func (p poolServer) Close() { p.db.Close() }
+
+// create makes the database name on the server admin reaches, registers its
+// drop and returns the settings of the new database. admin is never changed:
+// the drop must connect to the admin database, because PostgreSQL refuses to
+// drop the database a session is connected to, WITH (FORCE) or not.
+func create(t testing.TB, admin database.Config, open func(context.Context, database.Config) (server, error), name string) database.Config {
+	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
 	defer cancel()
-	conn, err := database.Open(ctx, admin)
+	conn, err := open(ctx, admin)
 	if err != nil {
 		t.Fatalf("dbtest: open the server named by %s: %v", EnvURL, err)
 	}
-	defer conn.Close()
-
-	name := "govue_test_" + randomSuffix(t)
 	// name is built from hex digits only, so quoting it is enough.
-	if _, err := conn.Pool().Exec(ctx, `create database "`+name+`"`); err != nil {
+	err = conn.Exec(ctx, `create database "`+name+`"`)
+	conn.Close()
+	if err != nil {
 		t.Fatalf("dbtest: create test database: %v", err)
 	}
+
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
 		defer cancel()
-		conn, err := database.Open(ctx, admin)
+		conn, err := open(ctx, admin)
 		if err != nil {
 			t.Errorf("dbtest: open the server to drop %s: %v", name, err)
 			return
 		}
 		defer conn.Close()
-		if _, err := conn.Pool().Exec(ctx, `drop database if exists "`+name+`" with (force)`); err != nil {
+		if err := conn.Exec(ctx, `drop database if exists "`+name+`" with (force)`); err != nil {
 			t.Errorf("dbtest: drop test database %s: %v", name, err)
 		}
 	})
 
-	admin.Name = name
-	return admin
+	test := admin
+	test.Name = name
+	return test
 }
 
 // Open is Config followed by database.Open. The pool is closed when the test
-// ends, before the database is dropped.
+// ends, before the database is dropped: its cleanup is registered after the
+// drop, so it runs first.
 func Open(t testing.TB) *database.DB {
 	t.Helper()
 
