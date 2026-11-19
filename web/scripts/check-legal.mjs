@@ -10,10 +10,27 @@
 // in all, and --require-terms makes it required. Comments are ignored, and
 // the sitemap must name one origin.
 //
+// It also reads every prerendered HTML page under <dir>/<code>/ and fails a
+// page that has no link to the imprint and the privacy page of its own
+// language, and to the terms page when the site has one. A link counts when
+// it is an a element with an href that is exactly the root relative path,
+// /de/imprint, query and fragment ignored. A trailing slash or /index.html
+// does not count: the server does not redirect them. A link in a comment, a
+// script, style, textarea, title, noscript or template, a link element and
+// an absolute URL do not count. The link text and the look of the footer are
+// not checked.
+//
+// Known differences from a browser: the escape states of a script
+// (<!--<script>), CDATA in HTML content (a browser reads a bogus comment,
+// the tokenizer reads to ]]>) and a self closed raw text element in svg are
+// not modelled. They fail loudly (a link is missed, never invented) or Vue
+// SSR does not produce them.
+//
 // Plain ESM JavaScript like prerender.mjs, so it runs from a consumer's
-// node_modules. It reads files only and writes nothing.
+// node_modules. It reads files only and writes nothing. It has no
+// dependency, so the HTML is read by the small tokenizer below.
 
-import { lstatSync, readFileSync, realpathSync } from 'node:fs'
+import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -34,6 +51,12 @@ its html element, or is not in sitemap.xml, and when sitemap.xml lists more
 than one origin. Comments are ignored. Terms are only for a site that sells
 something, so the page is optional, but when it exists in one language it
 must exist in all.
+
+Also fails every HTML page under <out-dir>/<code>/ that has no a href to the
+imprint and the privacy page of its own language, and to the terms page when
+the site has one. The href must be exactly the root relative path, such as
+/de/imprint, since the server redirects no trailing slash or /index.html. A
+link in a comment, a script or a style block does not count.
 
 Options:
   --dir <path>          The prerender output directory (required). Also --dir=<path>.
@@ -132,6 +155,242 @@ function htmlLang(html) {
   return lang ? (lang[1] ?? lang[2] ?? lang[3]) : undefined
 }
 
+/** Elements whose content is text, never markup: no link inside counts. */
+const RAW_TEXT = new Set([
+  'script',
+  'style',
+  'textarea',
+  'title',
+  'xmp',
+  'iframe',
+  'noembed',
+  'noframes',
+  // A browser with scripting on reads noscript as text.
+  'noscript',
+])
+
+const TAG_NAME = /[A-Za-z][^\s/>]*/y
+const ATTR_NAME = /[^\s/>][^\s/>=]*/y
+const UNQUOTED = /[^\s>]*/y
+const SPACE = /\s*/y
+const CHAR_REF = /&(?:#[xX]([0-9a-fA-F]+);?|#([0-9]+);?|(amp|lt|gt|quot|apos|sol|colon);)/g
+const NAMED = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", sol: '/', colon: ':' }
+
+/**
+ * The attribute value with its character references decoded, one pass.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function decode(value) {
+  return value.replace(CHAR_REF, (all, hex, dec, name) => {
+    if (name) return NAMED[/** @type {keyof typeof NAMED} */ (name)]
+    const code = hex ? parseInt(hex, 16) : parseInt(dec, 10)
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : all
+  })
+}
+
+/**
+ * Reads the attributes of a tag from position p, after its name. The first
+ * of a repeated attribute wins, like in a browser. Returns undefined when the
+ * input ends inside the tag, which a browser drops.
+ *
+ * @param {string} html
+ * @param {number} from
+ * @returns {{ attrs: Map<string, string>, end: number } | undefined}
+ */
+function readAttributes(html, from) {
+  const attrs = new Map()
+  let p = from
+  for (;;) {
+    while (p < html.length && /[\s/]/.test(html[p])) p++
+    if (p >= html.length) return undefined
+    if (html[p] === '>') return { attrs, end: p + 1 }
+    ATTR_NAME.lastIndex = p
+    const name = ATTR_NAME.exec(html)?.[0]
+    if (name === undefined) return undefined
+    p += name.length
+    SPACE.lastIndex = p
+    p += SPACE.exec(html)?.[0].length ?? 0
+    let value = ''
+    if (html[p] === '=') {
+      p++
+      SPACE.lastIndex = p
+      p += SPACE.exec(html)?.[0].length ?? 0
+      const quote = html[p]
+      if (quote === '"' || quote === "'") {
+        const close = html.indexOf(quote, p + 1)
+        if (close < 0) return undefined
+        value = html.slice(p + 1, close)
+        p = close + 1
+      } else {
+        UNQUOTED.lastIndex = p
+        value = UNQUOTED.exec(html)?.[0] ?? ''
+        p += value.length
+      }
+    }
+    const key = name.toLowerCase()
+    if (!attrs.has(key)) attrs.set(key, decode(value))
+  }
+}
+
+/**
+ * The href of every a element that is live markup. Comments, CDATA, bogus
+ * comments, raw text elements (script, style and the like) and template
+ * content are skipped, tag and attribute names are case insensitive, and an
+ * attribute value is quoted with " or ', or not quoted.
+ *
+ * @param {string} html
+ * @returns {string[]}
+ */
+export function anchorHrefs(html) {
+  const hrefs = []
+  const n = html.length
+  let template = 0
+  let i = 0
+  while (i < n) {
+    const lt = html.indexOf('<', i)
+    if (lt < 0) break
+    i = lt
+    if (html.startsWith('<!--', i)) {
+      // <!--> and <!---> are empty comments. Otherwise the comment runs to
+      // the next --> or --!>, searched after the opening <!--.
+      if (html.startsWith('<!-->', i)) {
+        i += 5
+      } else if (html.startsWith('<!--->', i)) {
+        i += 6
+      } else {
+        const close = /--!?>/g
+        close.lastIndex = i + 4
+        const m = close.exec(html)
+        i = m ? m.index + m[0].length : n
+      }
+      continue
+    }
+    if (html.startsWith('<![CDATA[', i)) {
+      const end = html.indexOf(']]>', i)
+      i = end < 0 ? n : end + 3
+      continue
+    }
+    const closing = html[i + 1] === '/'
+    TAG_NAME.lastIndex = i + (closing ? 2 : 1)
+    const name = TAG_NAME.exec(html)?.[0]
+    if (name === undefined) {
+      if (closing || html[i + 1] === '!' || html[i + 1] === '?') {
+        // A bogus comment runs to the next >.
+        const end = html.indexOf('>', i)
+        i = end < 0 ? n : end + 1
+      } else {
+        i++
+      }
+      continue
+    }
+    const tag = readAttributes(html, TAG_NAME.lastIndex)
+    if (!tag) break
+    i = tag.end
+    const lower = name.toLowerCase()
+    if (lower === 'template') template = Math.max(0, template + (closing ? -1 : 1))
+    if (closing) continue
+    if (lower === 'a' && template <= 0 && tag.attrs.has('href')) {
+      hrefs.push(/** @type {string} */ (tag.attrs.get('href')))
+    } else if (lower === 'plaintext') {
+      break
+    } else if (RAW_TEXT.has(lower)) {
+      const end = new RegExp(`</${lower}(?=[\\s/>])`, 'gi')
+      end.lastIndex = i
+      const m = end.exec(html)
+      i = m ? m.index : n
+    }
+  }
+  return hrefs
+}
+
+/**
+ * The canonical path an href points to, or undefined when it is not a root
+ * relative path. Query and fragment drop out, nothing else is normalised:
+ * the server registers exact paths and does not redirect /de/imprint/ or
+ * /de/imprint/index.html, so those links are dead and do not count. Absolute
+ * URLs, protocol relative URLs and document relative paths do not count: the
+ * last depend on the URL the page is served under.
+ *
+ * @param {string} href
+ * @returns {string | undefined}
+ */
+export function linkTarget(href) {
+  // A browser strips surrounding whitespace and tab and newline anywhere.
+  let path = href.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '').replace(/[\t\n\r]/g, '')
+  if (!path.startsWith('/') || path[1] === '/' || path[1] === '\\') return undefined
+  return path.split(/[?#]/, 1)[0]
+}
+
+/**
+ * The relative paths of every HTML file under <dir>/<code>, sorted. A
+ * symbolic link is skipped: the prerender never writes one.
+ *
+ * @param {string} dir
+ * @param {string} code
+ * @returns {string[]}
+ */
+function htmlPages(dir, code) {
+  /** @type {string[]} */
+  const found = []
+  /** @param {string} rel */
+  const walk = (rel) => {
+    let entries
+    try {
+      entries = readdirSync(join(dir, rel), { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const next = `${rel}/${entry.name}`
+      if (entry.isDirectory()) walk(next)
+      else if (entry.isFile() && entry.name.toLowerCase().endsWith('.html')) found.push(next)
+    }
+  }
+  walk(code)
+  return found
+}
+
+/**
+ * Checks that every page of a language links the legal pages of that language.
+ *
+ * @param {string} dir
+ * @param {string[]} languages
+ * @param {string[]} pages
+ * @returns {string[]}
+ */
+function checkLinks(dir, languages, pages) {
+  const problems = []
+  for (const code of languages) {
+    for (const file of htmlPages(dir, code)) {
+      const html = readPage(join(dir, file))
+      if (html === undefined) continue
+      const targets = new Set(anchorHrefs(html).map(linkTarget))
+      for (const page of pages) {
+        if (!targets.has(legalPath(code, page))) {
+          problems.push(
+            `${file} has no link to the ${page} page in ${code}: want an a href to ${legalPath(code, page)}`,
+          )
+        }
+      }
+    }
+  }
+  return problems
+}
+
+/**
+ * The canonical path of a legal page, the one the sitemap lists and the
+ * footer links: /<code>/<page>, as legalPath in src/i18n/legal.ts.
+ *
+ * @param {string} code
+ * @param {string} page
+ * @returns {string}
+ */
+function legalPath(code, page) {
+  return `/${code}/${page}`
+}
+
 /**
  * The content of a regular file, or undefined when there is none. A symbolic
  * link counts as missing: the prerender never writes one.
@@ -172,8 +431,8 @@ function checkPage(dir, page, languages, listed) {
     if (lang !== code) {
       problems.push(`${page} page ${file} has lang ${JSON.stringify(lang ?? '')}, want "${code}"`)
     }
-    if (!listed.has(`/${code}/${page}`)) {
-      problems.push(`${page} page /${code}/${page} is not listed in sitemap.xml`)
+    if (!listed.has(legalPath(code, page))) {
+      problems.push(`${page} page ${legalPath(code, page)} is not listed in sitemap.xml`)
     }
   }
   return { problems, present }
@@ -215,8 +474,9 @@ export function checkLegal({ dir, languages = DEFAULT_LANGUAGES, requireTerms = 
   }
 
   const terms = checkPage(dir, OPTIONAL_PAGE, languages, listed)
-  const termsListed = languages.some((code) => listed.has(`/${code}/${OPTIONAL_PAGE}`))
-  if (terms.present > 0 || termsListed || requireTerms) {
+  const termsListed = languages.some((code) => listed.has(legalPath(code, OPTIONAL_PAGE)))
+  const hasTerms = terms.present > 0 || termsListed || requireTerms
+  if (hasTerms) {
     errors.push(...terms.problems)
     if (terms.problems.length === 0) notes.push('terms page: present in every language')
   } else {
@@ -224,6 +484,10 @@ export function checkLegal({ dir, languages = DEFAULT_LANGUAGES, requireTerms = 
       'terms page: none, which is right for a site that sells nothing. Pass --require-terms when the site sells something.',
     )
   }
+
+  errors.push(
+    ...checkLinks(dir, languages, hasTerms ? [...REQUIRED_PAGES, OPTIONAL_PAGE] : REQUIRED_PAGES),
+  )
   return { errors, notes }
 }
 

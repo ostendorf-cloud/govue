@@ -313,8 +313,9 @@ err := language.HandleLegal(mux, language.LegalConfig{}, nil) // Terms: true for
 Register the catch-all without a method, `mux.Handle("/", ...)`. A `GET /` catch-all panics.
 
 After the prerender, `govue-check-legal --dir dist` fails the build when the imprint or privacy page
-is missing in a language. The route table and the rules are in the section "Legal pages" of
-`docs/concepts/govue.md`.
+is missing in a language, or when a prerendered page lacks a link to the imprint, the privacy page
+or, where the site has one, the terms page of its own language. The route table and the rules are in
+the section "Legal pages" of `docs/concepts/govue.md`.
 
 ### Favicon
 
