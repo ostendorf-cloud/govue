@@ -5,7 +5,13 @@ package pow
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -68,6 +74,15 @@ func solve(t *testing.T, c Challenge) Solution {
 	return Solution{}
 }
 
+// signNoDomain is sign without the domain separator.
+func signNoDomain(key []byte, audience, challenge string) string {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(audience))
+	mac.Write([]byte{0})
+	mac.Write([]byte(challenge))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 func TestNew(t *testing.T) {
 	t.Parallel()
 
@@ -84,6 +99,9 @@ func TestNew(t *testing.T) {
 		{"audience with NUL", func(c *Config) { c.Audience = "a\x00b" }, false},
 		{"negative difficulty", func(c *Config) { c.MaxNumber = -1 }, false},
 		{"negative TTL", func(c *Config) { c.TTL = -time.Second }, false},
+		{"maximum int64 difficulty", func(c *Config) { c.MaxNumber = math.MaxInt64 }, false},
+		{"difficulty above the limit", func(c *Config) { c.MaxNumber = MaxNumberLimit + 1 }, false},
+		{"difficulty at the limit", func(c *Config) { c.MaxNumber = MaxNumberLimit }, true},
 		{"two keys", func(c *Config) { c.Keys = [][]byte{keyA, keyB} }, true},
 		{"defaults", func(c *Config) { c.MaxNumber, c.TTL, c.MinAge = 0, 0, 0 }, true},
 	}
@@ -191,7 +209,8 @@ func TestVerify(t *testing.T) {
 		{"number above maximum", 5 * time.Second, func(s *Solution) { s.Number = 1001 }, ErrMalformed},
 		{"bad signature", 5 * time.Second, func(s *Solution) { s.Signature = sign(keyB, "example.test", s.Challenge) }, ErrSignature},
 		{"signature for another audience", 5 * time.Second, func(s *Solution) { s.Signature = sign(keyA, "other.test", s.Challenge) }, ErrSignature},
-		{"signature without domain", 5 * time.Second, func(s *Solution) { s.Signature = strings.Repeat("0", 64) }, ErrSignature},
+		{"signature without domain", 5 * time.Second, func(s *Solution) { s.Signature = signNoDomain(keyA, "example.test", s.Challenge) }, ErrSignature},
+		{"salt without trailing separator", 5 * time.Second, func(s *Solution) { s.Salt = strings.TrimSuffix(s.Salt, "&") }, ErrWrong},
 		{"salt changed", 5 * time.Second, func(s *Solution) { s.Salt += "0" }, ErrWrong},
 		{"salt too long", 5 * time.Second, func(s *Solution) { s.Salt = strings.Repeat("a", 129) }, ErrMalformed},
 		{"empty salt", 5 * time.Second, func(s *Solution) { s.Salt = "" }, ErrMalformed},
@@ -250,19 +269,93 @@ func TestSignedButMalformedSalt(t *testing.T) {
 	s := newService(t, c, nil)
 	for _, salt := range []string{
 		"00112233445566778899aabb?expires=1790000600",
-		"00112233445566778899aabb?issued=1&expires=2",
-		"00112233445566778899aabb?expires=+5&issued=1",
-		"00112233445566778899aabb?expires=05&issued=1",
-		"00112233445566778899aabb?expires=-5&issued=1",
-		"00112233445566778899aabb?expires=x&issued=1",
-		"00112233445566778899AABB?expires=5&issued=1",
-		"0011?expires=5&issued=1",
+		"00112233445566778899aabb?expires=5&issued=1",
+		"00112233445566778899aabb?expires=5&issued=1&&",
+		"00112233445566778899aabb?issued=1&expires=2&",
+		"00112233445566778899aabb?expires=+5&issued=1&",
+		"00112233445566778899aabb?expires=05&issued=1&",
+		"00112233445566778899aabb?expires=-5&issued=1&",
+		"00112233445566778899aabb?expires=x&issued=1&",
+		"00112233445566778899AABB?expires=5&issued=1&",
+		"0011?expires=5&issued=1&",
 		"no query",
 	} {
 		hash := Hash(salt, 1)
 		sol := Solution{Algorithm: Algorithm, Challenge: hash, Number: 1, Salt: salt, Signature: sign(keyA, "example.test", hash)}
 		if err := s.Verify(sol); !errors.Is(err, ErrMalformed) {
 			t.Errorf("salt %q: %v", salt, err)
+		}
+	}
+}
+
+// Regression test for the salt splicing flaw (CVE-2025-68113): the hash input
+// is salt + decimal(n), so without a boundary a client could move the last
+// digit d of issued into the number (salt' = salt minus d, n' = d||n) and keep
+// the challenge and the signature valid, which skipped the minimum age.
+func TestSaltSplicing(t *testing.T) {
+	t.Parallel()
+
+	c := &clock{t: t0}
+	s := newService(t, c, func(cfg *Config) { cfg.MaxNumber = 300 })
+	for i := range 400 {
+		c.t = t0.Add(time.Duration(i) * time.Second)
+		ch, err := s.Create()
+		if err != nil {
+			t.Fatal(err)
+		}
+		sol := solve(t, ch)
+		// Submit at age 0, so only the splice could pass the minimum age.
+		for cut := 1; cut <= 3; cut++ {
+			salt := ch.Salt[:len(ch.Salt)-cut]
+			moved := ch.Salt[len(ch.Salt)-cut:]
+			// The moved text and the number must join into one decimal.
+			n, err := strconv.ParseInt(moved+strconv.FormatInt(sol.Number, 10), 10, 64)
+			if err != nil || n > 300 {
+				// Not a number or above the maximum: Verify refuses it.
+				n = sol.Number
+			}
+			spliced := sol
+			spliced.Salt, spliced.Number = salt, n
+			if err := s.Verify(spliced); err == nil {
+				t.Fatalf("splice of %q verified at age 0 (salt %q)", moved, ch.Salt)
+			}
+		}
+	}
+}
+
+// The old salt shape, without the trailing separator, is refused as malformed
+// even when it is signed and solved, and the splice of it carries the same
+// hash and signature, which is exactly what the separator has to stop.
+func TestLegacySaltRefused(t *testing.T) {
+	t.Parallel()
+
+	c := &clock{t: t0}
+	s := newService(t, c, nil)
+	for i := range 40 {
+		issued := t0.Unix() + int64(i)
+		salt := fmt.Sprintf("00112233445566778899aabb?expires=%d&issued=%d", issued+600, issued)
+		hash := Hash(salt, 7)
+		sig := sign(keyA, "example.test", hash)
+		c.t = time.Unix(issued, 0)
+		whole := Solution{Algorithm: Algorithm, Challenge: hash, Number: 7, Salt: salt, Signature: sig}
+		if err := s.Verify(whole); !errors.Is(err, ErrMalformed) {
+			t.Fatalf("legacy salt %q = %v", salt, err)
+		}
+		// The splice: the last digit of issued moves into the number.
+		d := salt[len(salt)-1:]
+		if d == "0" {
+			continue // "0" + "7" is not a canonical decimal, the splice needs d > 0
+		}
+		n, err := strconv.ParseInt(d+"7", 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		spliced := Solution{Algorithm: Algorithm, Challenge: hash, Number: n, Salt: salt[:len(salt)-1], Signature: sig}
+		if Hash(spliced.Salt, spliced.Number) != hash {
+			t.Fatal("test setup: the splice does not keep the hash")
+		}
+		if err := s.Verify(spliced); !errors.Is(err, ErrMalformed) {
+			t.Fatalf("spliced legacy salt %q = %v", spliced.Salt, err)
 		}
 	}
 }
@@ -446,8 +539,11 @@ func FuzzParseSalt(f *testing.F) {
 	f.Add("00112233445566778899aabb?expires=1790000600&issued=1790000000")
 	f.Add("")
 	f.Add("?expires=&issued=")
-	f.Add("00112233445566778899aabb?expires=-1&issued=0")
-	f.Add("00112233445566778899aabb?expires=9223372036854775808&issued=0")
+	f.Add("00112233445566778899aabb?expires=-1&issued=0&")
+	f.Add("00112233445566778899aabb?expires=9223372036854775808&issued=0&")
+	// The splice: the salt without its separator and last digit.
+	f.Add("00112233445566778899aabb?expires=1790000600&issued=1790000000")
+	f.Add("00112233445566778899aabb?expires=1790000600&issued=179000000")
 	f.Fuzz(func(t *testing.T, salt string) {
 		exp, iss, err := parseSalt(salt)
 		if err != nil {
@@ -478,7 +574,8 @@ func hexByte(a, b byte) byte {
 }
 
 func FuzzVerify(f *testing.F) {
-	f.Add("SHA-256", strings.Repeat("a", 64), int64(1), "00112233445566778899aabb?expires=5&issued=1", strings.Repeat("b", 64))
+	f.Add("SHA-256", strings.Repeat("a", 64), int64(1), "00112233445566778899aabb?expires=5&issued=1&", strings.Repeat("b", 64))
+	f.Add("SHA-256", strings.Repeat("a", 64), int64(10), "00112233445566778899aabb?expires=5&issued=", strings.Repeat("b", 64))
 	f.Add("", "", int64(-1), "", "")
 	c := &clock{t: t0}
 	s, err := New(Config{Audience: "example.test", Keys: [][]byte{keyA}, MaxNumber: 1000, Now: c.now})

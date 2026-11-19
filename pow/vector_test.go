@@ -60,7 +60,7 @@ const (
 	vecIssued   = 1790000000
 	vecTTL      = 600
 	vecNumber   = 4242
-	vecSalt     = "00112233445566778899aabb?expires=1790000600&issued=1790000000"
+	vecSalt     = "00112233445566778899aabb?expires=1790000600&issued=1790000000&"
 )
 
 var vecKey = []byte("0123456789abcdef0123456789abcdef")
@@ -76,7 +76,21 @@ func buildVectors() vectorFileData {
 		f(&s)
 		return s
 	}
-	noExpiry := sig("00112233445566778899aabb?issued=1790000000", 7)
+	noExpiry := sig("00112233445566778899aabb?issued=1790000000&", 7)
+	// The old salt shape without the trailing separator, and its splice: the
+	// last digit of issued moved into the number keeps hash and signature.
+	legacySalt := "00112233445566778899aabb?expires=1790000603&issued=1790000003"
+	legacy := sig(legacySalt, 7)
+	legacySplice := Solution{
+		Algorithm: Algorithm, Challenge: legacy.Challenge, Number: 37,
+		Salt: legacySalt[:len(legacySalt)-1], Signature: legacy.Signature,
+	}
+	// The same attempt against a challenge of the current shape: the separator
+	// stands where the digit stood, so no shorter salt hashes to the challenge.
+	spliceNew := with(func(s *Solution) {
+		s.Salt = vecSalt[:len(vecSalt)-2]
+		s.Number = 4242
+	})
 	cases := []verifyCase{
 		{"valid", vecIssued + 5, "", valid, "ok"},
 		{"valid at minimum age", vecIssued + 3, "", valid, "ok"},
@@ -88,7 +102,11 @@ func buildVectors() vectorFileData {
 			s.Signature = sign([]byte("fedcba9876543210fedcba9876543210"), vecAudience, s.Challenge)
 		}), "signature"},
 		{"wrong number", vecIssued + 5, "", with(func(s *Solution) { s.Number++ }), "wrong"},
-		{"salt changed", vecIssued + 5, "", with(func(s *Solution) { s.Salt = "00112233445566778899aabc?expires=1790000600&issued=1790000000" }), "wrong"},
+		{"salt changed", vecIssued + 5, "", with(func(s *Solution) { s.Salt = "00112233445566778899aabc?expires=1790000600&issued=1790000000&" }), "wrong"},
+		{"salt without trailing separator", vecIssued + 5, "", legacy, "malformed"},
+		{"splice of issued digit into number, old shape, age 0", vecIssued + 3, "", legacySplice, "malformed"},
+		{"splice attempt on the current shape", vecIssued + 5, "", spliceNew, "wrong"},
+		{"separator removed from the salt", vecIssued + 5, "", with(func(s *Solution) { s.Salt = vecSalt[:len(vecSalt)-1] }), "wrong"},
 		{"unknown algorithm", vecIssued + 5, "", with(func(s *Solution) { s.Algorithm = "SHA-1" }), "malformed"},
 		{"negative number", vecIssued + 5, "", with(func(s *Solution) { s.Number = -1 }), "malformed"},
 		{"number above maximum", vecIssued + 5, "", with(func(s *Solution) { s.Number = 10001 }), "malformed"},
@@ -99,7 +117,11 @@ func buildVectors() vectorFileData {
 	}
 	return vectorFileData{
 		Comment: "Shared vectors of the pow package, written by go test -update. " +
-			"challenge = hex(sha256(salt + number)). " +
+			"challenge = hex(sha256(salt + number)), the number in decimal with no separator, " +
+			"the salt string as sent. " +
+			"salt = 24 lower case hex digits + '?expires=<unix>&issued=<unix>&'. The trailing '&' " +
+			"is required: it ends issued explicitly, so no digit of the salt can move into the " +
+			"number (CVE-2025-68113). A solver and a verifier port must refuse a salt without it. " +
 			"signature = hex(hmac_sha256(key, 'govue/pow\\x00v1\\x00' + audience + '\\x00' + challenge)). " +
 			"now is Unix seconds. Every case runs on a fresh service.",
 		Version:       1,

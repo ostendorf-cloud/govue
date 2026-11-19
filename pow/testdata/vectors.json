@@ -1,5 +1,5 @@
 {
-  "comment": "Shared vectors of the pow package, written by go test -update. challenge = hex(sha256(salt + number)). signature = hex(hmac_sha256(key, 'govue/pow\\x00v1\\x00' + audience + '\\x00' + challenge)). now is Unix seconds. Every case runs on a fresh service.",
+  "comment": "Shared vectors of the pow package, written by go test -update. challenge = hex(sha256(salt + number)), the number in decimal with no separator, the salt string as sent. salt = 24 lower case hex digits + '?expires=\u003cunix\u003e\u0026issued=\u003cunix\u003e\u0026'. The trailing '\u0026' is required: it ends issued explicitly, so no digit of the salt can move into the number (CVE-2025-68113). A solver and a verifier port must refuse a salt without it. signature = hex(hmac_sha256(key, 'govue/pow\\x00v1\\x00' + audience + '\\x00' + challenge)). now is Unix seconds. Every case runs on a fresh service.",
   "version": 1,
   "material": "0123456789abcdef0123456789abcdef",
   "audience": "example.test",
@@ -7,19 +7,19 @@
   "minAgeSeconds": 3,
   "hashes": [
     {
-      "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+      "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
       "number": 4242,
-      "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e"
+      "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c"
     },
     {
-      "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+      "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
       "number": 0,
-      "challenge": "6d0686005d8fa423d0533d56c04d04fc4d7605b14b16f551928912d22cbf39ed"
+      "challenge": "69fe040b2f0f932468e3927891cbba81ca8a4a78aaddfafaf9ec91f6942e550f"
     },
     {
-      "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+      "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
       "number": 10000,
-      "challenge": "9d8d7e352d07a4d5ca079101b9c453b0dfb547ede15a208f1a7ffae2e4cbb635"
+      "challenge": "09c216c30093eb5294a40f9fddca2793ffa9893e167d776826ddbdf21fd688f5"
     },
     {
       "salt": "",
@@ -33,10 +33,10 @@
       "now": 1790000005,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 4242,
-        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "ok"
     },
@@ -45,10 +45,10 @@
       "now": 1790000003,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 4242,
-        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "ok"
     },
@@ -57,10 +57,10 @@
       "now": 1790000599,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 4242,
-        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "ok"
     },
@@ -69,10 +69,10 @@
       "now": 1790000600,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 4242,
-        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "expired"
     },
@@ -81,10 +81,10 @@
       "now": 1790000002,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 4242,
-        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "too_fast"
     },
@@ -94,10 +94,10 @@
       "audience": "other.test",
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 4242,
-        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "signature"
     },
@@ -106,10 +106,10 @@
       "now": 1790000005,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 4242,
-        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-        "signature": "43bab5fe0da7201e005e179b6f0ca3f58ea284d8955a51dc955383319669af9d"
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "3c1a9380cfbfdc367b11099eddf758b9b368912a70e9f859c3fe562b7f8d27db"
       },
       "want": "signature"
     },
@@ -118,10 +118,10 @@
       "now": 1790000005,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 4243,
-        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "wrong"
     },
@@ -130,10 +130,58 @@
       "now": 1790000005,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 4242,
-        "salt": "00112233445566778899aabc?expires=1790000600\u0026issued=1790000000",
-        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "salt": "00112233445566778899aabc?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
+      },
+      "want": "wrong"
+    },
+    {
+      "name": "salt without trailing separator",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "6accd472e0771dd6e2be2cfb27225046b469cb8964049442e645dabf3d2208a3",
+        "number": 7,
+        "salt": "00112233445566778899aabb?expires=1790000603\u0026issued=1790000003",
+        "signature": "a9657f3866c73f0a55952563d855afa8bd378486cc2ad26d7ac31f937d1b568b"
+      },
+      "want": "malformed"
+    },
+    {
+      "name": "splice of issued digit into number, old shape, age 0",
+      "now": 1790000003,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "6accd472e0771dd6e2be2cfb27225046b469cb8964049442e645dabf3d2208a3",
+        "number": 37,
+        "salt": "00112233445566778899aabb?expires=1790000603\u0026issued=179000000",
+        "signature": "a9657f3866c73f0a55952563d855afa8bd378486cc2ad26d7ac31f937d1b568b"
+      },
+      "want": "malformed"
+    },
+    {
+      "name": "splice attempt on the current shape",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
+        "number": 4242,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=179000000",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
+      },
+      "want": "wrong"
+    },
+    {
+      "name": "separator removed from the salt",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
+        "number": 4242,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "wrong"
     },
@@ -142,10 +190,10 @@
       "now": 1790000005,
       "solution": {
         "algorithm": "SHA-1",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 4242,
-        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "malformed"
     },
@@ -154,10 +202,10 @@
       "now": 1790000005,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": -1,
-        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "malformed"
     },
@@ -166,10 +214,10 @@
       "now": 1790000005,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 10001,
-        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "malformed"
     },
@@ -178,10 +226,10 @@
       "now": 1790000005,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "zz988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "zzba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 4242,
-        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "malformed"
     },
@@ -190,10 +238,10 @@
       "now": 1790000005,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 4242,
-        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-        "signature": "A3c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "Afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "malformed"
     },
@@ -202,10 +250,10 @@
       "now": 1790000005,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+        "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
         "number": 4242,
         "salt": "",
-        "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+        "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
       },
       "want": "malformed"
     },
@@ -214,26 +262,26 @@
       "now": 1790000005,
       "solution": {
         "algorithm": "SHA-256",
-        "challenge": "f094ff518fcdea63aa15a12a18489fbadd7d396afbaf6b3091814b77c4e836d9",
+        "challenge": "55253da12f371822bca2db6acf947c3922f07ae5914c9440a3e1b880c5165e20",
         "number": 7,
-        "salt": "00112233445566778899aabb?issued=1790000000",
-        "signature": "e9abb157e14d4d05363159661664d03ac4a8f2ab29903041273d3f7da4f15c44"
+        "salt": "00112233445566778899aabb?issued=1790000000\u0026",
+        "signature": "f8d8789fd8b6094eded11b7c3f36030d6a925aa0eeb8995fa6a3e4e9a862d357"
       },
       "want": "malformed"
     }
   ],
   "challenge": {
     "algorithm": "SHA-256",
-    "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+    "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
     "maxnumber": 10000,
-    "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-    "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+    "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+    "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
   },
   "solution": {
     "algorithm": "SHA-256",
-    "challenge": "1f988f10af52f7be98f73e358413139c5942749b3c03556081a3b9a0a2f7797e",
+    "challenge": "7aba44f65b07c73ec9341d6a55222cbbb81ba74fe9cdc999c20aec23d242875c",
     "number": 4242,
-    "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000",
-    "signature": "83c4c5382793ba0ab9e961a888d97c809457765704d5e60e75dbdbfee6056c3b"
+    "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026",
+    "signature": "afd3e94bb72f0a7cb2242d765864fcb83f02a890f118231a42a0b885d211ad9f"
   }
 }

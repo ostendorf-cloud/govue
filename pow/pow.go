@@ -16,15 +16,29 @@
 // challenge of another site, and a challenge of another purpose cannot be
 // replayed here.
 //
+// The salt is "<nonce>?expires=<unix>&issued=<unix>&". The trailing ampersand
+// is the explicit boundary between the salt and the decimal number in the
+// hash input, and parsing requires it. Without it a client could move the last
+// digit of issued into the number and skip the minimum age (CVE-2025-68113).
+// The expiry and the issue time are inside the salt, so inside the hashed and
+// signed challenge. A solver builds the hash input as the salt string followed
+// by the number in decimal, nothing in between.
+//
 // Proof of work is a speed bump, never the control. Native code solves the
-// default difficulty in milliseconds. The rate limits of the route are the
-// real control.
+// default difficulty in tens of milliseconds. The rate limits of the route are
+// the real control.
 //
 // Replay is limited by the expiry window plus a single use record. The
 // default record is a bounded in memory set, so it is per process: with
 // several replicas a solution can be used once per replica until it expires.
 // A consumer that needs one global answer supplies its own [Seen]. A full set
 // refuses with [ErrBusy], it never forgets an unexpired entry.
+//
+// [MemorySeen] scans the whole map while it is full, so a [Service.Verify] is
+// O(n) then: about 0.7 ms at 100000 entries. [ErrBusy] is a global fail closed
+// lockout: while the set is full of unexpired entries every solution is
+// refused. Run Verify behind a per client rate limit so that one client
+// cannot fill the set.
 //
 // Privacy facts a consumer's page can quote, all true of this package:
 //
@@ -61,6 +75,10 @@ const Algorithm = "SHA-256"
 
 // MinKeyLen is the shortest key accepted, in bytes.
 const MinKeyLen = 32
+
+// MaxNumberLimit is the largest [Config.MaxNumber] accepted. A larger value
+// is a configuration error, and it would overflow the number draw.
+const MaxNumberLimit = 1_000_000_000
 
 // Defaults of [Config].
 const (
@@ -133,7 +151,9 @@ type Config struct {
 	// key first and keeps the old one for one TTL. Required.
 	Keys [][]byte
 	// MaxNumber is the largest secret number and sets the work.
-	// Zero means [DefaultMaxNumber].
+	// Zero means [DefaultMaxNumber]. A value above [MaxNumberLimit] is refused.
+	// Lowering it across a restart refuses every outstanding challenge whose
+	// number is above the new value as malformed.
 	MaxNumber int64
 	// TTL is how long a challenge stays valid. Zero means [DefaultTTL].
 	TTL time.Duration
@@ -143,9 +163,10 @@ type Config struct {
 	// Seen is the single use record. Nil means a [MemorySeen] of
 	// [DefaultMaxUsed] entries, which is per process.
 	Seen Seen
-	// Now is the clock. Nil means time.Now.
+	// Now is the clock. Nil means time.Now. It must be safe for concurrent use.
 	Now func() time.Time
-	// Rand is the randomness source. Nil means crypto/rand.
+	// Rand is the randomness source. Nil means crypto/rand. It must be safe
+	// for concurrent use.
 	Rand io.Reader
 }
 
@@ -190,6 +211,9 @@ func New(cfg Config) (*Service, error) {
 	if s.maxNumber < 0 || s.ttl < 0 {
 		return nil, errors.New("pow: negative difficulty or TTL")
 	}
+	if s.maxNumber > MaxNumberLimit {
+		return nil, fmt.Errorf("pow: MaxNumber %d is above the limit %d", s.maxNumber, MaxNumberLimit)
+	}
 	if s.maxNumber == 0 {
 		s.maxNumber = DefaultMaxNumber
 	}
@@ -230,9 +254,12 @@ func sign(key []byte, audience, challenge string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// formatSalt is the one shape of a salt.
+// formatSalt is the one shape of a salt. The trailing "&" is the boundary
+// between the salt and the decimal number in the hash input. Without it a
+// client could move the last digit of issued into the number and keep the hash
+// and the signature valid (CVE-2025-68113, GHSA-6gvq-jcmp-8959).
 func formatSalt(nonce []byte, expires, issued int64) string {
-	return fmt.Sprintf("%x?expires=%d&issued=%d", nonce, expires, issued)
+	return fmt.Sprintf("%x?expires=%d&issued=%d&", nonce, expires, issued)
 }
 
 // Create issues a new challenge, signed with the first key.
@@ -258,8 +285,10 @@ func (s *Service) Create() (Challenge, error) {
 }
 
 // parseSalt reads the one canonical salt shape: 24 lower case hex digits, a
-// question mark, expires and issued as plain decimal numbers. It refuses
-// anything else, so a parsed salt formats back to the same string.
+// question mark, expires and issued as plain decimal numbers and a trailing
+// ampersand. It refuses anything else, so a parsed salt formats back to the
+// same string. The trailing ampersand is required: it ends issued explicitly,
+// so no digit of the salt can move into the number.
 func parseSalt(salt string) (expires, issued time.Time, err error) {
 	if len(salt) > maxSaltLen {
 		return time.Time{}, time.Time{}, ErrMalformed
@@ -273,6 +302,10 @@ func parseSalt(salt string) (expires, issued time.Time, err error) {
 		return time.Time{}, time.Time{}, ErrMalformed
 	}
 	expText, issText, ok := strings.Cut(rest, "&issued=")
+	if !ok {
+		return time.Time{}, time.Time{}, ErrMalformed
+	}
+	issText, ok = strings.CutSuffix(issText, "&")
 	if !ok {
 		return time.Time{}, time.Time{}, ErrMalformed
 	}
