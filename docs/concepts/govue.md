@@ -2444,6 +2444,56 @@ try {
   and the retention statement. Out of scope are a client side script, events beyond page views,
   a dashboard and a consent banner.
 
+### Proof of work
+
+- The `pow` package issues and verifies stateless proof of work challenges for a public form,
+  first for the contact form series. It keeps the ALTCHA shape so a site that already runs it
+  migrates without a break: `challenge = sha256(salt + n)`, `signature = HMAC-SHA-256(key, ...)`,
+  and the salt is a 24 digit hex nonce plus `?expires=<unix>&issued=<unix>&`. The browser searches
+  `n` in `0..maxnumber`. The package imports nothing outside the standard library and no other
+  govue package.
+- The HMAC input is `govue/pow\x00v1\x00` + audience + `\x00` + challenge. The domain separator
+  is the version, and the audience is the site name. A key reused across sites cannot redeem
+  another site's challenge. The expiry and the issue time are inside the salt, the salt is inside
+  the challenge hash and the signature covers the hash, so neither can change without breaking
+  the signature.
+- The salt ends in `&`, and parsing requires it. The hash input is `salt + decimal(n)`, so without
+  a boundary a client could move the last digit of `issued` into the number, keep the hash and
+  the signature valid and skip the minimum age (CVE-2025-68113, GHSA-6gvq-jcmp-8959, found in
+  ALTCHA). The trailing `&` is the explicit boundary: no digit of the salt can move into the
+  number, and a salt without it is malformed. The hash stays `sha256(salt + n)`, the ALTCHA shape.
+- `pow.New` takes a `Config`. Keys are required and at least 32 bytes each. The first key signs,
+  every key verifies, so a rotation lists the new key first and keeps the old one for one TTL.
+  Defaults: `maxnumber` 300000, TTL 10 minutes, minimum age 3 seconds. A `MaxNumber` above
+  `MaxNumberLimit` (1e9) is refused, and a negative `MinAge` means no minimum age. Lowering
+  `MaxNumber` across a restart refuses outstanding challenges with a higher number as malformed.
+  `Now` and `Rand` must be safe for concurrent use.
+- `Verify` runs in a fixed order and each refusal has its own error: `ErrMalformed`,
+  `ErrSignature` (also for another audience), `ErrWrong`, `ErrExpired`, `ErrTooFast`,
+  `ErrReplay`, `ErrBusy`. The first three wrap `ErrInvalid`. The signature is compared in
+  constant time against every key. The single use record is written last, so a request that fails
+  for another reason does not burn the solution.
+- Replay is limited by the expiry window plus a single use record. The default record is
+  `MemorySeen`, bounded at 100000 entries. A full record refuses with `ErrBusy` and never forgets
+  an unexpired entry, because forgetting would allow a replay. It is per process: with several
+  replicas a solution can be used once per replica until it expires. A consumer that needs one
+  global answer passes its own `Seen`. Statelessness is the owner decision: nothing about an
+  issued challenge is stored.
+- `MemorySeen` scans the whole map while it is full, so each `Use` is O(n) then: about 674
+  microseconds at 100000 entries. `ErrBusy` is a global fail closed lockout, because a full set
+  refuses every solution until entries expire. `Verify` therefore runs behind the consumer's per
+  client rate limit, so one client cannot fill the set.
+- Limits. Proof of work is a speed bump: native code solves 300000 hashes in tens of
+  milliseconds, so it only slows a naive script. The rate limits of the route and a global
+  ceiling are the real control. There is no binding to an address or a session, because mobile
+  clients change networks. The challenge route is unauthenticated and costs the server one HMAC.
+- Privacy facts a consumer's page can quote: the server stores no challenge and nothing about
+  the visitor, the single use record holds one hash until expiry and is not linked to a person,
+  no cookie is set, no browser storage is used and no third party is called.
+- `pow/testdata/vectors.json` is the shared contract with the browser solver (#198): a fixed
+  key, audience, clock and challenge, hash vectors and verify cases with the expected outcome.
+  The Go test reads it, and `go test ./pow -run TestVectors -update` rewrites it.
+
 ### Component behaviour
 
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a
