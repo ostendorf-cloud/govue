@@ -323,16 +323,38 @@ describe('checkLegal links', () => {
     ['uppercase', '<A HREF="/de/imprint">x</A>'],
     ['single quoted', "<a href='/de/imprint'>x</a>"],
     ['unquoted', '<a href=/de/imprint>x</a>'],
-    ['trailing slash', '<a href="/de/imprint/">x</a>'],
-    ['index.html', '<a href="/de/imprint/index.html">x</a>'],
     ['query and fragment', '<a href="/de/imprint?x=1#top">x</a>'],
     ['other attributes', '<a class="x" data-a=\'>\' href = "/de/imprint" rel=noopener>x</a>'],
     ['character reference', '<a href="&#47;de&sol;imprint">x</a>'],
+    ['hex character reference', '<a href="&#x2f;de&#X2F;imprint">x</a>'],
     ['padded', '<a href=" /de/imprint ">x</a>'],
   ])('accepts a %s href', (_name, link) => {
     site(BOTH)
     withBody('de/privacy/index.html', link + footer('de', ['privacy']))
     expect(checkLegal({ dir }).errors).toEqual([])
+  })
+
+  it.each([
+    ['trailing slash', '<a href="/de/imprint/">x</a>'],
+    ['index.html', '<a href="/de/imprint/index.html">x</a>'],
+    ['a different case', '<a href="/de/Imprint">x</a>'],
+    ['a different extension', '<a href="/de/imprint.html">x</a>'],
+    ['an a without href', '<a name="imprint">x</a><a>y</a>'],
+  ])('does not accept %s, which the server does not serve', (_name, link) => {
+    site(BOTH)
+    withBody('de/privacy/index.html', link + footer('de', ['privacy']))
+    expect(checkLegal({ dir }).errors).toEqual([
+      'de/privacy/index.html has no link to the imprint page in de: want an a href to /de/imprint',
+    ])
+  })
+
+  it('reads a page with an upper case .HTML extension', () => {
+    site(BOTH)
+    put('de/extra.HTML', '<p>x</p>')
+    expect(checkLegal({ dir }).errors).toEqual([
+      'de/extra.HTML has no link to the imprint page in de: want an a href to /de/imprint',
+      'de/extra.HTML has no link to the privacy page in de: want an a href to /de/privacy',
+    ])
   })
 })
 
@@ -340,9 +362,25 @@ describe('anchorHrefs', () => {
   it.each([
     ['a comment', '<!-- <a href="/x"> --><a href="/y">'],
     ['a gt inside a comment', '<!-- > <a href="/x"> --><a href="/y">'],
-    ['an empty comment', '<!--><a href="/y"><!---><!-- a --!><a href="/z">'],
+    ['an empty comment', '<!--><a href="/y"><!--->'],
+    ['a comment that opens with !>', '<!--!><a href="/x">--><a href="/y">'],
+    ['a comment that opens with !> around a tag', '<!--!><script>--><a href="/y">'],
     ['an unclosed comment', '<a href="/y"><!-- <a href="/x">'],
     ['CDATA', '<![CDATA[ <a href="/x"> ]]><a href="/y">'],
+    ['CDATA with a gt', '<![CDATA[ > <a href="/x"> ]]><a href="/y">'],
+    ['title text', '<title><a href="/x"></title><a href="/y">'],
+    ['xmp text', '<xmp><a href="/x"></xmp><a href="/y">'],
+    ['iframe text', '<iframe><a href="/x"></iframe><a href="/y">'],
+    ['noembed text', '<noembed><a href="/x"></noembed><a href="/y">'],
+    ['noframes text', '<noframes><a href="/x"></noframes><a href="/y">'],
+    ['noscript text', '<noscript><a href="/x"></noscript><a href="/y">'],
+    [
+      'a script that a longer end tag does not close',
+      '<script></scriptx><a href="/x"></script><a href="/y">',
+    ],
+    ['a stray template end tag', '</template><template><a href="/x"></template><a href="/y">'],
+    ['an unclosed quote', '<a title="x href="/x"><a href="/y">'],
+    ['an a without href', '<a name="n"><a href="/y"><a>'],
     ['a bogus comment', '<?php <a href="/x"> ?><a href="/y">'],
     ['script raw text', '<SCRIPT>"</a><a href=\'/x\'>"</SCRIPT ><a href="/y">'],
     ['style raw text', '<style>/* <a href="/x"> */</style><a href="/y">'],
@@ -351,11 +389,25 @@ describe('anchorHrefs', () => {
     ['a gt in a quoted value', '<a title="a>b" href="/y">'],
     ['no space before the slash', '<a href="/y"/>'],
   ])('reads past %s', (_name, html) => {
-    expect(anchorHrefs(html).filter((h) => h !== '/z')).toEqual(['/y'])
+    expect(anchorHrefs(html)).toEqual(['/y'])
+  })
+
+  it('reads on after an empty comment and a --!> comment', () => {
+    expect(anchorHrefs('<!--><a href="/a"><!---><a href="/b"><!-- c --!><a href="/z">')).toEqual([
+      '/a',
+      '/b',
+      '/z',
+    ])
+  })
+
+  it('does not count a link after an unclosed quote in a tag', () => {
+    expect(anchorHrefs('<a title="x href="/x">')).toEqual([])
+    expect(anchorHrefs('<a title="x href=/x>')).toEqual([])
   })
 
   it('drops a tag the input ends in', () => {
     expect(anchorHrefs('<a href="/y')).toEqual([])
+    expect(anchorHrefs('<a href="/y" title="oops')).toEqual([])
     expect(anchorHrefs('<a href=')).toEqual([])
     expect(anchorHrefs('<a')).toEqual([])
   })
@@ -372,8 +424,8 @@ describe('anchorHrefs', () => {
 describe('linkTarget', () => {
   it.each([
     ['/de/imprint', '/de/imprint'],
-    ['/de/imprint/', '/de/imprint'],
-    ['/de/imprint/index.html', '/de/imprint'],
+    ['/de/imprint/', '/de/imprint/'],
+    ['/de/imprint/index.html', '/de/imprint/index.html'],
     ['/de/imprint?a=b#c', '/de/imprint'],
     ['/de/im\tprint', '/de/imprint'],
     ['https://example.com/de/imprint', undefined],

@@ -1966,14 +1966,18 @@ The design of the library and the reasoning behind it.
   included, and fails a page with no `a` link to the imprint and the privacy page of its own
   language, and to the terms page when the site has one. All failures are listed, each naming
   the page, the missing page and the language. A link counts when it is an `a` element with a
-  root relative `href`: `/de/imprint`, with an optional trailing slash or `/index.html`, query
-  and fragment ignored, tag and attribute names in any case, any quoting. A link in a comment,
-  CDATA, a `script`, `style`, `textarea` or `template`, a `link` element, another attribute, an
-  absolute URL or a document relative path does not count. A page outside the language
-  directories, such as a root redirect, has no language and is not checked. The check proves
-  that every page carries the links. It does not prove the link text, that the links sit in a
-  footer, or that the footer is visible. The HTML is read by a small tokenizer in the script,
-  because the package has no parser dependency.
+  root relative `href` that is exactly the path, `/de/imprint`, query and fragment ignored, tag
+  and attribute names in any case, any quoting. A trailing slash or `/index.html` does not
+  count, because the server registers exact patterns and answers those with a 404. A link in a
+  comment, CDATA, a `script`, `style`, `textarea`, `title`, `noscript` or `template`, a `link`
+  element, another attribute, an absolute URL or a document relative path does not count. A
+  page outside the language directories, such as the build template at the root, has no
+  language and is not checked. The check proves that every page carries the links. It does not
+  prove the link text, that the links sit in a footer, or that the footer is visible. The HTML
+  is read by a small tokenizer in the script, because the package has no parser dependency. It
+  differs from a browser in three places: the escape states of a script, CDATA in HTML content
+  and a self closed raw text element in svg. They hide a link and never invent one, or Vue SSR
+  does not produce them.
 - `web/example/` is a placeholder site with the three pages. Its text says that it is a
   placeholder. A test prerenders it and runs the check on the output. The Go example leaves
   `Terms` off, and its tests follow each redirect to a page that answers 200.

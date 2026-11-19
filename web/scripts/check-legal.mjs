@@ -13,11 +13,18 @@
 // It also reads every prerendered HTML page under <dir>/<code>/ and fails a
 // page that has no link to the imprint and the privacy page of its own
 // language, and to the terms page when the site has one. A link counts when
-// it is an a element with an href that is root relative: /de/imprint, with
-// an optional trailing slash or /index.html, query and fragment ignored. A
-// link in a comment, a script or style block, a textarea, a title or a
-// template, a link element and an absolute URL do not count. The link text
-// and the look of the footer are not checked.
+// it is an a element with an href that is exactly the root relative path,
+// /de/imprint, query and fragment ignored. A trailing slash or /index.html
+// does not count: the server does not redirect them. A link in a comment, a
+// script, style, textarea, title, noscript or template, a link element and
+// an absolute URL do not count. The link text and the look of the footer are
+// not checked.
+//
+// Known differences from a browser: the escape states of a script
+// (<!--<script>), CDATA in HTML content (a browser reads a bogus comment,
+// the tokenizer reads to ]]>) and a self closed raw text element in svg are
+// not modelled. They fail loudly (a link is missed, never invented) or Vue
+// SSR does not produce them.
 //
 // Plain ESM JavaScript like prerender.mjs, so it runs from a consumer's
 // node_modules. It reads files only and writes nothing. It has no
@@ -47,9 +54,9 @@ must exist in all.
 
 Also fails every HTML page under <out-dir>/<code>/ that has no a href to the
 imprint and the privacy page of its own language, and to the terms page when
-the site has one. The href must be root relative, such as /de/imprint, with an
-optional trailing slash or /index.html. A link in a comment, a script or a
-style block does not count.
+the site has one. The href must be exactly the root relative path, such as
+/de/imprint, since the server redirects no trailing slash or /index.html. A
+link in a comment, a script or a style block does not count.
 
 Options:
   --dir <path>          The prerender output directory (required). Also --dir=<path>.
@@ -158,6 +165,8 @@ const RAW_TEXT = new Set([
   'iframe',
   'noembed',
   'noframes',
+  // A browser with scripting on reads noscript as text.
+  'noscript',
 ])
 
 const TAG_NAME = /[A-Za-z][^\s/>]*/y
@@ -244,11 +253,18 @@ export function anchorHrefs(html) {
     if (lt < 0) break
     i = lt
     if (html.startsWith('<!--', i)) {
-      // <!--> and <!---> are empty comments, --!> closes like -->.
-      const close = /--!?>/g
-      close.lastIndex = i + 2
-      const m = close.exec(html)
-      i = m ? m.index + m[0].length : n
+      // <!--> and <!---> are empty comments. Otherwise the comment runs to
+      // the next --> or --!>, searched after the opening <!--.
+      if (html.startsWith('<!-->', i)) {
+        i += 5
+      } else if (html.startsWith('<!--->', i)) {
+        i += 6
+      } else {
+        const close = /--!?>/g
+        close.lastIndex = i + 4
+        const m = close.exec(html)
+        i = m ? m.index + m[0].length : n
+      }
       continue
     }
     if (html.startsWith('<![CDATA[', i)) {
@@ -273,7 +289,7 @@ export function anchorHrefs(html) {
     if (!tag) break
     i = tag.end
     const lower = name.toLowerCase()
-    if (lower === 'template') template += closing ? -1 : 1
+    if (lower === 'template') template = Math.max(0, template + (closing ? -1 : 1))
     if (closing) continue
     if (lower === 'a' && template <= 0 && tag.attrs.has('href')) {
       hrefs.push(/** @type {string} */ (tag.attrs.get('href')))
@@ -291,11 +307,11 @@ export function anchorHrefs(html) {
 
 /**
  * The canonical path an href points to, or undefined when it is not a root
- * relative path. Query and fragment drop out, as do one trailing slash and a
- * trailing /index.html, so /de/imprint, /de/imprint/ and
- * /de/imprint/index.html are one page. Absolute URLs, protocol relative URLs
- * and document relative paths do not count: the last depend on the URL the
- * page is served under.
+ * relative path. Query and fragment drop out, nothing else is normalised:
+ * the server registers exact paths and does not redirect /de/imprint/ or
+ * /de/imprint/index.html, so those links are dead and do not count. Absolute
+ * URLs, protocol relative URLs and document relative paths do not count: the
+ * last depend on the URL the page is served under.
  *
  * @param {string} href
  * @returns {string | undefined}
@@ -304,10 +320,7 @@ export function linkTarget(href) {
   // A browser strips surrounding whitespace and tab and newline anywhere.
   let path = href.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '').replace(/[\t\n\r]/g, '')
   if (!path.startsWith('/') || path[1] === '/' || path[1] === '\\') return undefined
-  path = path.split(/[?#]/, 1)[0]
-  if (path.endsWith('/index.html')) path = path.slice(0, -'/index.html'.length)
-  else if (path.endsWith('/')) path = path.slice(0, -1)
-  return path
+  return path.split(/[?#]/, 1)[0]
 }
 
 /**
