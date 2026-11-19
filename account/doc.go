@@ -111,6 +111,47 @@
 // when the change may not have happened. Every session of the account ends
 // with it, the caller's own included, and the handler starts none.
 //
+// # Known devices
+//
+// An application often caps all attempts at one login, from any client, to
+// protect the second factor after a password leaked. A distributed attacker
+// can hold that per login ceiling dry and then the owner is refused too, with
+// the right password and code. [KnownDevices] lets a browser that signed in
+// before skip the ceiling. It is off unless [HandlerConfig.KnownDevices] and
+// [HandlerConfig.Ceiling] are both set, and then the signup, confirmation and
+// login handlers call the ceiling themselves, after the body is read, for
+// every request that is not from a known device. The strict per client and
+// per login and client limits stay in front of the route as before.
+//
+// What a known device gains is the skip of the ceiling only. The password and
+// the TOTP code are still checked and the other limits still count.
+//
+// A successful login or confirmation sets the cookie. A logout clears it.
+// A password change makes every cookie of the account invalid, because the
+// HMAC covers the password hash, with no store method and no list on the
+// server. The response to a successful change that ended every session sets
+// a fresh cookie bound to the new hash, so the device that changed the
+// password stays known and every other copy stays unknown. When the sessions
+// could not be ended, that response clears the cookie instead. There is no
+// way to revoke one device. Rotating the key revokes all.
+//
+// The cookie is SameSite=Lax and has no Domain, so a browser sends it with
+// requests to the host that set it. A frontend on another origin of the same
+// site, such as a sibling subdomain listed in the trusted origins, sends it
+// when its requests include credentials. A frontend on another site does not
+// send it, and gets no skip.
+//
+// What a privacy text can say about the cookie (a consumer quotes and adapts
+// this): after a successful sign in the site stores one cookie on the device,
+// named __Host-govue_device. It holds a random device number, an expiry time
+// and a cryptographic signature, and no name, email address or other personal
+// data. It is strictly necessary for the sign in's protection against
+// guessing: it lets this device sign in while the account is under attack. It
+// is HttpOnly, sent to this site only, and lasts 90 days from the last sign
+// in, unless the site sets another [KnownDevicesConfig.Lifetime]. Signing out
+// deletes it, and changing the password replaces it. It is never used for tracking and
+// never sent to a third party.
+//
 // # Password hashing
 //
 // [Hasher] writes Argon2id in the PHC string format and reads the parameters

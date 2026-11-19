@@ -162,6 +162,25 @@ type HandlerConfig struct {
 
 	// MaxBodyBytes limits a request body. Zero is [DefaultMaxBodyBytes].
 	MaxBodyBytes int64
+
+	// Ceiling is the per login ceiling of the application: a rate limit on
+	// all attempts at one login from any client, which protects the second
+	// factor when a password has leaked. It runs in the signup, TOTP
+	// confirmation and login handlers after the body is read, with the login
+	// as typed, and a non nil error refuses the request before a password is
+	// derived. A returned *api.Error is answered as it is, usually
+	// api.TooManyRequests. Any other error is an opaque 500. Nil means no
+	// ceiling here, for an application that has none or keeps it in a
+	// middleware.
+	//
+	// With [HandlerConfig.KnownDevices] set, a login or confirmation from a
+	// known device skips it. An unknown device is counted as before.
+	Ceiling func(r *http.Request, login string) error
+
+	// KnownDevices turns on the known device cookie, see [KnownDevices]. It
+	// needs Ceiling, since the skip is its only use. Nil is off: no cookie is
+	// read or set.
+	KnownDevices *KnownDevices
 }
 
 // Handlers are the HTTP handlers of local accounts: signup, TOTP
@@ -199,6 +218,8 @@ type Handlers struct {
 	allowSignup  func(r *http.Request) error
 	cross        *http.CrossOriginProtection
 	maxBodyBytes int64
+	ceiling      func(r *http.Request, login string) error
+	devices      *KnownDevices
 }
 
 // NewHandlers validates cfg and returns the handlers. Like the other
@@ -219,6 +240,10 @@ func NewHandlers(cfg HandlerConfig) (*Handlers, error) {
 	}
 	if cfg.MaxBodyBytes < 0 {
 		problems = append(problems, fmt.Errorf("max body bytes %d is negative", cfg.MaxBodyBytes))
+	}
+
+	if cfg.KnownDevices != nil && cfg.Ceiling == nil {
+		problems = append(problems, errors.New("known devices need a ceiling to skip"))
 	}
 
 	cross := http.NewCrossOriginProtection()
@@ -245,6 +270,8 @@ func NewHandlers(cfg HandlerConfig) (*Handlers, error) {
 		allowSignup:  cfg.AllowSignup,
 		cross:        cross,
 		maxBodyBytes: limit,
+		ceiling:      cfg.Ceiling,
+		devices:      cfg.KnownDevices,
 	}, nil
 }
 
@@ -282,6 +309,10 @@ func (h *Handlers) Signup() http.Handler {
 			return err
 		}
 
+		if err := h.takeCeiling(r, req.Login, false); err != nil {
+			return err
+		}
+
 		id, enrolment, err := h.service.SignUp(r.Context(), req.Login, req.Password)
 		if err != nil {
 			return signupError(err)
@@ -306,6 +337,10 @@ func (h *Handlers) ConfirmTOTP() http.Handler {
 	return h.post(func(w http.ResponseWriter, r *http.Request) error {
 		var req CredentialsRequest
 		if err := h.decode(r, &req); err != nil {
+			return err
+		}
+
+		if err := h.takeCeiling(r, req.Login, true); err != nil {
 			return err
 		}
 
@@ -337,6 +372,10 @@ func (h *Handlers) Login() http.Handler {
 	return h.post(func(w http.ResponseWriter, r *http.Request) error {
 		var req CredentialsRequest
 		if err := h.decode(r, &req); err != nil {
+			return err
+		}
+
+		if err := h.takeCeiling(r, req.Login, true); err != nil {
 			return err
 		}
 
@@ -385,8 +424,17 @@ func (h *Handlers) ChangePassword() http.Handler {
 
 		switch {
 		case err == nil:
+			// The old cookie is invalid now, its HMAC covered the old hash.
+			// The device that changed the password gets a fresh one bound to
+			// the new hash and stays known. Every other copy stays unknown.
+			if h.devices != nil {
+				h.rememberDevice(w, r, id)
+			}
+
 			return api.Write(w, http.StatusOK, PasswordChangeResult{PasswordChanged: true, SessionsEnded: true})
 		case errors.Is(err, ErrSessionsNotEnded):
+			h.forgetDevice(w)
+
 			// The change committed. The cause is the callback's. It goes to
 			// the log and never to the client.
 			logging.FromContext(r.Context()).ErrorContext(r.Context(),
@@ -419,10 +467,76 @@ func (h *Handlers) Logout() http.Handler {
 			return api.Internal(fmt.Errorf("account: end session: %w", err))
 		}
 
+		h.forgetDevice(w)
 		api.NoContent(w)
 
 		return nil
 	})
+}
+
+// takeCeiling runs the application's per login ceiling, unless the request
+// comes from a device known for login. lookup says whether an account can
+// exist yet: a signup has none.
+func (h *Handlers) takeCeiling(r *http.Request, login string, lookup bool) error {
+	if h.ceiling == nil {
+		return nil
+	}
+	if lookup && h.devices != nil && h.knownDevice(r, login) {
+		return nil
+	}
+
+	err := h.ceiling(r, login)
+	if err == nil {
+		return nil
+	}
+	var apiErr *api.Error
+	if errors.As(err, &apiErr) {
+		return apiErr
+	}
+
+	return api.Internal(fmt.Errorf("account: ceiling: %w", err))
+}
+
+// knownDevice reports whether the request carries a valid device cookie for
+// the account behind login. Without a cookie the store is not asked. Any
+// failure, an unknown login included, is unknown, so the ceiling applies.
+func (h *Handlers) knownDevice(r *http.Request, login string) bool {
+	if _, err := r.Cookie(h.devices.name); err != nil {
+		return false
+	}
+	rec, found, err := h.service.lookup(r.Context(), login)
+	if err != nil {
+		logging.FromContext(r.Context()).DebugContext(r.Context(),
+			"account: known device check failed, treated as unknown", "error", err.Error())
+
+		return false
+	}
+
+	return found && h.devices.Known(r, rec)
+}
+
+// rememberDevice sets the device cookie after a successful sign in. It never
+// fails the sign in: a cookie that could not be set only costs the shortcut.
+func (h *Handlers) rememberDevice(w http.ResponseWriter, r *http.Request, id Identity) {
+	rec, found, err := h.service.lookup(r.Context(), id.Login)
+	switch {
+	case err != nil:
+	case !found || rec.ID != id.ID:
+		err = errors.New("account no longer found")
+	default:
+		err = h.devices.Remember(w, r, rec)
+	}
+	if err != nil {
+		logging.FromContext(r.Context()).WarnContext(r.Context(),
+			"account: known device cookie not set", "error", err.Error())
+	}
+}
+
+// forgetDevice clears the device cookie, when the feature is on.
+func (h *Handlers) forgetDevice(w http.ResponseWriter) {
+	if h.devices != nil {
+		h.devices.Forget(w)
+	}
 }
 
 // post wraps fn in the checks every handler makes before it reads anything:
@@ -459,6 +573,9 @@ func (h *Handlers) decode(r *http.Request, into any) error {
 func (h *Handlers) startAndAnswer(w http.ResponseWriter, r *http.Request, id Identity) error {
 	if err := h.start(r.Context(), w, r, id); err != nil {
 		return api.Internal(fmt.Errorf("account: start session: %w", err))
+	}
+	if h.devices != nil {
+		h.rememberDevice(w, r, id)
 	}
 
 	return api.Write(w, http.StatusOK, LoginResult{Login: id.Login})
