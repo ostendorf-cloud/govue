@@ -46,6 +46,18 @@ func Handler(gatherer prometheus.Gatherer) http.Handler {
 	})
 }
 
+// NewCounter registers a counter with no labels into registry and returns the
+// function that adds one to it. It exists so a package that must report an
+// event, such as analytics.Options.OnDrop, needs no dependency on Prometheus:
+// the application passes the returned function. The name is registered as
+// given, so it follows the Prometheus convention of a _total suffix. A name
+// that is already registered panics, like NewHTTP does.
+func NewCounter(registry prometheus.Registerer, name, help string) func() {
+	counter := prometheus.NewCounter(prometheus.CounterOpts{Name: name, Help: help})
+	registry.MustRegister(counter)
+	return counter.Inc
+}
+
 // HTTP holds the request metrics of one app.
 type HTTP struct {
 	requests *prometheus.CounterVec

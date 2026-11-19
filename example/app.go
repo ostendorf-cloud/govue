@@ -12,9 +12,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/ostendorf-cloud/govue/account"
 	"github.com/ostendorf-cloud/govue/account/accounttest"
+	"github.com/ostendorf-cloud/govue/analytics"
 	"github.com/ostendorf-cloud/govue/api"
 	"github.com/ostendorf-cloud/govue/appassoc"
 	"github.com/ostendorf-cloud/govue/clientip"
@@ -98,6 +100,10 @@ type app struct {
 	security  middleware.Security
 	accessLog middleware.AccessLog
 
+	// analytics counts page views through Umami. It is never nil after
+	// newApp, and inert unless UMAMI_URL and UMAMI_WEBSITE_ID are set.
+	analytics *analytics.Client
+
 	notes *noteStore
 
 	icons favicon.Icons
@@ -119,16 +125,27 @@ type app struct {
 	siteRoot *os.Root
 }
 
-// close releases the database pool and the site directory. It is safe to
-// call without either.
+// analyticsCloseTimeout is how long close waits for the queued page views to
+// reach Umami before it gives up on them.
+const analyticsCloseTimeout = 5 * time.Second
+
+// close sends the page views still queued, within analyticsCloseTimeout, and
+// releases the database pool and the site directory. It is safe to call
+// without SITE_DIR, without Umami and without a database.
 func (a *app) close() error {
+	var problems []error
+	if a.analytics != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), analyticsCloseTimeout)
+		defer cancel()
+		problems = append(problems, a.analytics.Close(ctx))
+	}
 	if a.db != nil {
 		a.db.Close()
 	}
-	if a.siteRoot == nil {
-		return nil
+	if a.siteRoot != nil {
+		problems = append(problems, a.siteRoot.Close())
 	}
-	return a.siteRoot.Close()
+	return errors.Join(problems...)
 }
 
 // themeColor is the accent of the example theme, the colour browsers tint
@@ -325,6 +342,21 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 
 	a.accessLog = middleware.AccessLog{ClientIP: a.clientIPs}
 
+	// Page view counting. The same resolver as the access log and the rate
+	// limiter decides the client address, and the dropped views are counted
+	// in the registry the admin listener serves. Both an unset UMAMI_URL and
+	// UMAMI_WEBSITE_ID give an inert client, so nothing is sent.
+	viewsAnalytics, err := analytics.New(cfg.umami, analytics.Options{
+		Hostname:   cfg.siteHost,
+		Logger:     logger,
+		HTTPClient: cfg.umamiHTTP,
+		ClientIP:   a.clientIPs,
+		OnDrop: metrics.NewCounter(registry, "analytics_views_dropped_total",
+			"Page views lost to a full queue or a shutdown before they reached Umami."),
+	})
+	fail(err)
+	a.analytics = viewsAnalytics
+
 	if err := errors.Join(problems...); err != nil {
 		_ = a.close()
 		return nil, fmt.Errorf("example: build app: %w", err)
@@ -443,6 +475,10 @@ func (a *app) handler() http.Handler {
 		a.security.Middleware,
 		a.httpMetrics.Middleware,
 		a.accessLog.Middleware,
+		// Innermost, directly around the mux, because it reads r.Pattern
+		// like the two above. It answers nothing itself and never delays a
+		// response. It is the mux itself when counting is off.
+		a.analytics.Middleware,
 	)
 }
 
