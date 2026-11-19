@@ -46,9 +46,9 @@ repeated here.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
-- Eighteen Go packages live at the module root: `account`, `api`, `appassoc`, `clientip`,
+- Nineteen Go packages live at the module root: `account`, `api`, `appassoc`, `clientip`,
   `csrf`, `database`, `envconf`, `favicon`, `health`, `httpserver`, `language`, `logging`,
-  `metrics`, `middleware`, `oidc`, `ratelimit`, `session`, `themeboot`.
+  `metrics`, `middleware`, `oidc`, `passkey`, `ratelimit`, `session`, `themeboot`.
 - `database` holds the PostgreSQL connection of a product: `Config` and `LoadConfig` with the
   `DB_*` variables, the pgx pool, the migration runner over an `fs.FS` and `Check` for
   readiness. The password is a `database.Secret`, a pointer holder that never prints, also
@@ -70,6 +70,14 @@ repeated here.
   carries only the calls its logic makes for login, TOTP enrolment and password change. A new
   method needs a reason in the pull request, because what the interface lacks is what the
   package cannot reach.
+- `passkey` holds WebAuthn passkeys next to the password and TOTP login: `Config`, the five
+  method `Store`, the single use `ChallengeStore` with a bounded in memory default, and the JSON
+  handlers. It imports `account` for `Identity` only and never `session`. Its `StartSession` has
+  the signature of the account one. The RP id and the origins are required configuration and
+  never come from a request. A finish clears the challenge cookie and uses the challenge up,
+  whatever the outcome, and every refused login has one answer. Passkeys work with the cookie
+  client only. `passkey/passkeytest` holds the conformance suite, an in memory store and
+  `Authenticator`, a software passkey for tests.
 - `session/devicehttp` holds the JSON handlers of the device token sessions of native apps:
   issue, rotate, list, revoke and sign out of the calling device. It is a sub package so that
   `session` alone does not pull `api` in. It imports `session` and never `account`, and the
@@ -107,13 +115,21 @@ task example:build   # compile the example application
 
 ### Go
 
-- The standard library only, with three exceptions. `prometheus/client_golang` stays confined to
+- The standard library only, with four exceptions. `prometheus/client_golang` stays confined to
   the `metrics` package. `golang.org/x/crypto` stays confined to the `account` package, for
   Argon2id, which the standard library lacks. The owner accepted it for local accounts.
   `github.com/jackc/pgx/v5` stays confined to the `database` package, for the PostgreSQL
   driver and pool the standard library lacks. `database/dbtest` reaches it only through
-  `database`. The owner accepted it for the database package. Another dependency needs a
-  reason in the pull request.
+  `database`. The owner accepted it for the database package.
+  `github.com/go-webauthn/webauthn` v0.18.2 is imported by the `passkey` package only, for the
+  WebAuthn ceremonies, and no exported name carries one of its types. The owner accepted it for
+  passkeys. Its own modules, CBOR, msgpack, JWT and `go-tpm` among them, reach every build that
+  imports `passkey`: `passkey`, `passkey/passkeytest` and `example/`, and no other package.
+  Through them `golang.org/x/crypto/ocsp` and, by `go-tpm`'s transport, `golang.org/x/sys/unix`
+  enter the build of `passkey` as well. `passkey` also pulls `golang.org/x/crypto/argon2`
+  through its `account` import. `passkey/passkeytest` writes its
+  CBOR by hand and imports no library package itself. Another dependency needs a reason in the
+  pull request.
 - A package stays usable on its own. An application that wants `clientip` must not pull in
   `session` with it.
 - The secure choice is the default, never an option an application has to remember. Weakening
