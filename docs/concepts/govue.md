@@ -175,20 +175,26 @@ The design of the library and the reasoning behind it.
   to a consumer that needs it.
 - The cookie is `__Host-govue_device` (`govue_device` with `AllowPlainHTTP`), HttpOnly, Secure,
   SameSite=Lax, `Path=/`, no `Domain`, default lifetime 90 days from the last successful sign
-  in, at most 400 days. Lax means a frontend on another origin in `TrustedOrigins` does not send
-  it, and gets no skip.
-- Logout and a successful password change send a clearing cookie. A person who signs out is
-  unknown on the next login, which is the conservative choice. One browser holds one cookie, so
-  a second account on it replaces the first one's.
+  in, at most 400 days. SameSite=Lax blocks cross-site requests, not cross-origin ones. A
+  frontend on a sibling origin of the same site, listed in `TrustedOrigins`, sends the host-only
+  cookie when its requests include credentials. A frontend on another site does not send it, and
+  gets no skip.
+- Logout sends a clearing cookie. A person who signs out is unknown on the next login, which is
+  the conservative choice. One browser holds one cookie, so a second account on it replaces the
+  first one's.
+- Owner decision: after a successful password change the response sets a fresh cookie bound to
+  the new hash. The device that changed the password stays known, and every other copy stays
+  invalid, since the HMAC covers the hash. When the sessions could not be ended, the response
+  clears the cookie instead, the conservative choice for a change whose scope is unclear.
 - The threat it leaves: a stolen cookie skips the ceiling of that one account, nothing else.
   The password, the TOTP code and the client limits still hold. The HMAC key is a secret the
   consumer supplies, 32 bytes at least, the same on every replica.
 - Text for a privacy page: after a successful sign in a cookie `__Host-govue_device` is stored
   on the device. It holds a random device number, an expiry and a signature, and no personal
   data. It lets the device sign in while the account is under guessing attack, is HttpOnly and
-  sent to this site only, lasts 90 days from the last sign in, and is deleted on sign out and on
-  a password change. It is not used for tracking. A consumer adds the cookie to its privacy text
-  in the same change that turns the feature on.
+  sent to this site only, lasts 90 days from the last sign in, and is deleted on sign out and
+  replaced on a password change. It is not used for tracking. A consumer adds the cookie to its
+  privacy text in the same change that turns the feature on.
 
 ### ratelimit bounds its own memory, not only the request rate
 

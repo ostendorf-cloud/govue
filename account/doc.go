@@ -126,11 +126,20 @@
 // What a known device gains is the skip of the ceiling only. The password and
 // the TOTP code are still checked and the other limits still count.
 //
-// A successful login or confirmation sets the cookie. A logout and a password
-// change clear it. A password change also makes every cookie of the account
-// invalid, because the HMAC covers the password hash, with no store method
-// and no list on the server. There is no way to revoke one device. Rotating
-// the key revokes all.
+// A successful login or confirmation sets the cookie. A logout clears it.
+// A password change makes every cookie of the account invalid, because the
+// HMAC covers the password hash, with no store method and no list on the
+// server. The response to a successful change that ended every session sets
+// a fresh cookie bound to the new hash, so the device that changed the
+// password stays known and every other copy stays unknown. When the sessions
+// could not be ended, that response clears the cookie instead. There is no
+// way to revoke one device. Rotating the key revokes all.
+//
+// The cookie is SameSite=Lax and has no Domain, so a browser sends it with
+// requests to the host that set it. A frontend on another origin of the same
+// site, such as a sibling subdomain listed in the trusted origins, sends it
+// when its requests include credentials. A frontend on another site does not
+// send it, and gets no skip.
 //
 // What a privacy text can say about the cookie (a consumer quotes and adapts
 // this): after a successful sign in the site stores one cookie on the device,
@@ -140,7 +149,7 @@
 // guessing: it lets this device sign in while the account is under attack. It
 // is HttpOnly, sent to this site only, and lasts 90 days from the last sign
 // in, unless the site sets another [KnownDevicesConfig.Lifetime]. Signing out
-// or changing the password deletes it. It is never used for tracking and
+// deletes it, and changing the password replaces it. It is never used for tracking and
 // never sent to a third party.
 //
 // # Password hashing

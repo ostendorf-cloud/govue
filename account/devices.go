@@ -48,6 +48,7 @@ type KnownDevicesConfig struct {
 	// [MinDeviceKeyLength] bytes from a secret store or a CSPRNG. Required.
 	// It has to be the same on every replica and survive a restart, or every
 	// device is unknown again. Changing it makes every device unknown at once.
+	// Use a dedicated key, not the session key or the CSRF key.
 	Key []byte
 
 	// Lifetime is how long a device stays known after its last successful
@@ -209,7 +210,7 @@ func (k *KnownDevices) verify(r *http.Request, rec Record) (string, bool) {
 		return "", false
 	}
 	id, exp := parts[1], parts[2]
-	mac, err := base64.RawURLEncoding.DecodeString(parts[3])
+	mac, err := base64.RawURLEncoding.Strict().DecodeString(parts[3])
 	if err != nil {
 		return "", false
 	}

@@ -424,7 +424,12 @@ func (h *Handlers) ChangePassword() http.Handler {
 
 		switch {
 		case err == nil:
-			h.forgetDevice(w)
+			// The old cookie is invalid now, its HMAC covered the old hash.
+			// The device that changed the password gets a fresh one bound to
+			// the new hash and stays known. Every other copy stays unknown.
+			if h.devices != nil {
+				h.rememberDevice(w, r, id)
+			}
 
 			return api.Write(w, http.StatusOK, PasswordChangeResult{PasswordChanged: true, SessionsEnded: true})
 		case errors.Is(err, ErrSessionsNotEnded):

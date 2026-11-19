@@ -5,9 +5,14 @@ package account_test
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -239,14 +244,21 @@ func TestKnownDeviceSkipsTheCeiling(t *testing.T) {
 	d := newDFixture(t, account.KnownDevicesConfig{})
 	known := d.knownCookie()
 	d.dry.Store(true)
+	before := d.ceilings.Load()
 
 	if w := d.login(hLogin, hPassword, known); w.Code != http.StatusOK {
 		t.Fatalf("known device after a dry ceiling = %d %s, want 200", w.Code, w.Body.String())
+	}
+	if got := d.ceilings.Load(); got != before {
+		t.Fatalf("ceiling calls for a known device = %d, want none", got-before)
 	}
 
 	w := d.login(hLogin, hPassword)
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("unknown device = %d, want 429", w.Code)
+	}
+	if got := d.ceilings.Load(); got != before+1 {
+		t.Fatalf("ceiling calls for an unknown device = %d, want 1", got-before)
 	}
 	if deviceCookie(w) != nil {
 		t.Error("a refused request set a device cookie")
@@ -435,15 +447,160 @@ func TestKnownDevicePasswordChangeInvalidates(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("change = %d %s", w.Code, w.Body.String())
 	}
-	if c := deviceCookie(w); c == nil || c.MaxAge >= 0 {
-		t.Errorf("password change did not clear the cookie: %v", c)
+
+	// The changing device gets a fresh cookie bound to the new hash.
+	fresh := deviceCookie(w)
+	if fresh == nil {
+		t.Fatal("password change set no device cookie")
+	}
+	if fresh.Name != known.Name || fresh.Value == known.Value || fresh.Value == "" {
+		t.Errorf("fresh cookie = %+v, want a new value under the same name", fresh)
+	}
+	if !fresh.HttpOnly || !fresh.Secure || fresh.SameSite != http.SameSiteLaxMode ||
+		fresh.Path != "/" || fresh.Domain != "" {
+		t.Errorf("fresh attributes = %+v, want HttpOnly, Secure, Lax, Path=/, no Domain", fresh)
+	}
+	if want := int(account.DefaultDeviceLifetime / time.Second); fresh.MaxAge != want {
+		t.Errorf("fresh max age = %d, want %d", fresh.MaxAge, want)
 	}
 
 	// A browser that kept the old cookie is unknown now, even with the new
-	// password.
+	// password. The changing device stays known.
 	d.dry.Store(true)
 	if w := d.login(hLogin, hNewPassword, known); w.Code != http.StatusTooManyRequests {
 		t.Fatalf("old cookie after a password change = %d, want 429", w.Code)
+	}
+	if w := d.login(hLogin, hNewPassword, fresh); w.Code != http.StatusOK {
+		t.Fatalf("fresh cookie after a password change = %d %s, want 200", w.Code, w.Body.String())
+	}
+}
+
+func TestKnownDevicePasswordChangeWithoutEndedSessionsClearsTheCookie(t *testing.T) {
+	t.Parallel()
+
+	d := newDFixture(t, account.KnownDevicesConfig{})
+	known := d.knownCookie()
+	rec, err := d.store.FindByLogin(t.Context(), hLogin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.setCurrent(account.Identity{ID: rec.ID, Login: hLogin}, true)
+	d.endAllErr = errors.New("session store down")
+
+	w := d.post(d.handlers.ChangePassword(),
+		asJSON(t, map[string]string{"current_password": hPassword, "new_password": hNewPassword}),
+		func(r *http.Request) { r.AddCookie(known) })
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"sessions_ended":false`) {
+		t.Fatalf("change = %d %s, want 200 with sessions_ended false", w.Code, w.Body.String())
+	}
+	c := deviceCookie(w)
+	if c == nil || c.MaxAge >= 0 || c.Value != "" || c.Path != "/" || !c.Secure || !c.HttpOnly {
+		t.Fatalf("cookie = %+v, want a clearing cookie", c)
+	}
+}
+
+func TestKnownDeviceDoesNotSkipSignup(t *testing.T) {
+	t.Parallel()
+
+	d := newDFixture(t, account.KnownDevicesConfig{})
+	known := d.knownCookie()
+	d.dry.Store(true)
+	before := d.ceilings.Load()
+
+	// A signup has no account yet, so a device cookie for an existing login
+	// must not skip the ceiling.
+	w := d.post(d.handlers.Signup(),
+		asJSON(t, map[string]string{"login": hLogin, "password": hPassword}),
+		func(r *http.Request) { r.AddCookie(known) })
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("signup with a valid device cookie = %d %s, want 429", w.Code, w.Body.String())
+	}
+	if got := d.ceilings.Load(); got != before+1 {
+		t.Fatalf("ceiling calls = %d, want 1", got-before)
+	}
+}
+
+// forge signs a device cookie value the way the package does, to build values
+// that carry a valid MAC and break one other rule.
+func forge(key []byte, rec account.Record, id, exp string) string {
+	m := hmac.New(sha256.New, key)
+	for _, field := range []string{"govue/account/known-device/v1", id, exp, rec.ID, rec.PasswordHash} {
+		var n [4]byte
+		binary.BigEndian.PutUint32(n[:], uint32(len(field)))
+		m.Write(n[:])
+		m.Write([]byte(field))
+	}
+
+	return strings.Join([]string{"v1", id, exp, base64.RawURLEncoding.EncodeToString(m.Sum(nil))}, ".")
+}
+
+func TestKnownDeviceValueRules(t *testing.T) {
+	t.Parallel()
+
+	d := newDFixture(t, account.KnownDevicesConfig{})
+	rec, err := d.store.FindByLogin(t.Context(), hLogin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kd, err := account.NewKnownDevices(account.KnownDevicesConfig{Key: dKey, Now: d.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id := func(n int) string { return base64.RawURLEncoding.EncodeToString(make([]byte, n)) }
+	exp := strconv.FormatInt(d.now().Add(time.Hour).Unix(), 10)
+	known := func(rec account.Record, value string) bool {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", nil)
+		r.AddCookie(&http.Cookie{Name: kd.CookieName(), Value: value})
+
+		return kd.Known(r, rec)
+	}
+
+	good := forge(dKey, rec, id(16), exp)
+	if !known(rec, good) {
+		t.Fatal("a correctly signed cookie is not known")
+	}
+
+	// Non canonical base64 in the MAC decodes to the same bytes without Strict.
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := good[len(good)-1]
+	variant := good[:len(good)-1] + string(alphabet[strings.IndexByte(alphabet, last)|1])
+	if variant == good {
+		t.Fatal("test setup: the variant equals the cookie")
+	}
+	if known(rec, variant) {
+		t.Error("a MAC with non canonical base64 was accepted")
+	}
+
+	// A signed value over 256 bytes: the expiry carries leading zeros.
+	long := forge(dKey, rec, id(16), strings.Repeat("0", 300)+exp)
+	if len(long) <= 256 {
+		t.Fatalf("test setup: long cookie has %d bytes", len(long))
+	}
+	if known(rec, long) {
+		t.Error("a signed cookie over 256 bytes was accepted")
+	}
+	if !known(rec, forge(dKey, rec, id(16), strings.Repeat("0", 100)+exp)) {
+		t.Error("a signed cookie under the cap with leading zeros was refused")
+	}
+
+	// A signed value whose device id is not 16 bytes.
+	for _, n := range []int{0, 8, 15, 17, 32} {
+		if known(rec, forge(dKey, rec, id(n), exp)) {
+			t.Errorf("a signed cookie with a %d byte device id was accepted", n)
+		}
+	}
+
+	// A record without an id or a password hash is never known, even when
+	// the cookie is signed for exactly that record.
+	for name, empty := range map[string]account.Record{
+		"no hash": {ID: rec.ID},
+		"no id":   {PasswordHash: rec.PasswordHash},
+		"neither": {},
+	} {
+		if known(empty, forge(dKey, empty, id(16), exp)) {
+			t.Errorf("%s: a signed cookie for an incomplete record was accepted", name)
+		}
 	}
 }
 
