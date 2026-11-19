@@ -10,7 +10,9 @@
 // HTML page. It leaves out a visitor who sends Do Not Track or Global Privacy
 // Control, a prefetch, a bot, a client on a private address and the health
 // and metrics routes. The URL it reports is the route pattern of the mux,
-// never the query string and never an id from the path.
+// never the query string and never an id from the path. A view with no route
+// pattern is not counted. The client address is masked to its /24 (IPv4) or
+// /48 (IPv6) before it is sent, unless Options.FullIP is set.
 //
 // A view goes into a bounded queue that a fixed number of workers post to
 // Umami. A full queue drops the view, so a slow or dead Umami never holds a
@@ -113,7 +115,8 @@ type Stats struct {
 
 // View is one page view as Umami receives it.
 type View struct {
-	// URL is the route pattern or the cleaned path, without query.
+	// URL is the route pattern, or the answer of Options.URL for a view with
+	// no pattern. A raw request path is never sent.
 	URL string
 	// Title is the page title, empty when the product reports none.
 	Title string
@@ -124,7 +127,10 @@ type View struct {
 	// UserAgent is the visitor's user agent, which Umami reads the browser
 	// and system from.
 	UserAgent string
-	// IP is the visitor's address, which Umami hashes itself.
+	// IP is the visitor's address. It is masked when sent, to its /24 for
+	// IPv4 and its /48 for IPv6, unless Options.FullIP is set. A mapped
+	// IPv4 address counts as IPv4 and a zone is dropped. Umami derives the
+	// country, region and city from it.
 	IP netip.Addr
 }
 
@@ -300,8 +306,12 @@ const closeGrace = time.Second
 // Close stops accepting views and waits for the queued ones to be posted. When
 // ctx ends first, the posts in flight are cancelled and counted as failed
 // with class canceled, the rest are counted as dropped, and Close returns the
-// context error. Close returns after the workers stopped, so Stats and the log
-// are final then. It is safe to call more than once.
+// context error. After that Close waits for the workers at most one second
+// (closeGrace), so Stats and the log are final when it returns, provided the
+// HTTP client honours the request context, as the default one does. A client
+// that ignores the context keeps its workers and the waiting goroutine alive
+// until its transport returns, and a count can change after Close returned.
+// It is safe to call more than once.
 func (c *Client) Close(ctx context.Context) error {
 	if !c.enabled {
 		return nil
@@ -433,7 +443,7 @@ const (
 // /48 by default, whole with FullIP, empty when a is not an address. An IPv4
 // address mapped into IPv6 counts as IPv4.
 func (c *Client) address(a netip.Addr) string {
-	a = a.Unmap()
+	a = a.Unmap().WithZone("")
 	if !a.IsValid() {
 		return ""
 	}

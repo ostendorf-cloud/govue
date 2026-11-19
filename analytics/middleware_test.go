@@ -243,6 +243,36 @@ func TestMaskAlsoCoversViewsHandedToTrack(t *testing.T) {
 	}
 }
 
+func TestTrackedAddressesAreUnmappedAndLoseTheirZone(t *testing.T) {
+	tests := []struct {
+		name   string
+		ip     string
+		fullIP bool
+		want   string
+	}{
+		{"mapped masked", "::ffff:203.0.113.99", false, "203.0.113.0"},
+		{"mapped whole", "::ffff:203.0.113.99", true, "203.0.113.99"},
+		{"zoned ipv6 whole", "fe80::1%eth0", true, "fe80::1"},
+		{"zoned ipv6 masked", "2001:db8:1:2::9%eth0", false, "2001:db8:1::"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRig(t, func(_ *Config, o *Options, _ *fakeUmami) { o.FullIP = tt.fullIP })
+			r.c.Track(View{URL: "/", UserAgent: testUA, IP: netip.MustParseAddr(tt.ip)})
+			posts := r.drain(t)
+			if len(posts) != 1 {
+				t.Fatalf("got %d posts", len(posts))
+			}
+			if got := view(t, posts[0])["ip"]; got != tt.want {
+				t.Errorf("ip = %v, want %s", got, tt.want)
+			}
+			if strings.Contains(string(posts[0].Body), "%") {
+				t.Errorf("a zone reached Umami: %s", posts[0].Body)
+			}
+		})
+	}
+}
+
 func TestNeverSendsQueryOrId(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -351,6 +381,9 @@ func TestURLOptionNamesViewsWithoutPattern(t *testing.T) {
 		{"relative", "page", "", false},
 		{"only a query", "?x=1", "", false},
 		{"absolute url", "https://evil.example/x", "", false},
+		{"scheme relative url", "//evil.example/x?q#f", "", false},
+		{"backslash host", `/\evil.example/x`, "", false},
+		{"single slash only", "/", "/", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

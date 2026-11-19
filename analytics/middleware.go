@@ -151,7 +151,9 @@ func cleanURL(u string) string {
 	if i := strings.IndexAny(u, "?#"); i >= 0 {
 		u = u[:i]
 	}
-	if !strings.HasPrefix(u, "/") {
+	// "//host/x" and "/\host/x" are no path: a reader may take them for a
+	// host.
+	if !strings.HasPrefix(u, "/") || strings.HasPrefix(u, "//") || strings.HasPrefix(u, `/\`) {
 		return ""
 	}
 	return truncate(u, maxPath)

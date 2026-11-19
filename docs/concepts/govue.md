@@ -1813,8 +1813,10 @@ The design of the library and the reasoning behind it.
     address of the server for every visitor, which is why it is passed at all. Umami derives
     country, region and city from it (a GeoLite2 City lookup in its `src/lib/detect.ts`, read
     by the reviewer and not run here), so masking costs some city accuracy and keeps the country
-    and usually the region. The address is only checked, masked and sent. It is never stored or
-    logged here.
+    and usually the region. To our knowledge, not verified here, masking also lowers the count
+    of unique visitors: Umami builds its session id from the website, the address, the user
+    agent and a salt, so visitors of one /24 with the same user agent merge into one. The address
+    is only checked, masked and sent. It is never stored or logged here.
   - `userAgent`: the user agent, which Umami reads the browser and the system from. The request
     to Umami also carries it as its own header, as ostendorf.tech does. The payload's `ip` and
     `userAgent` win over the request's own in Umami (`payload?.ip || getIpAddress(...)`, as
