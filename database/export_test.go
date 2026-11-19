@@ -13,5 +13,5 @@ const MigrationLock = migrationLock
 // bookkeeping table exists, so a test can prove the lock of each file on its
 // own, apart from the lock around the table's creation.
 func (db *DB) ApplyFile(ctx context.Context, version int, name, sql string) error {
-	return db.applyOne(ctx, migration{version: version, name: name, sql: sql})
+	return db.applyOne(ctx, migration{version: version, name: name, sql: sql, sum: checksum([]byte(sql))})
 }

@@ -10,6 +10,8 @@ package database_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"strings"
@@ -258,6 +260,320 @@ func TestPostgresWrongPasswordIsRefused(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "wrong-fake-password") {
 		t.Errorf("the error leaks the password: %v", err)
+	}
+}
+
+// The checksum tests below. edited is schema with the first file changed.
+func edited(first string) fstest.MapFS {
+	return fstest.MapFS{"m/0001_notes.sql": sqlFile(first), "m/0002_author.sql": schema["m/0002_author.sql"]}
+}
+
+const editedFirst = "create table notes (id bigint generated always as identity primary key, body text not null) -- fake-edit-marker"
+
+func hexSum(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+func openWith(t *testing.T, cfg database.Config) *database.DB {
+	t.Helper()
+	db, err := database.Open(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(db.Close)
+	return db
+}
+
+func storedSum(t *testing.T, db *database.DB, version int) string {
+	t.Helper()
+	var sum *string
+	if err := db.Pool().QueryRow(t.Context(), "select checksum from schema_migrations where version = $1", version).Scan(&sum); err != nil {
+		t.Fatalf("read checksum of %d: %v", version, err)
+	}
+	if sum == nil {
+		return ""
+	}
+	return *sum
+}
+
+// A clean run stores the SHA-256 of each file's bytes.
+func TestPostgresMigrateRecordsTheChecksum(t *testing.T) {
+	db := dbtest.Open(t)
+
+	if err := db.Migrate(t.Context(), schema, "m"); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	for version, file := range map[int]string{1: "m/0001_notes.sql", 2: "m/0002_author.sql"} {
+		if got, want := storedSum(t, db, version), hexSum(string(schema[file].Data)); got != want {
+			t.Errorf("checksum of version %d = %q, want %q", version, got, want)
+		}
+	}
+}
+
+// A changed file stops the run before a newer file is applied. The error
+// names the file and carries neither its content nor a checksum, and
+// readiness stays down.
+func TestPostgresAChangedFileRefusesTheRun(t *testing.T) {
+	cfg := dbtest.Config(t)
+	first := openWith(t, cfg)
+	if err := first.Migrate(t.Context(), schema, "m"); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+
+	changed := edited(editedFirst)
+	changed["m/0003_extra.sql"] = sqlFile("create table extra (id int)")
+	second := openWith(t, cfg)
+	err := second.Migrate(t.Context(), changed, "m")
+	if !errors.Is(err, database.ErrChangedMigration) {
+		t.Fatalf("Migrate() error = %v, want ErrChangedMigration", err)
+	}
+	if !strings.Contains(err.Error(), "0001_notes.sql") || !strings.Contains(err.Error(), "version 1") {
+		t.Errorf("error %q does not name the file and version", err)
+	}
+	for _, bad := range []string{"fake-edit-marker", hexSum(editedFirst), hexSum(string(schema["m/0001_notes.sql"].Data))} {
+		if strings.Contains(err.Error(), bad) {
+			t.Errorf("error carries %q", bad)
+		}
+	}
+	if tableExists(t, first, "extra") {
+		t.Error("a newer file was applied although an older one changed")
+	}
+	if err := second.Check(t.Context()); !errors.Is(err, database.ErrNotMigrated) {
+		t.Errorf("Check() after the refusal = %v, want not ready", err)
+	}
+	if got, want := storedSum(t, first, 1), hexSum(string(schema["m/0001_notes.sql"].Data)); got != want {
+		t.Error("the refused run changed the stored checksum")
+	}
+}
+
+// A line ending change is a change: the rule is raw bytes.
+func TestPostgresALineEndingChangeIsAChange(t *testing.T) {
+	cfg := dbtest.Config(t)
+	if err := openWith(t, cfg).Migrate(t.Context(), edited(multiLine), "m"); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	crlf := strings.ReplaceAll(multiLine, "\n", "\r\n")
+	if crlf == multiLine || !strings.Contains(multiLine, "\n") {
+		t.Fatal("the fixture has no line break to change")
+	}
+	err := openWith(t, cfg).Migrate(t.Context(), edited(crlf), "m")
+	if !errors.Is(err, database.ErrChangedMigration) {
+		t.Errorf("Migrate() with other line endings = %v, want ErrChangedMigration", err)
+	}
+}
+
+const multiLine = "create table notes (\n\tid bigint generated always as identity primary key,\n\tbody text not null\n)\n"
+
+// A start with the column in place takes no exclusive lock on the table: a
+// reader holding ACCESS SHARE does not block it. An alter on every start
+// would wait for it, and needs table ownership.
+func TestPostgresMigrateTakesNoExclusiveLockWhenTheColumnExists(t *testing.T) {
+	cfg := dbtest.Config(t)
+	if err := openWith(t, cfg).Migrate(t.Context(), schema, "m"); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	holder := openWith(t, cfg)
+	tx, err := holder.Pool().Begin(t.Context())
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(t.Context()) }()
+	if _, err := tx.Exec(t.Context(), "lock table schema_migrations in access share mode"); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := openWith(t, cfg).Migrate(ctx, schema, "m"); err != nil {
+		t.Errorf("Migrate() while a reader holds the table = %v, want it not to wait", err)
+	}
+}
+
+// MigrateUntilReady does not retry a changed file.
+func TestPostgresMigrateUntilReadyStopsOnAChangedFile(t *testing.T) {
+	cfg := dbtest.Config(t)
+	if err := openWith(t, cfg).Migrate(t.Context(), schema, "m"); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	err := openWith(t, cfg).MigrateUntilReady(ctx, slog.New(slog.NewTextHandler(t.Output(), nil)), edited(editedFirst), "m")
+	if !errors.Is(err, database.ErrChangedMigration) {
+		t.Errorf("MigrateUntilReady() = %v, want ErrChangedMigration at once", err)
+	}
+}
+
+// Rows without a checksum, from a table made before the column existed and
+// from a NULL in a table that has it, are filled on the next run.
+func TestPostgresRowsWithoutAChecksumAreFilled(t *testing.T) {
+	cfg := dbtest.Config(t)
+	db := openWith(t, cfg)
+	if err := db.Migrate(t.Context(), schema, "m"); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	ctx := t.Context()
+
+	// A NULL checksum in a table that has the column.
+	if _, err := db.Pool().Exec(ctx, "update schema_migrations set checksum = null where version = 1"); err != nil {
+		t.Fatalf("clear checksum: %v", err)
+	}
+	if err := openWith(t, cfg).Migrate(ctx, schema, "m"); err != nil {
+		t.Fatalf("Migrate() with a NULL checksum = %v, want it filled", err)
+	}
+	if got, want := storedSum(t, db, 1), hexSum(string(schema["m/0001_notes.sql"].Data)); got != want {
+		t.Errorf("filled checksum = %q, want %q", got, want)
+	}
+
+	// A table of the shape before checksums: no column at all.
+	if _, err := db.Pool().Exec(ctx, "alter table schema_migrations drop column checksum"); err != nil {
+		t.Fatalf("drop column: %v", err)
+	}
+	if err := openWith(t, cfg).Migrate(ctx, schema, "m"); err != nil {
+		t.Fatalf("Migrate() on a table without the column = %v", err)
+	}
+	for version, file := range map[int]string{1: "m/0001_notes.sql", 2: "m/0002_author.sql"} {
+		if got, want := storedSum(t, db, version), hexSum(string(schema[file].Data)); got != want {
+			t.Errorf("checksum of version %d after the column was added = %q, want %q", version, got, want)
+		}
+	}
+	if n := countRows(t, db, "select count(*) from schema_migrations"); n != 2 {
+		t.Errorf("schema_migrations has %d rows, want 2: the fill must not apply a file again", n)
+	}
+
+	// A legacy table written by SQL alone, with a file still to apply.
+	legacy := dbtest.Config(t)
+	ldb := openWith(t, legacy)
+	if _, err := ldb.Pool().Exec(ctx, `
+		create table schema_migrations (version integer primary key, name text not null, applied_at timestamptz not null default now());
+		create table notes (id bigint generated always as identity primary key, body text not null);
+		insert into schema_migrations (version, name) values (1, '0001_notes.sql')`); err != nil {
+		t.Fatalf("legacy setup: %v", err)
+	}
+	if err := ldb.Migrate(ctx, schema, "m"); err != nil {
+		t.Fatalf("Migrate() on a legacy table = %v", err)
+	}
+	if got, want := storedSum(t, ldb, 1), hexSum(string(schema["m/0001_notes.sql"].Data)); got != want {
+		t.Errorf("legacy row checksum = %q, want %q", got, want)
+	}
+	if got, want := storedSum(t, ldb, 2), hexSum(string(schema["m/0002_author.sql"].Data)); got != want {
+		t.Errorf("new row checksum = %q, want %q", got, want)
+	}
+}
+
+// Old code on a newer schema, as in a rolling deploy or after a rollback: it
+// starts, is ready, logs the newer versions and touches no row.
+func TestPostgresOlderCodeRunsOnANewerSchema(t *testing.T) {
+	cfg := dbtest.Config(t)
+	if err := openWith(t, cfg).Migrate(t.Context(), schema, "m"); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	older := fstest.MapFS{"m/0001_notes.sql": schema["m/0001_notes.sql"]}
+	db := openWith(t, cfg)
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	if err := db.MigrateUntilReady(ctx, logger, older, "m"); err != nil {
+		t.Fatalf("MigrateUntilReady() on a newer schema = %v, want it to start", err)
+	}
+	if err := db.Check(t.Context()); err != nil {
+		t.Errorf("Check() on a newer schema = %v, want ready", err)
+	}
+	if !strings.Contains(logs.String(), "newer than this code") {
+		t.Errorf("the newer version is not logged:\n%s", logs.String())
+	}
+	if n := countRows(t, db, "select count(*) from schema_migrations"); n != 2 {
+		t.Errorf("schema_migrations has %d rows, want 2: no row is touched", n)
+	}
+	for version, file := range map[int]string{1: "m/0001_notes.sql", 2: "m/0002_author.sql"} {
+		if got, want := storedSum(t, db, version), hexSum(string(schema[file].Data)); got != want {
+			t.Errorf("checksum of version %d = %q, want %q: it was touched", version, got, want)
+		}
+	}
+}
+
+// An empty string is a checksum that matches no file, not a missing one: it
+// is refused, and the fill leaves it alone.
+func TestPostgresAnEmptyChecksumIsAChange(t *testing.T) {
+	cfg := dbtest.Config(t)
+	db := openWith(t, cfg)
+	if err := db.Migrate(t.Context(), schema, "m"); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	if _, err := db.Pool().Exec(t.Context(), "update schema_migrations set checksum = '' where version = 1"); err != nil {
+		t.Fatalf("set empty checksum: %v", err)
+	}
+	if err := db.Check(t.Context()); !errors.Is(err, database.ErrChangedMigration) {
+		t.Errorf("Check() = %v, want ErrChangedMigration", err)
+	}
+	if err := openWith(t, cfg).Migrate(t.Context(), schema, "m"); !errors.Is(err, database.ErrChangedMigration) {
+		t.Errorf("Migrate() = %v, want ErrChangedMigration", err)
+	}
+	if got := storedSum(t, db, 1); got != "" {
+		t.Errorf("the empty checksum was rewritten to %q", got)
+	}
+}
+
+// The option accepts a changed file, once: the stored checksum follows the
+// file, so the next run needs no option.
+func TestPostgresAllowChangedMigrations(t *testing.T) {
+	cfg := dbtest.Config(t)
+	if err := openWith(t, cfg).Migrate(t.Context(), schema, "m"); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	changed := edited(editedFirst)
+
+	allow := cfg
+	allow.AllowChangedMigrations = true
+	db := openWith(t, allow)
+	if err := db.Migrate(t.Context(), changed, "m"); err != nil {
+		t.Fatalf("Migrate() with the option = %v", err)
+	}
+	if err := db.Check(t.Context()); err != nil {
+		t.Errorf("Check() with the option = %v", err)
+	}
+	if got, want := storedSum(t, db, 1), hexSum(editedFirst); got != want {
+		t.Errorf("checksum after the option = %q, want the new file's", got)
+	}
+	strict := openWith(t, cfg)
+	if err := strict.Migrate(t.Context(), changed, "m"); err != nil {
+		t.Errorf("Migrate() without the option after it accepted the edit = %v", err)
+	}
+
+	// A running pod that still holds the old file turns unready: the option
+	// rewrote the checksum under it.
+	if err := openWith(t, cfg).Migrate(t.Context(), schema, "m"); !errors.Is(err, database.ErrChangedMigration) {
+		t.Errorf("Migrate() with the old file after the option = %v, want ErrChangedMigration", err)
+	}
+}
+
+// Readiness fails when an applied file and its recorded checksum differ,
+// after the process migrated. A recorded version with no file does not.
+func TestPostgresCheckIsNotReadyAfterAnEdit(t *testing.T) {
+	db := dbtest.Open(t)
+	if err := db.Migrate(t.Context(), schema, "m"); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	if err := db.Check(t.Context()); err != nil {
+		t.Fatalf("Check() after Migrate = %v", err)
+	}
+
+	if _, err := db.Pool().Exec(t.Context(), "update schema_migrations set checksum = $1 where version = 1", hexSum(editedFirst)); err != nil {
+		t.Fatalf("edit the record: %v", err)
+	}
+	if err := db.Check(t.Context()); !errors.Is(err, database.ErrChangedMigration) {
+		t.Errorf("Check() after an edit = %v, want ErrChangedMigration", err)
+	}
+
+	if _, err := db.Pool().Exec(t.Context(), "update schema_migrations set checksum = $1 where version = 1",
+		hexSum(string(schema["m/0001_notes.sql"].Data))); err != nil {
+		t.Fatalf("restore the record: %v", err)
+	}
+	if _, err := db.Pool().Exec(t.Context(), "insert into schema_migrations (version, name, checksum) values (3, '0003_new.sql', 'x')"); err != nil {
+		t.Fatalf("add a version: %v", err)
+	}
+	if err := db.Check(t.Context()); err != nil {
+		t.Errorf("Check() with a version that has no file = %v, want ready", err)
 	}
 }
 

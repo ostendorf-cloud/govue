@@ -1565,10 +1565,45 @@ The design of the library and the reasoning behind it.
   and doubles up to thirty, and the loop ends with its context, during the pause too. It never
   gives up on its own: a late database is the normal case in a cluster, and readiness reports
   the gap meanwhile.
-- Known limit: `schema_migrations` stores the version and the name, no checksum. A file edited
-  after it was applied goes unnoticed: the runner sees the version recorded and skips it, and
-  the schema differs from the file. A change goes into a new file, never into an applied one.
-  Recording and checking a checksum is a follow up.
+- `schema_migrations` stores a checksum per file: the SHA-256 of the exact file bytes, in hex,
+  written in the same transaction as the file's own apply. The rule is raw bytes, so a checkout
+  that turns LF into CRLF changes it and is refused. A product keeps its migrations LF with
+  `*.sql text eol=lf` in `.gitattributes`, as this repository does.
+- Threat model: the checksum guards against an accidental edit. It is no tamper protection
+  against anyone with write access to the repository or the database.
+- Before the runner applies anything newer, it compares every recorded row with the embedded
+  files, under the advisory lock. A file whose checksum differs makes it refuse with
+  `ErrChangedMigration`. A null checksum is a legacy row and is filled, an empty string is a
+  checksum that matches no file and is a change. The error names the file and its version and
+  carries neither content nor checksum. `MigrateUntilReady` returns it at once instead of
+  retrying, because waiting does not fix it. A change goes into a new file, never into an
+  applied one. `Check` repeats the comparison on each call, one small query, and reports not
+  ready on the same finding.
+- A recorded version above the last file is not an error. The numbering has no gap, so it means
+  the database is ahead of the code, which is the normal state of a rolling deploy: the first
+  new pod commits version 3 while old pods still run. There are no down migrations, so a
+  rollback runs older code on a newer schema, and the only way that works is expand and
+  contract: a migration keeps the schema usable for the previous release. The runner therefore
+  ignores such rows, logs their versions as a warning in `MigrateUntilReady`, and `Check` stays
+  ready. The checksums guard only the versions the running code knows. Refusing here would take
+  every old pod out of the Service at once, and a rollback would stay unready. There is no
+  `ErrMissingMigration` for that reason.
+- A table made before checksums existed gets the column with `alter table ... add column`. The
+  runner looks in `information_schema.columns` first and alters only when the column is
+  missing, because the alter takes an `ACCESS EXCLUSIVE` lock and needs table ownership on every
+  start otherwise. A row without a checksum gets it from the file in the embedded set on the
+  first run, logged through the logger of `MigrateUntilReady`. That run cannot know whether the
+  file was edited before, so the fill trusts the file as it is then. It never fails.
+- `Config.AllowChangedMigrations` overrides the refusal. Its risk: the schema no longer matches
+  the file and nothing checks it afterwards. It replaces the stored checksum with the file's, so
+  one run accepts the edit and the option can go. Because the stored checksum changes, every
+  running pod that still holds the other version of the file turns unready with
+  `ErrChangedMigration` until it is rolled over: a deliberate act with that cost. `Check` keeps
+  comparing under the option. Only `MigrateUntilReady` logs the accepted names, after the
+  commit: `Migrate` has no logger and its signature stays. The option is code only: there is no
+  environment variable, because the secure default must not be weakened by a typo or a stray
+  value in a manifest, and `LoadConfig` never sets it. The decision belongs to the product's
+  startup code.
 - A migration library, `golang-migrate` or `goose`, would bring down migrations, a CLI and more
   dependencies for a schema that is a handful of files applied forward only.
 
@@ -1580,7 +1615,12 @@ The design of the library and the reasoning behind it.
 - What only a server can prove runs against a real PostgreSQL: connect, migrate, idempotence,
   the rollback of a failed file, the advisory lock blocking a second migrator, both around the
   bookkeeping table and around a single file once the table exists, concurrent migrators,
-  `Check` before and after the schema, a wrong password, and the database per test.
+  `Check` before and after the schema, a wrong password, and the database per test. The
+  checksum rules run there too: a clean run, a changed file, a line ending change, a row without
+  a checksum and a table without the column, an empty checksum, no exclusive lock when the column
+  exists, older code on a newer schema, the override, and readiness after an
+  edit. The comparison itself, `compare`, and `Check` over a fake ledger, newer rows included,
+  run with no socket.
 - `dbtest.Config` and `dbtest.Open` read the server from `GOVUE_TEST_DATABASE_URL`, create a
   fresh database per test and drop it afterwards with `DROP DATABASE ... WITH (FORCE)`, from a
   connection to the database the URL names, never to the one it drops. `WITH (FORCE)` needs

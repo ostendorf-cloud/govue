@@ -65,6 +65,11 @@ type DB struct {
 	pool     *pgxpool.Pool
 	pinger   pinger
 	migrated atomic.Bool
+	// files are the migrations of the last successful run, which Check
+	// compares with the recorded rows. ledger reads those rows.
+	files        atomic.Pointer[[]migration]
+	ledger       ledger
+	allowChanged bool
 	// pause is the first wait between two migration attempts. Zero means
 	// the default. Tests set it.
 	pause time.Duration
@@ -82,7 +87,7 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("database: pool: %w", err)
 	}
-	return &DB{pool: pool, pinger: pool}, nil
+	return &DB{pool: pool, pinger: pool, ledger: queryLedger{q: pool}, allowChanged: cfg.AllowChangedMigrations}, nil
 }
 
 // Pool is the pgx pool the product runs its queries on. Returning pgx' own
@@ -101,8 +106,12 @@ func (db *DB) Close() {
 // Check is the readiness check, a health.Check: register it with
 // registry.Add("database", 0, db.Check). It fails while the database does
 // not answer, and with ErrNotMigrated until Migrate or MigrateUntilReady has
-// applied the schema in this process. Its error goes to the log, never to the
-// client: health names the check and nothing else.
+// applied the schema in this process. After that it fails when an applied
+// file differs from its recorded checksum, see ErrChangedMigration. Recorded
+// versions above the last file are ignored: code older than the schema stays
+// ready, which a rolling deploy and a rollback need. It reads the small
+// schema_migrations table on each call. Its error goes to the log, never to
+// the client: health names the check and nothing else.
 //
 // The ping needs a connection from the pool. When every connection is busy,
 // it waits for one until health's timeout for the check ends, and readiness
@@ -117,7 +126,23 @@ func (db *DB) Check(ctx context.Context) error {
 	if !db.migrated.Load() {
 		return ErrNotMigrated
 	}
-	return nil
+	return db.verifyApplied(ctx)
+}
+
+// verifyApplied fails when an applied file changed. It checks the versions
+// this code has a file for, also under AllowChangedMigrations: the run that
+// accepted an edit stored the new checksum, so a pod of the other version
+// that still holds the old file turns unready until it is rolled over.
+func (db *DB) verifyApplied(ctx context.Context) error {
+	files := db.files.Load()
+	if files == nil || db.ledger == nil {
+		return nil
+	}
+	rows, err := db.ledger.records(ctx)
+	if err != nil {
+		return fmt.Errorf("database: verify migrations: %w", err)
+	}
+	return compare(*files, rows).err()
 }
 
 // dsn is the connection string without the password, which is set on the

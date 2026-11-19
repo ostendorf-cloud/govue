@@ -1,0 +1,2 @@
+# Migration files are checksummed byte for byte, see docs/concepts/govue.md.
+*.sql text eol=lf
