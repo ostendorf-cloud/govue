@@ -62,9 +62,10 @@ repeated here.
 - `mail` sends plain text mail over SMTP submission and builds the message. `Message` is refused,
   never repaired: CR, LF, NUL and any control character in a header value or address is an
   error, an address is one plain ASCII mailbox (no group, local part up to 64 octets), Unicode
-  format characters (Cf) are refused in names, subject and headers, non ASCII subjects and names
-  and a literal `=?` become folded RFC 2047 words with no line over 998, sizes are limited. `SMTP` requires STARTTLS by default (`ErrNoStartTLS` before any
-  credential leaves), `ImplicitTLS` is an option, `Plain` is for a local test sink and refuses
+  format characters (Cf) except ZWNJ and ZWJ are refused in names, subject and headers, non ASCII
+  subjects and names and a literal `=?` become folded RFC 2047 words with no line over 998, sizes
+  are limited. `SMTP` requires STARTTLS by default (`ErrNoStartTLS` before any credential
+  leaves), `ImplicitTLS` is an option, `Plain` is for a local test sink and refuses
   credentials, AUTH PLAIN or LOGIN runs inside TLS only, TLS is 1.2 or newer, there are no
   retries, `Config.Timeout` and the context are one deadline over dial and conversation, and
   `Sender` is the interface consumers fake. `LoadConfig` reads `SMTP_HOST`,

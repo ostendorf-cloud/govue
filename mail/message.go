@@ -96,6 +96,14 @@ func invalid(field, rule string) error {
 	return fmt.Errorf("%w: %s %s", ErrInvalid, field, rule)
 }
 
+// maxWordBytes is the longest RFC 2047 encoded word.
+const maxWordBytes = 75
+
+const (
+	zwnj = '‌' // zero width non joiner
+	zwj  = '‍' // zero width joiner
+)
+
 // checkText refuses what could end a header or confuse a parser: invalid
 // UTF-8, NUL, CR, LF, every other control character, and the Unicode line
 // and paragraph separators some software treats as a line break.
@@ -109,10 +117,14 @@ func checkText(field, s string) error {
 		}
 	}
 	for _, r := range s {
-		// Format characters (bidi controls, zero width characters, the BOM)
+		// Format characters (bidi controls, the BOM, tags, the soft hyphen)
 		// are invisible and let a name or subject show something else than
-		// it holds. The line and paragraph separators are the Zl and Zp
-		// categories.
+		// it holds. The zero width non joiner and joiner stay allowed: scripts
+		// such as Persian and Indic and emoji sequences need them. The line and
+		// paragraph separators U+2028 and U+2029 are the Zl and Zp categories.
+		if r == zwnj || r == zwj {
+			continue
+		}
 		if unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
 			return invalid(field, "contains a format character")
 		}
@@ -340,13 +352,15 @@ func encodeValue(prefix int, s string) string {
 	return words
 }
 
-// encodeWords writes s as "=?utf-8?q?...?=" words. No word is longer than 75
-// bytes, so a line stays within 78 bytes whenever the prefix leaves room for
-// one, and always within 998. It returns the length of the last line too.
-// Only letters and digits stay as they are, so no input can form a "=?".
+// encodeWords writes s as "=?utf-8?q?...?=" words. No word, with its "=?utf-8?q?"
+// and "?=", is longer than 75 bytes (RFC 2047), so a line stays within 78 bytes
+// whenever the prefix leaves room for one, and always within 998. It returns
+// the length of the last line too. Only letters and digits stay as they are,
+// so no input can form a "=?".
 func encodeWords(prefix int, s string) (string, int) {
 	const overhead = len("=?utf-8?q?") + len("?=")
-	budget := max(softLineBytes-prefix, overhead+4*3) // room for one rune
+	// budget is the room for one whole word on the current line, at most 75.
+	budget := min(max(softLineBytes-prefix, overhead+4*3), maxWordBytes) // room for one rune
 	var out strings.Builder
 	var word strings.Builder
 	lineLen := prefix
@@ -372,7 +386,7 @@ func encodeWords(prefix int, s string) (string, int) {
 			flush()
 			out.WriteString("\r\n ")
 			lineLen = 1
-			budget = softLineBytes - 1
+			budget = min(softLineBytes-1, maxWordBytes)
 		}
 		word.WriteString(enc.String())
 	}

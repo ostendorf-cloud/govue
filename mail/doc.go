@@ -9,9 +9,10 @@
 // error that wraps ErrInvalid and names the field, never the value. An
 // address must be one plain ASCII mailbox: no list, no group (also not a
 // group of one member), no quoted local part, a local part of at most
-// MaxLocalPartBytes. Unicode format characters (bidi controls, zero width
-// characters, the BOM) are refused in names, the subject and extra headers,
-// and the error names the field. An encoded word in a display name is
+// MaxLocalPartBytes. Unicode format characters (bidi controls, tags, the soft
+// hyphen, the BOM) are refused in names, the subject and extra headers, and
+// the error names the field. The zero width non joiner and joiner (U+200C,
+// U+200D) are allowed, because Persian, Indic and emoji sequences need them. An encoded word in a display name is
 // decoded first and the result is checked. Non ASCII subjects, display names
 // and extra header values become RFC 2047 words folded so that no line passes
 // 78 bytes where the header name allows it and never 998. A literal "=?" in
@@ -26,7 +27,8 @@
 // (port 587) and refuses a server without it before any credential leaves.
 // ImplicitTLS (port 465) is an option, Plain is for a local test sink and
 // takes no credentials. TLS is at least 1.2 and the certificate must name
-// Config.Host, which is a bare host name: no port, path or white space.
+// Config.Host, which is a bare host name or IPv4 address: no port, path, white
+// space or colon, so an IPv6 literal is refused.
 // AUTH PLAIN or LOGIN is used only inside TLS. Config.Timeout and the
 // context end one deadline that covers the dial and the whole conversation,
 // also for a custom DialContext, so a Send never takes longer than the

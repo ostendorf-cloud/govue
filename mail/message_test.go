@@ -457,8 +457,11 @@ func TestFormatCharactersRefused(t *testing.T) {
 	for _, r := range []string{
 		string(rune(0x202a)), string(rune(0x202b)), string(rune(0x202c)), string(rune(0x202d)),
 		string(rune(0x202e)), string(rune(0x2066)), string(rune(0x2067)), string(rune(0x2068)),
-		string(rune(0x2069)), string(rune(0x200b)), string(rune(0x200c)), string(rune(0x200d)),
+		string(rune(0x2069)), string(rune(0x200b)),
 		string(rune(0x2060)), string(rune(0xfeff)), string(rune(0x00ad)),
+		string(rune(0x2061)), string(rune(0x2062)), string(rune(0x2063)), string(rune(0x2064)),
+		string(rune(0x180e)), string(rune(0xe0041)), string(rune(0xe0001)),
+		string(rune(0x2028)), string(rune(0x2029)),
 	} {
 		for field, set := range map[string]func(m *Message){
 			"Subject":  func(m *Message) { m.Subject = "a" + r + "b" },
@@ -472,6 +475,72 @@ func TestFormatCharactersRefused(t *testing.T) {
 			_, err := Build(m)
 			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), field) {
 				t.Errorf("%s %U: err = %v", field, []rune(r)[0], err)
+			}
+		}
+	}
+}
+
+// The zero width non joiner and joiner are needed by Persian, Indic and emoji
+// sequences, so names and subjects keep them.
+func TestJoinersAllowed(t *testing.T) {
+	t.Parallel()
+
+	zwjS, zwnjS := string(rune(0x200d)), string(rune(0x200c))
+
+	for _, text := range []string{
+		"\U0001F468" + zwjS + "\U0001F469" + zwjS + "\U0001F467",
+		"می" + zwnjS + "خواهم",
+	} {
+		m := validMessage()
+		m.Subject = text
+		m.From = text + " <noreply@example.org>"
+		raw, err := Build(m)
+		if err != nil {
+			t.Fatalf("%q: %v", text, err)
+		}
+		msg := parse(t, raw)
+		if got, err := new(mime.WordDecoder).DecodeHeader(msg.Header.Get("Subject")); err != nil || got != text {
+			t.Errorf("Subject decodes to %q, %v", got, err)
+		}
+		if list, err := msg.Header.AddressList("From"); err != nil || len(list) != 1 || list[0].Name != text {
+			t.Errorf("From = %v, %v", list, err)
+		}
+	}
+}
+
+// A semicolon in a quoted string or a comment is no group.
+func TestSemicolonOutsideGroupAccepted(t *testing.T) {
+	t.Parallel()
+
+	for _, addr := range []string{`"a;b" <a@b.c>`, `"a\";b" <a@b.c>`, `a@b.c (x;y)`} {
+		m := validMessage()
+		m.ReplyTo = addr
+		if _, err := Build(m); err != nil {
+			t.Errorf("%s: %v", addr, err)
+		}
+	}
+}
+
+// Every encoded word is at most 75 bytes, not only every line.
+func TestEncodedWordsAtMost75Bytes(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{strings.Repeat("ü", 100), strings.Repeat("a", 190) + "=?"} {
+		m := validMessage()
+		m.From = name + " <noreply@example.org>"
+		m.Subject = name
+		raw, err := Build(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		head, _, _ := strings.Cut(string(raw), "\r\n\r\n")
+		words := regexp.MustCompile(`=\?utf-8\?q\?[^?]*\?=`).FindAllString(head, -1)
+		if len(words) < 2 {
+			t.Fatalf("only %d words for %.10q", len(words), name)
+		}
+		for _, w := range words {
+			if len(w) > 75 {
+				t.Errorf("encoded word of %d bytes: %s", len(w), w)
 			}
 		}
 	}

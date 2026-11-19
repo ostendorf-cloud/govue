@@ -132,6 +132,8 @@ func (c Config) withDefaults() Config {
 }
 
 // Validate checks the configuration. It names the field and never a value.
+// Host is a bare host name or IPv4 address: a value with a colon, which
+// includes an IPv6 literal, is refused.
 func (c Config) Validate() error {
 	c = c.withDefaults()
 	var problems []error

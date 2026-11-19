@@ -80,9 +80,14 @@ func (s *SMTP) Send(ctx context.Context, m Message) (err error) {
 	}
 	// Only the context ends the connection: no deadline is set on it, so the
 	// error never races between an i/o timeout and the context error. The
-	// closure holds the raw connection, which TLS wraps later.
+	// closure holds the raw connection, which TLS wraps later. The deadline
+	// comes first, so a pending read ends as a deadline error. The close
+	// follows for a connection that ignores SetDeadline.
 	raw := conn
-	stop := context.AfterFunc(ctx, func() { _ = raw.SetDeadline(time.Unix(1, 0)) })
+	stop := context.AfterFunc(ctx, func() {
+		_ = raw.SetDeadline(time.Unix(1, 0))
+		_ = raw.Close()
+	})
 	defer stop()
 
 	secure := false
