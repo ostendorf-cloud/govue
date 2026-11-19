@@ -65,6 +65,11 @@ type DB struct {
 	pool     *pgxpool.Pool
 	pinger   pinger
 	migrated atomic.Bool
+	// files are the migrations of the last successful run, which Check
+	// compares with the recorded rows. ledger reads those rows.
+	files        atomic.Pointer[[]migration]
+	ledger       ledger
+	allowChanged bool
 	// pause is the first wait between two migration attempts. Zero means
 	// the default. Tests set it.
 	pause time.Duration
@@ -82,7 +87,7 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("database: pool: %w", err)
 	}
-	return &DB{pool: pool, pinger: pool}, nil
+	return &DB{pool: pool, pinger: pool, ledger: queryLedger{q: pool}, allowChanged: cfg.AllowChangedMigrations}, nil
 }
 
 // Pool is the pgx pool the product runs its queries on. Returning pgx' own
@@ -101,7 +106,10 @@ func (db *DB) Close() {
 // Check is the readiness check, a health.Check: register it with
 // registry.Add("database", 0, db.Check). It fails while the database does
 // not answer, and with ErrNotMigrated until Migrate or MigrateUntilReady has
-// applied the schema in this process. Its error goes to the log, never to the
+// applied the schema in this process. After that it fails when an applied
+// file differs from its recorded checksum or a recorded version has no file,
+// see ErrChangedMigration, unless Config.AllowChangedMigrations is set. It
+// reads the small schema_migrations table on each call. Its error goes to the log, never to the
 // client: health names the check and nothing else.
 //
 // The ping needs a connection from the pool. When every connection is busy,
@@ -117,7 +125,24 @@ func (db *DB) Check(ctx context.Context) error {
 	if !db.migrated.Load() {
 		return ErrNotMigrated
 	}
-	return nil
+	return db.verifyApplied(ctx)
+}
+
+// verifyApplied fails when an applied file changed or a recorded version has
+// no file, so a pod that runs other files than the database holds is not
+// ready. The option AllowChangedMigrations accepts both. A rollback to code
+// that predates a recorded version is therefore unready too, which is the
+// point: its schema is newer than its files.
+func (db *DB) verifyApplied(ctx context.Context) error {
+	files := db.files.Load()
+	if db.allowChanged || files == nil || db.ledger == nil {
+		return nil
+	}
+	rows, err := db.ledger.records(ctx)
+	if err != nil {
+		return fmt.Errorf("database: verify migrations: %w", err)
+	}
+	return compare(*files, rows).err()
 }
 
 // dsn is the connection string without the password, which is set on the

@@ -138,6 +138,18 @@ type Config struct {
 	// ConnectTimeout bounds one attempt to open a connection, TLS and
 	// authentication included, 1s to 1m. Zero means DefaultConnectTimeout.
 	ConnectTimeout time.Duration
+	// AllowChangedMigrations lets the runner continue, and Check report
+	// ready, when an applied migration file differs from the checksum
+	// recorded when it was applied, or a recorded version has no file. The
+	// new checksum then replaces the stored one and the run logs a warning.
+	//
+	// RISK: the schema no longer matches the file, and nothing checks it
+	// again. Use it once, after a person has reviewed the edit, for example
+	// a comment fix or a deliberate hand repair, then remove it. The default
+	// false refuses. LoadConfig never sets it and no environment variable
+	// does: it is a decision in code, so a typo in a manifest cannot weaken
+	// the check.
+	AllowChangedMigrations bool
 }
 
 // LoadConfig reads the connection from the environment through envconf and
@@ -361,5 +373,6 @@ func (c Config) LogValue() slog.Value {
 		slog.String("sslrootcert", c.SSLRootCert),
 		slog.Int("max_conns", int(c.MaxConns)),
 		slog.Duration("connect_timeout", c.ConnectTimeout),
+		slog.Bool("allow_changed_migrations", c.AllowChangedMigrations),
 	)
 }
