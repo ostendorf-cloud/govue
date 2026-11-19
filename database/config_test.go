@@ -181,6 +181,55 @@ func TestLoadConfigAggregatesEveryProblem(t *testing.T) {
 	}
 }
 
+// DB_MAX_CONNS outside 1 to 100 is a problem that names the variable, and
+// no value can wrap around in the conversion to int32: 4294967297 would
+// become 1, 2147483648 a negative number.
+func TestLoadConfigBoundsMaxConns(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{"0", "-1", "101", "2147483647", "2147483648", "4294967297", "9223372036854775807", "-2147483649"} {
+		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := LoadConfig(envOf(map[string]string{
+				"DB_HOST": "h", "DB_NAME": "n", "DB_USER": "u", "DB_PASSWORD": fakePassword,
+				"DB_SSLMODE": "disable", "DB_MAX_CONNS": raw,
+			}))
+			if err == nil || !strings.Contains(err.Error(), "DB_MAX_CONNS") {
+				t.Fatalf("LoadConfig(DB_MAX_CONNS=%s) error = %v, want it refused by name", raw, err)
+			}
+			if strings.Contains(err.Error(), fakePassword) {
+				t.Errorf("error leaks the password: %v", err)
+			}
+		})
+	}
+	for _, raw := range []string{"1", "100"} {
+		cfg, err := LoadConfig(envOf(map[string]string{
+			"DB_HOST": "h", "DB_NAME": "n", "DB_USER": "u", "DB_PASSWORD": fakePassword,
+			"DB_SSLMODE": "disable", "DB_MAX_CONNS": raw,
+		}))
+		if err != nil || fmt.Sprint(cfg.MaxConns) != raw {
+			t.Errorf("LoadConfig(DB_MAX_CONNS=%s) = %d, %v, want %s", raw, cfg.MaxConns, err, raw)
+		}
+	}
+}
+
+// maxConnsFrom never narrows a value outside the bounds, whatever envconf
+// did before it.
+func TestMaxConnsFromNeverWraps(t *testing.T) {
+	t.Parallel()
+
+	cases := map[int]int32{
+		1: 1, 100: 100, 0: DefaultMaxConns, -1: DefaultMaxConns, 101: DefaultMaxConns,
+		1<<32 + 1: DefaultMaxConns, 1 << 31: DefaultMaxConns, -(1 << 31) - 1: DefaultMaxConns,
+	}
+	for in, want := range cases {
+		if got := maxConnsFrom(in); got != want {
+			t.Errorf("maxConnsFrom(%d) = %d, want %d", in, got, want)
+		}
+	}
+}
+
 func TestLoadConfigRefusesBothPasswordSources(t *testing.T) {
 	t.Parallel()
 

@@ -157,7 +157,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		Password:       NewSecret(l.RequiredSecretOrFile(EnvPassword)),
 		SSLMode:        SSLMode(l.String(EnvSSLMode, string(DefaultSSLMode))),
 		SSLRootCert:    l.String(EnvSSLRootCert, ""),
-		MaxConns:       int32(l.Int(EnvMaxConns, DefaultMaxConns, minMaxConns, maxMaxConns)),
+		MaxConns:       maxConnsFrom(l.Int(EnvMaxConns, DefaultMaxConns, minMaxConns, maxMaxConns)),
 		ConnectTimeout: l.Duration(EnvConnectTimeout, DefaultConnectTimeout, minConnectTimeout, maxConnectTimeout),
 	}
 	// envconf has checked presence and ranges already. What is left is what
@@ -169,6 +169,18 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("database: load config: %w", err)
 	}
 	return cfg, nil
+}
+
+// maxConnsFrom narrows the pool size to int32 only after checking it against
+// the bounds, so a value outside them can never wrap around, for example
+// 4294967297 to 1. envconf.Loader.Int has checked the same bounds and
+// recorded the problem, and returns the default for a bad value. This check
+// keeps the conversion safe on its own, whatever the caller passed.
+func maxConnsFrom(n int) int32 {
+	if n < minMaxConns || n > maxMaxConns {
+		return DefaultMaxConns
+	}
+	return int32(n)
 }
 
 // withDefaults fills every zero field that has a default.
