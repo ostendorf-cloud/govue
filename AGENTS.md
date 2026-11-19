@@ -25,9 +25,11 @@ repeated here.
   components (`GovuePage`, `GovueHeader`, `GovueFooter`, `GovueNav`, `GovueSkipLink`,
   `GovueCard`, `GovueBadge`, `GovueSkeleton`), `GovueThemeSwitch`, and the account forms
   (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`), which take a `client` from
-  `createClient`. `createClient({ auth: { mode: 'bearer' } })` is the client of a native app with a
-  device token: `TokenStorage` (async `get`, `set`, `clear`, one opaque string) with the in memory
-  default and no persistent adapter, rotation in `web/src/api/bearer.ts`, `signIn` and `signOut`.
+  `createClient`, and `GovuePasskeyButton` with the `usePasskey` composable and `isBearerClient`,
+  which take it too and refuse a bearer client. `createClient({ auth: { mode: 'bearer' } })` is
+  the client of a native app with a device token: `TokenStorage` (async `get`, `set`, `clear`,
+  one opaque string) with the in memory default and no persistent adapter, rotation in
+  `web/src/api/bearer.ts`, `signIn` and `signOut`.
   A token never goes into a URL, an error, a cause or a log, and the storage is written before
   the new token is used. All storage access runs through one lock, and a rotation writes only
   while the storage still holds the token it rotated. Exactly one context per storage rotates
