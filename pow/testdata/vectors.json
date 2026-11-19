@@ -1,5 +1,5 @@
 {
-  "comment": "Shared vectors of the pow package, written by go test -update. challenge = hex(sha256(salt + number)), the number in decimal with no separator, the salt string as sent. salt = 24 lower case hex digits + '?expires=\u003cunix\u003e\u0026issued=\u003cunix\u003e\u0026'. The trailing '\u0026' is required: it ends issued explicitly, so no digit of the salt can move into the number (CVE-2025-68113). A solver and a verifier port must refuse a salt without it. signature = hex(hmac_sha256(key, 'govue/pow\\x00v1\\x00' + audience + '\\x00' + challenge)). now is Unix seconds. Every case runs on a fresh service.",
+  "comment": "Shared vectors of the pow package, written by go test -update. challenge = hex(sha256(salt + number)), the number in decimal with no separator, the salt string as sent. salt = 24 lower case hex digits + '?expires=\u003cunix\u003e\u0026issued=\u003cunix\u003e\u0026'. The trailing '\u0026' is required: it ends issued explicitly, so no digit of the salt can move into the number (CVE-2025-68113). A solver and a verifier port must refuse a salt without it. signature = hex(hmac_sha256(key, 'govue/pow\\x00v1\\x00' + audience + '\\x00' + challenge)). Verify checks in this order and returns the first failure: 1 the fields (algorithm, 64 lower case hex challenge and signature, salt not empty and not too long, number from 0 to maxNumber): malformed; 2 the signature over the challenge: signature; 3 the hash of salt + number against the challenge: wrong; 4 the salt shape, parsed strictly and canonical: malformed; 5 expiry, expired when now is not before expires; 6 minimum age, too_fast when now - issued is below minAgeSeconds; 7 single use, replay. now is Unix seconds. Every case runs on a fresh service.",
   "version": 1,
   "material": "0123456789abcdef0123456789abcdef",
   "audience": "example.test",
@@ -162,7 +162,7 @@
       "want": "malformed"
     },
     {
-      "name": "splice attempt on the current shape",
+      "name": "salt shortened, number unchanged",
       "now": 1790000005,
       "solution": {
         "algorithm": "SHA-256",
@@ -266,6 +266,42 @@
         "number": 7,
         "salt": "00112233445566778899aabb?issued=1790000000\u0026",
         "signature": "f8d8789fd8b6094eded11b7c3f36030d6a925aa0eeb8995fa6a3e4e9a862d357"
+      },
+      "want": "malformed"
+    },
+    {
+      "name": "signed salt, leading zero in issued",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "701fc11d8cbc9360ab49eb8feb556583aae1f53350be31906cc1fbd69d82be5e",
+        "number": 7,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=01790000000\u0026",
+        "signature": "2208bbd812f83cd2e0ffff631924800544eaa1d5d0bd4c91c33ceef8f1eb5c9d"
+      },
+      "want": "malformed"
+    },
+    {
+      "name": "signed salt, upper case nonce",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "78eefa2087b1c1ac7a4e694ac9239a133ec21bc49648d2368295debe6ee0c60a",
+        "number": 7,
+        "salt": "00112233445566778899AABB?expires=1790000600\u0026issued=1790000000\u0026",
+        "signature": "a52d523eea47fb5e0729fc1fb0ab7aa538ae360b9647ff99fe059e7e54e9b1e2"
+      },
+      "want": "malformed"
+    },
+    {
+      "name": "signed salt, trailing double separator",
+      "now": 1790000005,
+      "solution": {
+        "algorithm": "SHA-256",
+        "challenge": "84eecfc56fa802ba92474a522c2bee0f7ace9a730d68524fce52f3ae44d0a3d3",
+        "number": 7,
+        "salt": "00112233445566778899aabb?expires=1790000600\u0026issued=1790000000\u0026\u0026",
+        "signature": "d56174cb9a03c69ab2d1f51fb312615f9108a8b55d4cb41f686ac766a5d8ee15"
       },
       "want": "malformed"
     }

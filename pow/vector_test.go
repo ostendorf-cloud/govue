@@ -105,7 +105,7 @@ func buildVectors() vectorFileData {
 		{"salt changed", vecIssued + 5, "", with(func(s *Solution) { s.Salt = "00112233445566778899aabc?expires=1790000600&issued=1790000000&" }), "wrong"},
 		{"salt without trailing separator", vecIssued + 5, "", legacy, "malformed"},
 		{"splice of issued digit into number, old shape, age 0", vecIssued + 3, "", legacySplice, "malformed"},
-		{"splice attempt on the current shape", vecIssued + 5, "", spliceNew, "wrong"},
+		{"salt shortened, number unchanged", vecIssued + 5, "", spliceNew, "wrong"},
 		{"separator removed from the salt", vecIssued + 5, "", with(func(s *Solution) { s.Salt = vecSalt[:len(vecSalt)-1] }), "wrong"},
 		{"unknown algorithm", vecIssued + 5, "", with(func(s *Solution) { s.Algorithm = "SHA-1" }), "malformed"},
 		{"negative number", vecIssued + 5, "", with(func(s *Solution) { s.Number = -1 }), "malformed"},
@@ -114,6 +114,9 @@ func buildVectors() vectorFileData {
 		{"upper case signature", vecIssued + 5, "", with(func(s *Solution) { s.Signature = "A" + s.Signature[1:] }), "malformed"},
 		{"empty salt", vecIssued + 5, "", with(func(s *Solution) { s.Salt = "" }), "malformed"},
 		{"salt without expiry", vecIssued + 5, "", noExpiry, "malformed"},
+		{"signed salt, leading zero in issued", vecIssued + 5, "", sig("00112233445566778899aabb?expires=1790000600&issued=01790000000&", 7), "malformed"},
+		{"signed salt, upper case nonce", vecIssued + 5, "", sig("00112233445566778899AABB?expires=1790000600&issued=1790000000&", 7), "malformed"},
+		{"signed salt, trailing double separator", vecIssued + 5, "", sig(vecSalt+"&", 7), "malformed"},
 	}
 	return vectorFileData{
 		Comment: "Shared vectors of the pow package, written by go test -update. " +
@@ -123,6 +126,15 @@ func buildVectors() vectorFileData {
 			"is required: it ends issued explicitly, so no digit of the salt can move into the " +
 			"number (CVE-2025-68113). A solver and a verifier port must refuse a salt without it. " +
 			"signature = hex(hmac_sha256(key, 'govue/pow\\x00v1\\x00' + audience + '\\x00' + challenge)). " +
+			"Verify checks in this order and returns the first failure: " +
+			"1 the fields (algorithm, 64 lower case hex challenge and signature, salt not empty and not too long, " +
+			"number from 0 to maxNumber): malformed; " +
+			"2 the signature over the challenge: signature; " +
+			"3 the hash of salt + number against the challenge: wrong; " +
+			"4 the salt shape, parsed strictly and canonical: malformed; " +
+			"5 expiry, expired when now is not before expires; " +
+			"6 minimum age, too_fast when now - issued is below minAgeSeconds; " +
+			"7 single use, replay. " +
 			"now is Unix seconds. Every case runs on a fresh service.",
 		Version:       1,
 		Material:      string(vecKey),

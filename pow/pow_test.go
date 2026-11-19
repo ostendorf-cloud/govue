@@ -292,6 +292,11 @@ func TestSignedButMalformedSalt(t *testing.T) {
 // is salt + decimal(n), so without a boundary a client could move the last
 // digit d of issued into the number (salt' = salt minus d, n' = d||n) and keep
 // the challenge and the signature valid, which skipped the minimum age.
+//
+// On the current shape this test cannot fail by itself: every cut changes the
+// hash input, so Verify refuses the splice as wrong. It only fails if the
+// trailing '&' is removed from formatSalt as well. The real regression guards
+// are TestLegacySaltRefused and the vector cases.
 func TestSaltSplicing(t *testing.T) {
 	t.Parallel()
 
@@ -536,7 +541,7 @@ func TestConcurrentSingleUse(t *testing.T) {
 }
 
 func FuzzParseSalt(f *testing.F) {
-	f.Add("00112233445566778899aabb?expires=1790000600&issued=1790000000")
+	f.Add("00112233445566778899aabb?expires=1790000600&issued=1790000000&")
 	f.Add("")
 	f.Add("?expires=&issued=")
 	f.Add("00112233445566778899aabb?expires=-1&issued=0&")

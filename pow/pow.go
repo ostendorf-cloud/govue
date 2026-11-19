@@ -333,7 +333,8 @@ func isHex64(s string) bool { return len(s) == 64 && isLowerHex(s) }
 
 // Verify checks sol and records it as used. Call it only after the rest of
 // the request is valid, so a typo does not burn the solution. The checks run
-// in the order malformed, signature, number, expiry, minimum age, replay.
+// in the order malformed fields, signature, number (the hash), malformed salt
+// shape, expiry, minimum age, replay.
 func (s *Service) Verify(sol Solution) error {
 	if sol.Algorithm != Algorithm || !isHex64(sol.Challenge) || !isHex64(sol.Signature) ||
 		sol.Salt == "" || len(sol.Salt) > maxSaltLen || sol.Number < 0 || sol.Number > s.maxNumber {
