@@ -15,7 +15,7 @@
 services:
   postgres:
     # Tag only: Renovate pins the manifest list digest.
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:526f86d93c6ea08fd3f1fe5605650cacc781b2c6013169a0ad8f42c7d3d84f32
     restart: unless-stopped
     environment:
       POSTGRES_USER: "govue"
