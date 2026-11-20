@@ -63,8 +63,9 @@ export type { FieldErrors, FormOptions, FormState, Touched } from './composables
 
 // The proof of work solver of the contact form. The worker file itself is never
 // imported: lib/pow.ts starts it, and a bundler follows that call.
-export { createChallengeSolver, parseSalt, solveInWorker } from './lib/pow'
+export { ChallengeError, createChallengeSolver, parseSalt, solveInWorker } from './lib/pow'
 export type {
+  ChallengeErrorKind,
   ChallengeSolver,
   ChallengeSolverOptions,
   PowChallenge,

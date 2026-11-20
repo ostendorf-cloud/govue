@@ -44,8 +44,9 @@ repeated here.
   component as a string. A text prop stays as an override.
   The legal pages (`language.HandleLegal`, `GovueLegalPage`, `govue-check-legal`) are structure
   only: govue never ships an imprint, privacy or terms text.
-- `web/example/` is a placeholder site of the legal pages, prerendered and checked by its own
-  test. It is not shipped.
+- `web/example/` is the example site: the placeholder legal pages and the contact page,
+  prerendered and checked by its own tests, the consumer build test of the worker bundle and the
+  fake of the contact handlers that the component tests use. It is not shipped.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.

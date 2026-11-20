@@ -17,5 +17,10 @@ export default defineConfig({
   server: {
     port: 4173,
     strictPort: true,
+    // The contact spec runs against the Go example server (see
+    // playwright.config.ts). The page calls /api on its own origin and Vite
+    // forwards it, with the Host header unchanged, so the server's origin
+    // check sees a same origin request.
+    proxy: { '/api': { target: 'http://127.0.0.1:18080' } },
   },
 })

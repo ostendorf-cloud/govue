@@ -3,99 +3,66 @@
 
 import userEvent from '@testing-library/user-event'
 import { render, screen } from '@testing-library/vue'
-import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createClient } from '../api/client'
+import { FakeContactServer, refusal } from '../../example/contactServerFake'
 import { createGovueI18n } from '../i18n/plugin'
 import { solve } from '../lib/powSolve'
 import GovueContactForm from './GovueContactForm.vue'
 
 const realSetTimeout = globalThis.setTimeout
 
-/** A Worker that runs the real search, so the real worker protocol is covered. */
+type WorkerMode = 'solve' | 'error' | 'silent'
+
+/** A Worker that runs the real search, or fails, or never answers. */
 class FakeWorker {
+  static mode: WorkerMode = 'solve'
   static created: Array<{ url: string; options: unknown }> = []
+  static terminated = 0
   onmessage: ((event: { data: { number: number | null } }) => void) | null = null
   onerror: (() => void) | null = null
+  onmessageerror: (() => void) | null = null
   constructor(url: URL | string, options?: unknown) {
     FakeWorker.created.push({ url: String(url), options })
   }
   postMessage(data: { challenge: string; salt: string; maxnumber: number }) {
-    void solve(data.challenge, data.salt, data.maxnumber).then((number) =>
-      this.onmessage?.({ data: { number } }),
-    )
+    if (FakeWorker.mode === 'solve') {
+      void solve(data.challenge, data.salt, data.maxnumber).then((number) =>
+        this.onmessage?.({ data: { number } }),
+      )
+    } else if (FakeWorker.mode === 'error') {
+      queueMicrotask(() => this.onerror?.())
+    }
   }
-  terminate() {}
-}
-
-function challengeBody(issued: number) {
-  const salt = `00112233445566778899aabb?expires=${issued + 600}&issued=${issued}&`
-  return {
-    algorithm: 'SHA-256',
-    challenge: createHash('sha256').update(`${salt}7`).digest('hex'),
-    maxnumber: 50,
-    salt,
-    signature: 'f'.repeat(64),
+  terminate() {
+    FakeWorker.terminated++
   }
-}
-
-function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  })
-}
-
-function refusal(status: number, code: string, details?: Record<string, string>): Response {
-  return json(status, { error: { code, message: 'An English server text.', details } })
-}
-
-interface Seen {
-  url: string
-  method: string
-  headers: Record<string, string>
-  body: unknown
-  credentials: RequestCredentials | undefined
 }
 
 function setup(
   props: Record<string, unknown> = {},
-  answer: () => Response | Promise<Response> = () => json(200, { ok: true }),
-  slots: Record<string, string> = {},
-  locale = 'en',
+  options: { slots?: Record<string, string>; locale?: string; server?: FakeContactServer } = {},
 ) {
-  const seen: Seen[] = []
-  const fetchMock = vi.fn<typeof globalThis.fetch>(async (input, init) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-    seen.push({
-      url,
-      method: init?.method ?? 'GET',
-      headers: (init?.headers ?? {}) as Record<string, string>,
-      body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
-      credentials: init?.credentials,
-    })
-    if (url.endsWith('challenge')) {
-      return json(200, challengeBody(Math.floor(Date.now() / 1000)))
-    }
-    return answer()
-  })
-  const client = createClient({ fetch: fetchMock, credentials: 'omit' })
+  const server = options.server ?? new FakeContactServer()
+  // The global fetch, which createClient binds when it is created: the form
+  // goes through the client's own defaults and nothing else.
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(server.fetch)
+  const client = createClient()
   const view = render(GovueContactForm, {
     props: { client, ...props },
-    slots,
+    slots: options.slots ?? {},
     global: {
       plugins: [
         createGovueI18n({
-          locale,
+          locale: options.locale ?? 'en',
           storage: { kind: 'custom', get: () => undefined, set: () => undefined },
         }),
       ],
     },
   })
   const user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) })
-  const submits = () => seen.filter((s) => s.method === 'POST')
-  return { fetchMock, seen, submits, user, ...view }
+  return { server, fetchSpy, user, ...view }
 }
 
 type User = ReturnType<typeof userEvent.setup>
@@ -106,20 +73,25 @@ async function fill(user: User) {
   await user.type(screen.getByLabelText(/^Message/), 'Hello there')
 }
 
-/** Lets the real search and the faked minimum age wait run to the end. */
-async function settle(until: () => boolean) {
-  for (let i = 0; i < 80 && !until(); i++) {
+/** Lets the real search and the faked waits run until the condition holds. */
+async function settle(until: () => boolean, steps = 80) {
+  for (let i = 0; i < steps && !until(); i++) {
     await vi.advanceTimersByTimeAsync(250)
     await new Promise((resolve) => realSetTimeout(resolve, 5))
   }
 }
+
+const send = () => screen.getByRole('button', { name: 'Send message' })
+const thanks = () => screen.queryByText('Thank you. Your message was sent.')
 
 let cookieReads = 0
 let cookieWrites = 0
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: false })
+  FakeWorker.mode = 'solve'
   FakeWorker.created = []
+  FakeWorker.terminated = 0
   vi.stubGlobal('Worker', FakeWorker)
   cookieReads = 0
   cookieWrites = 0
@@ -137,6 +109,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete (document as unknown as Record<string, unknown>).cookie
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   vi.useRealTimers()
 })
@@ -151,7 +124,7 @@ describe('GovueContactForm structure', () => {
     }
     expect(screen.getByLabelText(/^Email address/)).toHaveAttribute('type', 'email')
     expect(screen.getByLabelText(/^Email address/)).toHaveAttribute('autocomplete', 'email')
-    expect(screen.getByRole('button', { name: 'Send message' })).toHaveAttribute('type', 'submit')
+    expect(send()).toHaveAttribute('type', 'submit')
   })
 
   it('has an always present polite status region', () => {
@@ -159,6 +132,15 @@ describe('GovueContactForm structure', () => {
     const status = screen.getByRole('status')
     expect(status).toHaveAttribute('aria-live', 'polite')
     expect(status).toHaveTextContent('')
+  })
+
+  it('renders the title as h2 by default and at the level it is given', () => {
+    const first = setup()
+    expect(screen.getByRole('heading', { level: 2, name: 'Contact' })).toBeVisible()
+    first.unmount()
+
+    setup({ headingLevel: 4 })
+    expect(screen.getByRole('heading', { level: 4, name: 'Contact' })).toBeVisible()
   })
 
   it('puts the honeypot off screen, never behind display none or hidden', () => {
@@ -194,86 +176,88 @@ describe('GovueContactForm structure', () => {
   })
 
   it('takes the title and the consent label from slots', () => {
-    setup({ requireConsent: true }, undefined, {
-      title: 'Write to us',
-      consent: 'I accept the <a href="/p">terms</a>',
-    })
+    setup(
+      { requireConsent: true },
+      { slots: { title: 'Write to us', consent: 'I accept the <a href="/p">terms</a>' } },
+    )
     expect(screen.getByRole('heading', { name: 'Write to us' })).toBeVisible()
     expect(screen.getByRole('checkbox', { name: 'I accept the terms' })).toBeVisible()
   })
 
   it('speaks German in a German page', () => {
-    setup({}, undefined, {}, 'de')
+    setup({}, { locale: 'de' })
     expect(screen.getByRole('button', { name: 'Nachricht senden' })).toBeVisible()
     expect(screen.getByLabelText(/^E-Mail-Adresse/)).toBeVisible()
   })
 })
 
 describe('GovueContactForm checks before sending', () => {
-  it('asks for every field and sends nothing', async () => {
-    const { user, seen } = setup()
+  it('asks for every field, sends nothing and focuses the first error', async () => {
+    const { user, server } = setup()
 
-    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    await user.click(send())
 
     expect(screen.getAllByText('Please fill in this field.')).toHaveLength(3)
     expect(screen.getByLabelText(/^Name/)).toHaveAttribute('aria-invalid', 'true')
     expect(screen.getByLabelText(/^Name/)).toHaveAccessibleDescription('Please fill in this field.')
-    expect(seen.filter((s) => s.method === 'POST')).toHaveLength(0)
+    expect(screen.getByLabelText(/^Name/)).toHaveFocus()
+    expect(server.submits).toHaveLength(0)
   })
 
-  it('counts a message of more than 5000 characters as too long', async () => {
-    const { user, submits } = setup()
+  it('names the limit when a message is too long', async () => {
+    const { user, server } = setup()
     await user.type(screen.getByLabelText(/^Name/), 'Alice')
     await user.type(screen.getByLabelText(/^Email address/), 'a@example.com')
     await user.click(screen.getByLabelText(/^Message/))
     await user.paste('x'.repeat(5001))
 
-    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    await user.click(send())
 
-    expect(screen.getByText('This is too long.')).toBeVisible()
-    expect(submits()).toHaveLength(0)
+    expect(screen.getByText('This is too long. At most 5000 characters are allowed.')).toBeVisible()
+    expect(screen.getByLabelText(/^Message/)).toHaveFocus()
+    expect(server.submits).toHaveLength(0)
   })
 
-  it('needs the consent when it is required', async () => {
-    const { user, submits } = setup({ requireConsent: true })
+  it('needs the consent when it is required, and associates the error with the box', async () => {
+    const { user, server } = setup({ requireConsent: true })
     await fill(user)
 
-    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    await user.click(send())
 
+    const box = screen.getByRole('checkbox')
     expect(screen.getByRole('alert')).toHaveTextContent('Please agree before sending.')
-    expect(screen.getByRole('checkbox')).toHaveAttribute('aria-invalid', 'true')
-    expect(submits()).toHaveLength(0)
+    expect(box).toHaveAttribute('aria-invalid', 'true')
+    expect(box).toHaveAccessibleDescription('Please agree before sending.')
+    expect(box).toHaveFocus()
+    expect(server.submits).toHaveLength(0)
   })
 })
 
 describe('GovueContactForm sending', () => {
   it('fetches the challenge on the first focus, once', async () => {
-    const { user, seen } = setup()
+    const { user, server } = setup()
 
-    expect(seen).toHaveLength(0)
+    expect(server.requests).toHaveLength(0)
     await user.click(screen.getByLabelText(/^Name/))
     await user.click(screen.getByLabelText(/^Email address/))
 
-    const challenges = seen.filter((s) => s.url.endsWith('/contact/challenge'))
-    expect(challenges).toHaveLength(1)
-    expect(challenges[0]?.method).toBe('GET')
+    expect(server.challenges).toHaveLength(1)
   })
 
-  it('sends strict JSON with the solution and shows success only after the answer', async () => {
-    const { user, seen, submits, emitted } = setup()
+  it('sends exactly the fields the server knows, and the server accepts them', async () => {
+    const { user, server } = setup({ requireConsent: true })
     await fill(user)
+    await user.click(screen.getByRole('checkbox'))
 
-    await user.click(screen.getByRole('button', { name: 'Send message' }))
-    await settle(() => submits().length > 0)
-    await vi.advanceTimersByTimeAsync(0)
-    await settle(() => screen.queryByText('Thank you. Your message was sent.') !== null)
+    await user.click(send())
+    await settle(() => thanks() !== null)
 
-    expect(submits()).toHaveLength(1)
-    const post = submits()[0]
+    expect(server.submits).toHaveLength(1)
+    const post = server.submits[0]
     expect(post.url).toBe('/api/v1/contact')
     expect(post.headers['Content-Type']).toBe('application/json')
+    // consent stays in the browser: the server refuses an unknown field.
     expect(Object.keys(post.body as object).sort()).toEqual([
-      'consent',
       'email',
       'message',
       'name',
@@ -285,117 +269,244 @@ describe('GovueContactForm sending', () => {
       email: 'alice@example.com',
       message: 'Hello there',
       website: '',
-      pow: { algorithm: 'SHA-256', number: 7 },
+      pow: { algorithm: 'SHA-256', number: expect.any(Number) as number },
     })
+    expect(Object.keys((post.body as { pow: object }).pow).sort()).toEqual([
+      'algorithm',
+      'challenge',
+      'number',
+      'salt',
+      'signature',
+    ])
     expect(screen.getByRole('status')).toHaveTextContent('Thank you. Your message was sent.')
+  })
+
+  it('shows success only after the server answered, emits sent and focuses the status', async () => {
+    const { user, emitted } = setup()
+    await fill(user)
+
+    await user.click(send())
+    await settle(() => thanks() !== null)
+
     expect(emitted().sent).toHaveLength(1)
-    expect(seen.length).toBeGreaterThan(1)
+    // The form and its focused button are gone: focus moves to the status.
+    expect(screen.queryByRole('form')).toBeNull()
+    expect(screen.getByRole('status')).toHaveFocus()
   })
 
   it('waits out the minimum age before it sends', async () => {
-    const { user, submits } = setup()
+    const { user, server } = setup()
     await fill(user)
     const started = Date.now()
 
-    await user.click(screen.getByRole('button', { name: 'Send message' }))
-    await settle(() => submits().length > 0)
+    await user.click(send())
+    await settle(() => server.submits.length > 0)
 
     expect(Date.now() - started).toBeGreaterThanOrEqual(2000)
-    expect(submits()).toHaveLength(1)
+    expect(server.submits).toHaveLength(1)
   })
 
-  it('never shows success for a failed send', async () => {
-    const { user, submits, emitted } = setup({}, () => refusal(503, 'unavailable'))
+  it('takes the minimum age from its prop: too short is refused as too fast', async () => {
+    const { user, server } = setup({ minAgeMs: 0 })
     await fill(user)
 
-    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    await user.click(send())
     await settle(() => screen.queryByRole('alert') !== null)
 
-    expect(submits()).toHaveLength(1)
+    expect(server.submits).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent('The form was sent too fast.')
+    expect(thanks()).toBeNull()
+  })
+
+  it('never shows success for a failed send, keeps the input and focuses the failure', async () => {
+    const server = new FakeContactServer()
+    server.refuseNext(() => refusal(503, 'send_failed'))
+    const { user, emitted } = setup({}, { server })
+    await fill(user)
+
+    await user.click(send())
+    await settle(() => screen.queryByRole('alert') !== null)
+
+    expect(server.submits).toHaveLength(1)
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Your message was not sent. The contact form is not available right now.',
+      'Your message was not sent. Your message could not be delivered.',
     )
-    expect(screen.queryByText('Thank you. Your message was sent.')).toBeNull()
+    expect(thanks()).toBeNull()
     expect(screen.getByRole('status')).not.toHaveTextContent('Thank you')
     expect(emitted().sent).toBeUndefined()
-    // What the visitor typed is still there, and the form can be sent again.
     expect(screen.getByLabelText(/^Message/)).toHaveValue('Hello there')
-    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled()
+    expect(send()).toBeEnabled()
+    expect(screen.getByRole('alert')).toHaveFocus()
   })
 
   it('never shows success when the network is down', async () => {
-    const { user } = setup({}, () => {
-      throw new TypeError('Failed to fetch')
+    const { user, fetchSpy, server } = setup()
+    fetchSpy.mockImplementation((input, init) => {
+      const url = typeof input === 'string' ? input : ''
+      if (url.endsWith('/challenge')) return server.fetch(input, init)
+      return Promise.reject(new TypeError('Failed to fetch'))
     })
     await fill(user)
 
-    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    await user.click(send())
     await settle(() => screen.queryByRole('alert') !== null)
 
     expect(screen.getByRole('alert')).toHaveTextContent('No connection to the server.')
-    expect(screen.queryByText('Thank you. Your message was sent.')).toBeNull()
+    expect(thanks()).toBeNull()
   })
 
-  it('says rate limited in words, never the server text', async () => {
-    const { user } = setup({}, () => refusal(429, 'too_many_requests'))
+  // One row per real code of contact/handler.go and the api package, with the
+  // status the server answers it with and a word of the text the visitor sees.
+  const refusals: Array<[number, string, string]> = [
+    [403, 'cross_origin', 'The request was refused.'],
+    [503, 'not_configured', 'not set up yet'],
+    [400, 'pow_required', 'The spam check is missing.'],
+    [400, 'pow_invalid', 'The spam check failed.'],
+    [400, 'pow_expired', 'The spam check ran out of time.'],
+    [400, 'pow_too_fast', 'sent too fast'],
+    [400, 'pow_replay', 'already used'],
+    [503, 'pow_busy', 'The server is busy'],
+    [503, 'mail_limit', 'reached its limit'],
+    [503, 'send_failed', 'could not be delivered'],
+    [429, 'too_many_requests', 'Too many messages.'],
+    [413, 'request_too_large', 'too large'],
+    [415, 'unsupported_media_type', 'could not be accepted'],
+    [400, 'invalid_argument', 'could not be accepted'],
+  ]
+  for (const [status, code, text] of refusals) {
+    it(`shows the text of ${code} (${status}) and never the server text`, async () => {
+      const server = new FakeContactServer()
+      server.refuseNext(() => refusal(status, code))
+      const { user } = setup({}, { server })
+      await fill(user)
+
+      await user.click(send())
+      await settle(() => screen.queryByRole('alert') !== null)
+
+      expect(screen.getByRole('alert')).toHaveTextContent(text)
+      expect(screen.getByRole('alert')).not.toHaveTextContent('English server text')
+      expect(thanks()).toBeNull()
+    })
+  }
+
+  it('puts a field code on its field, associated, announced and focused', async () => {
+    const server = new FakeContactServer()
+    server.refuseNext(() =>
+      refusal(400, 'invalid_argument', 'some fields are invalid', { email: 'non_ascii_email' }),
+    )
+    const { user } = setup({}, { server })
     await fill(user)
 
-    await user.click(screen.getByRole('button', { name: 'Send message' }))
-    await settle(() => screen.queryByRole('alert') !== null)
-
-    expect(screen.getByRole('alert')).toHaveTextContent('Too many messages.')
-    expect(screen.getByRole('alert')).not.toHaveTextContent('English server text')
-  })
-
-  it('puts a field code on its field, associated and announced', async () => {
-    const { user } = setup({}, () => refusal(400, 'invalid_argument', { email: 'non_ascii_email' }))
-    await fill(user)
-
-    await user.click(screen.getByRole('button', { name: 'Send message' }))
-    await settle(() => screen.queryByText(/plain letters/) !== null)
+    await user.click(send())
+    await settle(() => screen.queryByText(/umlauts/) !== null)
 
     const email = screen.getByLabelText(/^Email address/)
     expect(email).toHaveAttribute('aria-invalid', 'true')
-    expect(email).toHaveAccessibleDescription(/plain letters, digits and signs only/)
-    expect(screen.getByText(/plain letters/)).toHaveAttribute('role', 'alert')
-    expect(screen.queryByText('Thank you. Your message was sent.')).toBeNull()
+    expect(email).toHaveAccessibleDescription(/without umlauts or other special characters/)
+    expect(screen.getByText(/umlauts/)).toHaveAttribute('role', 'alert')
+    expect(email).toHaveFocus()
+    expect(thanks()).toBeNull()
+  })
+
+  it('shows the real field answers of the server on their fields', async () => {
+    const { user, server } = setup()
+    await user.type(screen.getByLabelText(/^Name/), 'Alice')
+    await user.type(screen.getByLabelText(/^Email address/), 'not-an-address')
+    await user.type(screen.getByLabelText(/^Message/), 'Hello')
+
+    await user.click(send())
+    await settle(() => screen.queryByText('This is not valid.') !== null)
+
+    expect(server.submits).toHaveLength(1)
+    expect(screen.getByLabelText(/^Email address/)).toHaveAccessibleDescription(
+      'This is not valid.',
+    )
   })
 
   it('asks for a new challenge after a failed send', async () => {
-    const { user, seen } = setup({}, () => refusal(503, 'unavailable'))
+    const server = new FakeContactServer()
+    server.refuseNext(() => refusal(503, 'send_failed'))
+    const { user } = setup({}, { server })
     await fill(user)
 
-    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    await user.click(send())
     await settle(() => screen.queryByRole('alert') !== null)
     await vi.advanceTimersByTimeAsync(0)
 
-    expect(seen.filter((s) => s.url.endsWith('/contact/challenge'))).toHaveLength(2)
+    expect(server.challenges).toHaveLength(2)
   })
 
   it('answers a filled honeypot with success and sends nothing', async () => {
-    const { user, seen, container } = setup()
+    const { user, server, container } = setup()
     await fill(user)
     const trap = container.querySelector('input[name="website"]') as HTMLInputElement
-    await user.type(trap, 'http://spam.example', { skipClick: false })
+    await user.type(trap, 'http://spam.example')
 
-    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    await user.click(send())
     await vi.advanceTimersByTimeAsync(10)
 
     expect(screen.getByRole('status')).toHaveTextContent('Thank you. Your message was sent.')
-    expect(seen.filter((s) => s.method === 'POST')).toHaveLength(0)
+    expect(server.submits).toHaveLength(0)
   })
 
-  it('offers another message after success', async () => {
-    const { user, submits } = setup()
+  it('offers another message after success and returns focus to the first field', async () => {
+    const { user, server } = setup()
     await fill(user)
-    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    await user.click(send())
     await settle(() => screen.queryByRole('button', { name: 'Write another message' }) !== null)
-    expect(submits()).toHaveLength(1)
+    expect(server.submits).toHaveLength(1)
 
     await user.click(screen.getByRole('button', { name: 'Write another message' }))
 
     expect(screen.getByLabelText(/^Message/)).toHaveValue('')
     expect(screen.getByRole('status')).toHaveTextContent('')
+    expect(screen.getByLabelText(/^Name/)).toHaveFocus()
+  })
+})
+
+describe('GovueContactForm solver failures', () => {
+  it('says the spam check could not run when the worker fails, not that the network is down', async () => {
+    FakeWorker.mode = 'error'
+    const { user, server } = setup()
+    await fill(user)
+
+    await user.click(send())
+    await settle(() => screen.queryByRole('alert') !== null)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('The spam check could not run')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('No connection')
+    expect(server.submits).toHaveLength(0)
+    expect(thanks()).toBeNull()
+    expect(FakeWorker.terminated).toBeGreaterThan(0)
+  })
+
+  it('gives up on a worker that never answers and leaves the sending state', async () => {
+    FakeWorker.mode = 'silent'
+    const { user, server } = setup()
+    await fill(user)
+
+    await user.click(send())
+    await settle(() => screen.queryByRole('alert') !== null, 800)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('The spam check could not run')
+    expect(send()).toBeEnabled()
+    expect(screen.getByRole('status')).toHaveTextContent('')
+    expect(server.submits).toHaveLength(0)
+    expect(FakeWorker.terminated).toBeGreaterThan(0)
+  })
+
+  it('terminates a running worker when the form is removed', async () => {
+    FakeWorker.mode = 'silent'
+    const { user, unmount } = setup()
+    await user.click(screen.getByLabelText(/^Name/))
+    await settle(() => FakeWorker.created.length > 0)
+    expect(FakeWorker.created).toHaveLength(1)
+    expect(FakeWorker.terminated).toBe(0)
+
+    unmount()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(FakeWorker.terminated).toBe(1)
   })
 })
 
@@ -403,36 +514,44 @@ describe('GovueContactForm privacy boundaries', () => {
   async function sendOnce(props: Record<string, unknown> = {}) {
     const ctx = setup(props)
     await fill(ctx.user)
-    await ctx.user.click(screen.getByRole('button', { name: 'Send message' }))
-    await settle(() => ctx.submits().length > 0)
+    await ctx.user.click(send())
+    await settle(() => ctx.server.submits.length > 0)
     return ctx
   }
 
-  it('calls only the same origin', async () => {
-    const { seen } = await sendOnce()
+  it('calls only the same origin, through the global fetch of the default client', async () => {
+    const { server, fetchSpy } = await sendOnce()
 
-    expect(seen.length).toBeGreaterThanOrEqual(2)
-    for (const request of seen) {
+    expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(2)
+    for (const [input] of fetchSpy.mock.calls) {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      expect(new URL(url, window.location.origin).origin, url).toBe(window.location.origin)
+    }
+    for (const request of server.requests) {
       expect(new URL(request.url, window.location.origin).origin, request.url).toBe(
         window.location.origin,
       )
     }
   })
 
-  it('omits credentials on every request', async () => {
-    const { seen } = await sendOnce()
-    for (const request of seen) {
-      expect(request.credentials, request.url).toBe('omit')
+  it('adds no header of its own: no CSRF token, no cookie, no authorization', async () => {
+    const { server } = await sendOnce()
+    expect(server.requests.length).toBeGreaterThanOrEqual(2)
+    for (const request of server.requests) {
+      const names = Object.keys(request.headers).map((name) => name.toLowerCase())
+      expect(
+        names.filter((n) => n !== 'accept' && n !== 'content-type'),
+        request.url,
+      ).toEqual([])
     }
   })
 
-  it('sends no CSRF header and no cookie header', async () => {
-    const { seen } = await sendOnce()
-    for (const request of seen) {
-      const names = Object.keys(request.headers).map((name) => name.toLowerCase())
-      expect(names, request.url).not.toContain('x-csrf-token')
-      expect(names, request.url).not.toContain('cookie')
-      expect(names, request.url).not.toContain('authorization')
+  it('leaves credentials to the client: a default client is same-origin', async () => {
+    // The form never sets credentials. A site that wants none creates the client
+    // with credentials: 'omit', which is the caller's duty, documented on the prop.
+    const { server } = await sendOnce()
+    for (const request of server.requests) {
+      expect(request.credentials, request.url).toBe('same-origin')
     }
   })
 
@@ -455,12 +574,12 @@ describe('GovueContactForm privacy boundaries', () => {
   })
 
   it('uses the routes it is given', async () => {
-    const { user, seen } = setup({ challengePath: '/x/challenge', submitPath: '/x/send' })
+    const { user, server } = setup({ challengePath: '/x/challenge', submitPath: '/x/send' })
     await fill(user)
 
-    await user.click(screen.getByRole('button', { name: 'Send message' }))
-    await settle(() => seen.some((s) => s.method === 'POST'))
+    await user.click(send())
+    await settle(() => server.submits.length > 0)
 
-    expect(seen.map((s) => s.url)).toEqual(['/api/v1/x/challenge', '/api/v1/x/send'])
+    expect(server.requests.map((s) => s.url)).toEqual(['/api/v1/x/challenge', '/api/v1/x/send'])
   })
 })

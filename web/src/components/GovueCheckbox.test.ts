@@ -3,6 +3,7 @@
 
 import { fireEvent, render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
+import { defineComponent, h } from 'vue'
 
 import GovueCheckbox from './GovueCheckbox.vue'
 
@@ -52,6 +53,38 @@ describe('GovueCheckbox', () => {
     // that is the platform's own guarantee, not something to re-implement or
     // re-test here, only the attribute that switches it on.
     expect(screen.getByRole('checkbox', { name: 'Send me the weekly mail' })).toBeDisabled()
+  })
+
+  it('keeps the aria-describedby a caller passes and adds the hint to it', () => {
+    render(
+      defineComponent({
+        setup: () => () =>
+          h('div', [
+            h('p', { id: 'err' }, 'Please agree.'),
+            h(GovueCheckbox, { label: 'Agree', hint: 'Required', 'aria-describedby': 'err' }),
+          ]),
+      }),
+    )
+
+    expect(screen.getByRole('checkbox', { name: 'Agree' })).toHaveAccessibleDescription(
+      'Please agree. Required',
+    )
+  })
+
+  it('keeps the aria-describedby a caller passes when there is no hint', () => {
+    render(
+      defineComponent({
+        setup: () => () =>
+          h('div', [
+            h('p', { id: 'err' }, 'Please agree.'),
+            h(GovueCheckbox, { label: 'Agree', 'aria-describedby': 'err' }),
+          ]),
+      }),
+    )
+
+    expect(screen.getByRole('checkbox', { name: 'Agree' })).toHaveAccessibleDescription(
+      'Please agree.',
+    )
   })
 
   it('has a hit area a finger reaches', () => {

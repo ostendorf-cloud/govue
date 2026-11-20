@@ -151,19 +151,37 @@ const de: MessageTree = {
       failure: 'Deine Nachricht wurde nicht gesendet.',
       error: {
         required: 'Bitte fülle dieses Feld aus.',
-        tooLong: 'Das ist zu lang.',
+        tooLong: 'Das ist zu lang. Erlaubt sind höchstens {max} Zeichen.',
         invalidChars: 'Das enthält Zeichen, die nicht erlaubt sind.',
         nonAsciiEmail:
-          'Bitte nutze eine E-Mail-Adresse nur mit einfachen Buchstaben, Ziffern und Zeichen.',
+          'Bitte nutze eine E-Mail-Adresse ohne Umlaute und andere Sonderzeichen, etwa ä, ö, ü, ß oder é.',
         invalid: 'Das ist nicht gültig.',
         consentRequired: 'Bitte stimme zu, bevor du sendest.',
-        challenge:
-          'Die Spam-Prüfung ist fehlgeschlagen oder abgelaufen. Es wurde nichts gesendet. Bitte sende das Formular erneut.',
+        invalidRequest:
+          'Das Formular konnte nicht angenommen werden. Bitte prüfe deine Eingaben und versuche es erneut.',
+        notConfigured:
+          'Das Kontaktformular ist noch nicht eingerichtet. Bitte versuche es später erneut.',
+        powRequired:
+          'Die Spam-Prüfung fehlt. Es wurde nichts gesendet. Bitte sende das Formular erneut.',
+        powInvalid:
+          'Die Spam-Prüfung ist fehlgeschlagen. Es wurde nichts gesendet. Bitte sende das Formular erneut.',
+        powExpired:
+          'Die Spam-Prüfung ist abgelaufen. Es wurde nichts gesendet. Bitte sende das Formular erneut.',
+        powTooFast:
+          'Das Formular wurde zu schnell gesendet. Bitte warte einen Moment und sende es erneut.',
+        powReplay:
+          'Die Spam-Prüfung wurde schon verwendet. Es wurde nichts gesendet. Bitte sende das Formular erneut.',
+        powBusy:
+          'Der Server ist gerade ausgelastet. Es wurde nichts gesendet. Bitte versuche es gleich erneut.',
+        mailLimit:
+          'Das Formular hat sein Limit an Nachrichten vorerst erreicht. Es wurde nichts gesendet. Bitte versuche es später erneut.',
+        sendFailed:
+          'Deine Nachricht konnte nicht zugestellt werden. Es wurde nichts gesendet. Bitte versuche es später erneut.',
         rateLimited: 'Zu viele Nachrichten. Bitte warte ein paar Minuten und versuche es erneut.',
-        unavailable:
-          'Das Kontaktformular ist gerade nicht verfügbar. Bitte versuche es später erneut.',
         tooLarge: 'Die Nachricht ist zu groß zum Senden.',
         refused: 'Die Anfrage wurde abgelehnt. Bitte lade die Seite neu und versuche es erneut.',
+        solver:
+          'Die Spam-Prüfung konnte in diesem Browser nicht laufen. Es wurde nichts gesendet. Bitte lade die Seite neu oder nutze einen anderen Browser.',
         network: 'Keine Verbindung zum Server. Bitte prüfe dein Netzwerk und versuche es erneut.',
         generic: 'Etwas ist schiefgegangen. Bitte versuche es erneut.',
       },

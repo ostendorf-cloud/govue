@@ -2,7 +2,7 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { computed, ref, useId } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useId } from 'vue'
 
 import type { ApiClient } from '../api/client'
 import { useForm, type FieldErrors } from '../composables/useForm'
@@ -14,14 +14,18 @@ import GovueCheckbox from './GovueCheckbox.vue'
 import GovueField from './GovueField.vue'
 import GovueInput from './GovueInput.vue'
 import GovueTextarea from './GovueTextarea.vue'
+import { headingTag, type HeadingLevel } from './headingLevel'
 
 const props = withDefaults(
   defineProps<{
     /**
-     * The client of createClient. The form is stateless: it reads and writes
-     * no cookie and sends no CSRF token. Create the client for it with
-     * `credentials: 'omit'` and no `csrfToken`, so the browser attaches no
-     * cookie of the site either.
+     * The client of createClient. The form never sets a cookie, reads one or
+     * sends a CSRF token, and it never touches the client's options. What the
+     * browser attaches to a request is the client's setting, and that is the
+     * caller's duty: create the client with `credentials: 'omit'` and without
+     * `csrfToken`, so the browser attaches no cookie of the site either. A
+     * client with the default `credentials: 'same-origin'` sends the site's
+     * cookies to the contact routes.
      */
     client: ApiClient
     /** The site's privacy page. Linked under the fields when set. */
@@ -32,6 +36,15 @@ const props = withDefaults(
     challengePath?: string
     /** The submit route, relative to the client's base URL. */
     submitPath?: string
+    /**
+     * How long to wait after the challenge arrived before the message goes
+     * out, in milliseconds. It must be at least the server's proof of work
+     * minimum age (pow.DefaultMinAge is 3 s) plus a margin: a shorter wait is
+     * refused as too fast. Raise it when the server's MinAge is raised.
+     */
+    minAgeMs?: number
+    /** The level of the title, 2 to 6. Level 1 is the page's own heading. */
+    headingLevel?: HeadingLevel
     disabled?: boolean
   }>(),
   {
@@ -39,6 +52,8 @@ const props = withDefaults(
     requireConsent: false,
     challengePath: '/contact/challenge',
     submitPath: '/contact',
+    minAgeMs: 3500,
+    headingLevel: 2,
     disabled: false,
   },
 )
@@ -63,9 +78,18 @@ const honeypotId = useId()
 
 // No Worker and no crypto.subtle until prepare() runs, which only a focus does,
 // so the form renders on the server.
-const solver = createChallengeSolver(props.client, { path: props.challengePath })
+const solver = createChallengeSolver(props.client, {
+  path: props.challengePath,
+  minAgeMs: props.minAgeMs,
+})
+// A visitor who leaves while the worker searches does not leave it running.
+onBeforeUnmount(() => solver.dispose())
 
 const sent = ref(false)
+const formEl = ref<HTMLFormElement | null>(null)
+const statusEl = ref<HTMLElement | null>(null)
+const problemEl = ref<HTMLElement | null>(null)
+const titleTag = computed(() => headingTag(props.headingLevel))
 
 const form = useForm({
   initial: { name: '', email: '', message: '', consent: false, website: '' },
@@ -76,7 +100,7 @@ const form = useForm({
       if (value.trim() === '') {
         errors[field] = t('govue.contact.error.required')
       } else if (codePoints(value) > CONTACT_LIMITS[field]) {
-        errors[field] = t('govue.contact.error.tooLong')
+        errors[field] = t('govue.contact.error.tooLong', { max: CONTACT_LIMITS[field] })
       }
     }
     if (props.requireConsent && !values.consent) {
@@ -104,7 +128,8 @@ const form = useForm({
           name: values.name,
           email: values.email,
           message: values.message,
-          consent: values.consent,
+          // No consent: it stays in the browser. The server decodes with
+          // unknown fields refused, so one more key is a 400.
           website: '',
           pow,
         },
@@ -131,20 +156,50 @@ const status = computed(() => {
   return ''
 })
 
-function again(): void {
+/**
+ * onSubmit moves focus to where the visitor has to look next: the success
+ * text after a send (the form is gone, and so is the focused button), the
+ * first field with an error after a refused check, the failure text after a
+ * failed send.
+ */
+async function onSubmit(): Promise<void> {
+  const done = await form.handleSubmit()
+  await nextTick()
+  if (done) {
+    statusEl.value?.focus()
+    return
+  }
+  const invalid = formEl.value?.querySelector<HTMLElement>('[aria-invalid="true"]')
+  if (invalid) {
+    invalid.focus()
+  } else {
+    problemEl.value?.focus()
+  }
+}
+
+async function again(): Promise<void> {
   form.reset()
   sent.value = false
+  await nextTick()
+  formEl.value?.querySelector<HTMLElement>('input[name="name"]')?.focus()
 }
 </script>
 
 <template>
   <section class="flex flex-col gap-4" :aria-labelledby="headingId">
-    <h2 :id="headingId" class="text-xl font-semibold text-text">
+    <component :is="titleTag" :id="headingId" class="text-xl font-semibold text-text">
       <slot name="title">{{ t('govue.contact.title') }}</slot>
-    </h2>
+    </component>
 
-    <!-- Always in the page, so a change of its text is announced. -->
-    <p role="status" aria-live="polite" :class="status ? 'text-base text-text' : 'sr-only'">
+    <!-- Always in the page, so a change of its text is announced. It takes
+         focus after a send, because the form that had it is gone by then. -->
+    <p
+      ref="statusEl"
+      role="status"
+      aria-live="polite"
+      tabindex="-1"
+      :class="status ? 'text-base text-text' : 'sr-only'"
+    >
       {{ status }}
     </p>
 
@@ -156,12 +211,13 @@ function again(): void {
 
     <form
       v-else
+      ref="formEl"
       class="relative flex flex-col gap-4"
       novalidate
       :aria-labelledby="headingId"
       :aria-busy="submitting ? 'true' : undefined"
       @focusin="solver.prepare()"
-      @submit.prevent="form.handleSubmit()"
+      @submit.prevent="onSubmit"
     >
       <GovueField
         :label="t('govue.contact.field.name')"
@@ -251,7 +307,13 @@ function again(): void {
         >
       </p>
 
-      <div v-if="problem" role="alert" class="flex flex-col gap-1 text-sm text-danger-text">
+      <div
+        v-if="problem"
+        ref="problemEl"
+        role="alert"
+        tabindex="-1"
+        class="flex flex-col gap-1 text-sm text-danger-text"
+      >
         <p>{{ t('govue.contact.failure') }} {{ problem }}</p>
         <p v-if="requestId" class="text-text-muted">
           {{ t('govue.error.requestId') }}: <code class="font-mono">{{ requestId }}</code>

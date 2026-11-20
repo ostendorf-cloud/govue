@@ -146,17 +146,29 @@ const en: MessageTree = {
       failure: 'Your message was not sent.',
       error: {
         required: 'Please fill in this field.',
-        tooLong: 'This is too long.',
+        tooLong: 'This is too long. At most {max} characters are allowed.',
         invalidChars: 'This contains characters that are not allowed.',
-        nonAsciiEmail: 'Please use an email address with plain letters, digits and signs only.',
+        nonAsciiEmail:
+          'Please use an email address without umlauts or other special characters, such as ä, ö, ü, ß or é.',
         invalid: 'This is not valid.',
         consentRequired: 'Please agree before sending.',
-        challenge:
-          'The spam check failed or ran out of time. Nothing was sent. Please send the form again.',
+        invalidRequest: 'The form could not be accepted. Please check your input and try again.',
+        notConfigured: 'The contact form is not set up yet. Please try again later.',
+        powRequired: 'The spam check is missing. Nothing was sent. Please send the form again.',
+        powInvalid: 'The spam check failed. Nothing was sent. Please send the form again.',
+        powExpired: 'The spam check ran out of time. Nothing was sent. Please send the form again.',
+        powTooFast: 'The form was sent too fast. Please wait a moment and send it again.',
+        powReplay: 'The spam check was already used. Nothing was sent. Please send the form again.',
+        powBusy: 'The server is busy right now. Nothing was sent. Please try again in a moment.',
+        mailLimit:
+          'The form has reached its limit of messages for now. Nothing was sent. Please try again later.',
+        sendFailed:
+          'Your message could not be delivered. Nothing was sent. Please try again later.',
         rateLimited: 'Too many messages. Please wait a few minutes and try again.',
-        unavailable: 'The contact form is not available right now. Please try again later.',
         tooLarge: 'The message is too large to send.',
         refused: 'The request was refused. Please reload the page and try again.',
+        solver:
+          'The spam check could not run in this browser. Nothing was sent. Please reload the page or try another browser.',
         network: 'No connection to the server. Please check your network and try again.',
         generic: 'Something went wrong. Please try again.',
       },

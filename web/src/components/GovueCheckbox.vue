@@ -2,7 +2,7 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { useId } from 'vue'
+import { computed, useAttrs, useId } from 'vue'
 
 // A native checkbox already gives correct keyboard handling, ARIA and
 // platform rendering for free, so this hand-rolls the markup instead of
@@ -11,7 +11,7 @@ import { useId } from 'vue'
 // addresses: an attribute belongs on the checkbox itself.
 defineOptions({ inheritAttrs: false })
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     /** The checkbox labels itself, so it is used standalone, outside a field. */
     label: string
@@ -26,6 +26,17 @@ const model = defineModel<boolean>({ default: false })
 
 const id = useId()
 const hintId = `${id}-hint`
+
+// A caller's own aria-describedby, such as the id of an error, and the hint
+// both describe the checkbox. The attribute is bound after $attrs, so it has
+// to carry both or it would replace the caller's.
+const attrs = useAttrs()
+const describedBy = computed(() => {
+  const given = attrs['aria-describedby']
+  const ids = [typeof given === 'string' ? given : undefined, props.hint ? hintId : undefined]
+  const present = ids.filter((value): value is string => Boolean(value))
+  return present.length > 0 ? present.join(' ') : undefined
+})
 </script>
 
 <template>
@@ -50,7 +61,7 @@ const hintId = `${id}-hint`
         type="checkbox"
         class="size-5 shrink-0"
         :disabled="disabled || undefined"
-        :aria-describedby="hint ? hintId : undefined"
+        :aria-describedby="describedBy"
       />
       <!-- The slot is for a label with markup in it, such as a link. The label
            prop stays the plain text and the fallback. -->

@@ -143,7 +143,10 @@ describe('createChallengeSolver', () => {
     expect(get).not.toHaveBeenCalled()
     solver.prepare()
     expect(get).toHaveBeenCalledTimes(1)
-    expect(get).toHaveBeenCalledWith('/contact/challenge', { cache: 'no-store' })
+    expect(get).toHaveBeenCalledWith('/contact/challenge', {
+      cache: 'no-store',
+      signal: expect.any(AbortSignal) as AbortSignal,
+    })
     solver.prepare()
     solver.prepare()
     expect(get).toHaveBeenCalledTimes(1)
@@ -258,7 +261,10 @@ describe('createChallengeSolver', () => {
       sleep: () => Promise.resolve(),
     })
     solver.prepare()
-    expect(get).toHaveBeenCalledWith('/c', { cache: 'no-store' })
+    expect(get).toHaveBeenCalledWith('/c', {
+      cache: 'no-store',
+      signal: expect.any(AbortSignal) as AbortSignal,
+    })
     await solver.solved()
   })
 })
