@@ -52,7 +52,11 @@ const hintId = `${id}-hint`
         :disabled="disabled || undefined"
         :aria-describedby="hint ? hintId : undefined"
       />
-      <span>{{ label }}</span>
+      <!-- The slot is for a label with markup in it, such as a link. The label
+           prop stays the plain text and the fallback. -->
+      <span
+        ><slot>{{ label }}</slot></span
+      >
     </label>
 
     <p v-if="hint" :id="hintId" class="pl-10 text-sm text-text-muted">{{ hint }}</p>

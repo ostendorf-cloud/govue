@@ -45,10 +45,12 @@ function page(path: string): string {
 describe('example site', () => {
   it('prerenders the start page and the three legal pages in both languages', () => {
     expect(built.map((f) => f.path).sort()).toEqual([
+      'de/contact/index.html',
       'de/imprint/index.html',
       'de/index.html',
       'de/privacy/index.html',
       'de/terms/index.html',
+      'en/contact/index.html',
       'en/imprint/index.html',
       'en/index.html',
       'en/privacy/index.html',
@@ -70,6 +72,14 @@ describe('example site', () => {
       '<h1 class="text-2xl font-semibold text-text">Impressum</h1>',
     )
     expect(page('en/terms/index.html')).toContain('Terms and conditions</h1>')
+  })
+
+  it('prerenders the contact form without a worker, in both languages', () => {
+    expect(page('en/contact/index.html')).toContain('Send message')
+    expect(page('en/contact/index.html')).toContain('href="/en/privacy"')
+    expect(page('de/contact/index.html')).toContain('Nachricht senden')
+    expect(page('de/contact/index.html')).toContain('href="/de/privacy"')
+    expect(page('en/contact/index.html')).toContain('name="website"')
   })
 
   it('links the legal pages from every page in its language', () => {

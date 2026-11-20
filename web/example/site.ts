@@ -16,6 +16,7 @@ import { legalRouteDefs, legalRoutes, type LegalPages } from '../src/i18n/legal'
 import { createGovueI18n } from '../src/i18n/plugin'
 import type { LocalizedRoute, RouteDef } from '../src/i18n/routes'
 import { localizedFiles, type PrerenderFile } from '../src/localizedFiles'
+import ContactPage from './ContactPage.vue'
 import HomePage from './HomePage.vue'
 import PlaceholderLegalPage from './PlaceholderLegalPage.vue'
 
@@ -28,12 +29,19 @@ const pages: LegalPages<Component> = {
   terms: { render: () => h(PlaceholderLegalPage, { page: 'terms' }) },
 }
 
-export const routes: RouteDef[] = [{ path: '/', public: true }, ...legalRouteDefs(pages)]
+export const routes: RouteDef[] = [
+  { path: '/', public: true },
+  { path: '/contact', public: true },
+  ...legalRouteDefs(pages),
+]
 
 /** The records a router would get, used here to find the page of a variant. */
 const records = legalRoutes(pages)
 
 function componentFor(variant: LocalizedRoute): Component {
+  if (variant.source === '/contact') {
+    return ContactPage
+  }
   return records.find((record) => record.path === variant.path)?.component ?? HomePage
 }
 

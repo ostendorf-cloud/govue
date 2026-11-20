@@ -24,7 +24,8 @@ repeated here.
   `GovueCheckbox`, `GovueSwitch`, `GovueTextarea`, `GovueButton`) with `useForm`, and the layout
   components (`GovuePage`, `GovueHeader`, `GovueFooter`, `GovueNav`, `GovueSkipLink`,
   `GovueCard`, `GovueBadge`, `GovueSkeleton`), `GovueThemeSwitch`, and the account forms
-  (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`), which take a `client` from
+  (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`), `GovueContactForm` with its proof
+  of work solver (`lib/pow.ts`, `lib/pow.worker.ts`), which take a `client` from
   `createClient`, and `GovuePasskeyButton` with the `usePasskey` composable and `isBearerClient`,
   which take it too and refuse a bearer client. `createClient({ auth: { mode: 'bearer' } })` is
   the client of a native app with a device token: `TokenStorage` (async `get`, `set`, `clear`,

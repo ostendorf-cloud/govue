@@ -132,6 +132,42 @@ const de: MessageTree = {
         generic: 'Etwas ist schiefgegangen. Bitte versuche es erneut.',
       },
     },
+    contact: {
+      title: 'Kontakt',
+      field: {
+        name: 'Name',
+        email: 'E-Mail-Adresse',
+        message: 'Nachricht',
+        honeypot: 'Dieses Feld bitte leer lassen',
+      },
+      consent:
+        'Ich stimme zu, dass meine Angaben zur Beantwortung meiner Nachricht verwendet werden.',
+      privacy: 'Datenschutzerklärung',
+      privacyIntro: 'So gehen wir mit deinen Angaben um:',
+      submit: 'Nachricht senden',
+      sending: 'Deine Nachricht wird gesendet',
+      success: 'Danke. Deine Nachricht wurde gesendet.',
+      another: 'Weitere Nachricht schreiben',
+      failure: 'Deine Nachricht wurde nicht gesendet.',
+      error: {
+        required: 'Bitte fülle dieses Feld aus.',
+        tooLong: 'Das ist zu lang.',
+        invalidChars: 'Das enthält Zeichen, die nicht erlaubt sind.',
+        nonAsciiEmail:
+          'Bitte nutze eine E-Mail-Adresse nur mit einfachen Buchstaben, Ziffern und Zeichen.',
+        invalid: 'Das ist nicht gültig.',
+        consentRequired: 'Bitte stimme zu, bevor du sendest.',
+        challenge:
+          'Die Spam-Prüfung ist fehlgeschlagen oder abgelaufen. Es wurde nichts gesendet. Bitte sende das Formular erneut.',
+        rateLimited: 'Zu viele Nachrichten. Bitte warte ein paar Minuten und versuche es erneut.',
+        unavailable:
+          'Das Kontaktformular ist gerade nicht verfügbar. Bitte versuche es später erneut.',
+        tooLarge: 'Die Nachricht ist zu groß zum Senden.',
+        refused: 'Die Anfrage wurde abgelehnt. Bitte lade die Seite neu und versuche es erneut.',
+        network: 'Keine Verbindung zum Server. Bitte prüfe dein Netzwerk und versuche es erneut.',
+        generic: 'Etwas ist schiefgegangen. Bitte versuche es erneut.',
+      },
+    },
   },
 }
 
