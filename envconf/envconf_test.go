@@ -273,6 +273,80 @@ func TestURL(t *testing.T) {
 		}
 	})
 
+	t.Run("a refused value never reaches the error text", func(t *testing.T) {
+		t.Parallel()
+
+		// Built at run time so the constant is not a secret-looking literal.
+		secret := strings.Repeat("s", 2) + "ecret"
+		for _, tc := range []struct{ name, raw string }{
+			{"unparsable scheme", "s3://user:" + secret + "@host"},
+			{"bad escape in the host", "http://user:" + secret + "@host/%zz"},
+			{"bad escape in the user info", "http://user:" + secret + "%zz@host"},
+			{"user info is refused", "https://user:" + secret + "@www.example.test"},
+			{"no host", "https://user:" + secret + "@/path"},
+			{"query", "https://www.example.test/?token=" + secret},
+			{"fragment", "https://www.example.test/#" + secret},
+			{"no scheme", secret + "@www.example.test"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				l := New(env(map[string]string{"S3_ENDPOINT": tc.raw}))
+				if got := l.URL("S3_ENDPOINT", ""); got != nil {
+					t.Fatalf("URL = %v, want nil", got)
+				}
+				err := l.Err()
+				if err == nil {
+					t.Fatal("a refused value gave no error")
+				}
+				if strings.Contains(err.Error(), secret) {
+					t.Errorf("error text carries the raw value: %v", err)
+				}
+				if !strings.Contains(err.Error(), "S3_ENDPOINT") {
+					t.Errorf("error text does not name the variable: %v", err)
+				}
+			})
+		}
+	})
+
+	t.Run("a fallback is checked the same way", func(t *testing.T) {
+		t.Parallel()
+
+		secret := strings.Repeat("s", 2) + "ecret"
+		l := New(env(nil))
+		if got := l.URL("S3_ENDPOINT", "http://user:"+secret+"%zz@host"); got != nil {
+			t.Fatalf("URL = %v, want nil", got)
+		}
+		if err := l.Err(); err == nil || strings.Contains(err.Error(), secret) {
+			t.Errorf("Err() = %v, want an error without the raw value", err)
+		}
+	})
+
+	t.Run("a valid URL without user info is accepted", func(t *testing.T) {
+		t.Parallel()
+
+		l := New(env(map[string]string{"S3_ENDPOINT": "https://s3.example.test/bucket/"}))
+		got := l.URL("S3_ENDPOINT", "")
+		if got == nil || got.String() != "https://s3.example.test/bucket" {
+			t.Fatalf("URL = %v", got)
+		}
+		if err := l.Err(); err != nil {
+			t.Fatalf("Err() = %v", err)
+		}
+	})
+
+	t.Run("an empty value is a problem that names the variable", func(t *testing.T) {
+		t.Parallel()
+
+		l := New(env(map[string]string{"S3_ENDPOINT": "  "}))
+		if got := l.URL("S3_ENDPOINT", ""); got != nil {
+			t.Fatalf("URL = %v, want nil", got)
+		}
+		if err := l.Err(); err == nil || !strings.Contains(err.Error(), "S3_ENDPOINT") {
+			t.Errorf("Err() = %v, want the variable name", err)
+		}
+	})
+
 	t.Run("missing without a fallback is a problem", func(t *testing.T) {
 		t.Parallel()
 
