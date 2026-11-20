@@ -466,8 +466,8 @@ func TestContextCancelDuringData(t *testing.T) {
 	if err := newSender(t, f.config()).Send(ctx, validMessage()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v", err)
 	}
-	if f.dataCount != 1 {
-		t.Errorf("dataCount = %d", f.dataCount)
+	if n := f.dataSent(); n != 1 {
+		t.Errorf("dataCount = %d", n)
 	}
 }
 

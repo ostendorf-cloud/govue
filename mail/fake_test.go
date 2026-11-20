@@ -268,6 +268,16 @@ func (f *fakeServer) handleAuth(line string, r *textproto.Reader, say func(strin
 	say("235 ok")
 }
 
+// dataSent waits until every server goroutine has finished, so a test that
+// ends a send early (a cancel, a deadline) reads what the server recorded
+// only after the server stopped writing it. It returns the data count.
+func (f *fakeServer) dataSent() int {
+	f.wg.Wait()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.dataCount
+}
+
 // countCommands counts the commands with this verb.
 func (f *fakeServer) countCommands(verb string) int {
 	f.mu.Lock()
