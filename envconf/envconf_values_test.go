@@ -101,6 +101,54 @@ func TestParseErrorsKeepTheRawValueOut(t *testing.T) {
 	})
 }
 
+// TestParseDurationDecisions pins what the exported ParseDuration itself
+// accepts and refuses, without the range of Loader.Duration in between. The
+// values are those of the version before the error text changed.
+func TestParseDurationDecisions(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		input   string
+		want    time.Duration
+		wantErr bool
+	}{
+		{input: "-1d", want: -24 * time.Hour},
+		{input: "+1d", want: 24 * time.Hour},
+		{input: "0d", want: 0},
+		{input: "-0d", want: 0},
+		{input: "-5s", want: -5 * time.Second},
+		{input: ".5s", want: 500 * time.Millisecond},
+		{input: "5s", want: 5 * time.Second},
+		{input: "106751d", want: 106751 * 24 * time.Hour},
+		{input: " 1d", wantErr: true},
+		{input: "1D", wantErr: true},
+		{input: "1dd", wantErr: true},
+		{input: "1d1h", wantErr: true},
+		{input: "1h1d", wantErr: true},
+		{input: "1.5d", wantErr: true},
+		{input: "1_0d", wantErr: true},
+		{input: "d", wantErr: true},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ParseDuration(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("ParseDuration(%q) = %s, want an error", tc.input, got)
+				}
+				if got != 0 {
+					t.Errorf("ParseDuration(%q) = %s with an error, want 0", tc.input, got)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Errorf("ParseDuration(%q) = %s, %v; want %s, nil", tc.input, got, err, tc.want)
+			}
+		})
+	}
+}
+
 // TestParseAcceptedAndRefusedSets pins which inputs each typed reader takes
 // and which it refuses, so a change to the error text cannot change a
 // decision.
