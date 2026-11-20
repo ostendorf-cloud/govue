@@ -127,22 +127,25 @@ func (l *Loader) URL(key, fallback string) *url.URL {
 		l.fail(key, "is required")
 		return nil
 	}
+	// None of these messages carries the raw value or the text of the parse
+	// error, which quotes it: error text must not carry the raw value of a
+	// URL variable.
 	parsed, err := url.Parse(raw)
 	switch {
 	case err != nil:
-		l.fail(key, "must be a URL, got %q", raw)
+		l.fail(key, "must be a valid URL (the value is not shown)")
 		return nil
 	case parsed.Scheme != "http" && parsed.Scheme != "https":
-		l.fail(key, "must start with http:// or https://, got %q", raw)
+		l.fail(key, "must start with http:// or https:// (the value is not shown)")
 		return nil
 	case parsed.Host == "":
-		l.fail(key, "must contain a host, got %q", raw)
+		l.fail(key, "must contain a host (the value is not shown)")
 		return nil
 	case parsed.User != nil:
 		l.fail(key, "must not contain credentials")
 		return nil
 	case parsed.RawQuery != "" || parsed.Fragment != "":
-		l.fail(key, "must not contain a query or a fragment, got %q", raw)
+		l.fail(key, "must not contain a query or a fragment (the value is not shown)")
 		return nil
 	}
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
