@@ -2494,6 +2494,62 @@ try {
   key, audience, clock and challenge, hash vectors and verify cases with the expected outcome.
   The Go test reads it, and `go test ./pow -run TestVectors -update` rewrites it.
 
+### Mail
+
+- `mail` is the generic half of a contact form: a message builder and an SMTP submission sender.
+  It knows nothing about forms. The contact handlers build on it.
+- The builder refuses, it never repairs. Stripping a CR or LF from a subject hides an attack and
+  sends a changed mail. Every header value passes one check for control characters, NUL, CR, LF,
+  and the Unicode line separators, and the error names the field, never the value, because a
+  value is a visitor's name or address and errors reach logs.
+- An address is one plain ASCII mailbox, parsed with `net/mail`. A list, a group (also one with a
+  single member, which `net/mail` would accept), a quoted local part, a domain literal, a non
+  ASCII address and a local part over 64 octets are refused. SMTPUTF8 is not supported. The
+  header is rebuilt from the parsed name and address, so a comment in the input never survives.
+- A display name is checked after `net/mail` decoded its encoded words, so a word that decodes
+  to CR, LF, NUL, ESC or U+2028 is refused like the character itself.
+- Unicode format characters (category Cf: bidi controls, zero width characters, the BOM, the soft
+  hyphen) are refused in names, the subject and extra headers. They are invisible and let a name
+  show something else than it holds. The error names the field.
+- `ReplyTo` takes a visitor's address. `From` stays the site's own address on its own domain, so
+  the mail passes the sender domain's SPF and DKIM.
+- Non ASCII text becomes RFC 2047 `q` words that the package writes itself, because
+  `mime.QEncoding` can leave a line over the 998 octet limit. Only letters and digits stay as
+  they are. Words are at most 75 bytes and are folded with CRLF and a space, so no line passes 78
+  bytes where the header name leaves room, and never 998. The builder refuses a message whose
+  line would still pass 998. Encoded text is about three times its size, which the size limits
+  allow for.
+- A literal `=?` in a subject, a name or an extra header value is encoded too. The other choice,
+  refusing it, would reject honest text for no gain, and encoding makes a forged encoded word
+  show as the text it is.
+- The body is UTF-8 in quoted-printable, which the standard library writes. Base64 is not
+  offered: quoted-printable is readable in a raw view, which an operator debugging a mail wants.
+- Message-ID is 128 random bits on the sender's domain, Date is UTC. Nothing about the visitor is
+  added.
+- The sender requires STARTTLS by default. A server that does not offer it gets `ErrNoStartTLS`
+  after EHLO and nothing else. `net/smtp`'s own `PlainAuth` exempts localhost, so the package has
+  its own PLAIN and LOGIN that need `ServerInfo.TLS`, and checks again before it authenticates.
+  `Plain` is a field set in code and never from the environment, and `Validate` refuses it with
+  credentials.
+- One attempt per `Send`. After the data went out a failure is ambiguous, and a retry could send
+  the mail twice. The caller decides. A message is refused before it dials.
+- One context with `Config.Timeout` covers the dial and the conversation, so a custom
+  `DialContext` is bound too and a `Send` never takes twice the timeout. The connection gets no
+  deadline of its own: only the context ends it, by setting a deadline in the past. A failure
+  after the context ended always wraps `context.Cause`, so `errors.Is` with
+  `context.DeadlineExceeded` or `context.Canceled` holds every time and never depends on which of
+  two timers fired first.
+- `Config.Validate` takes a bare host name: a colon, a slash, white space and the URL characters
+  are refused.
+- `Error` splits the reply from the text. `Error()` holds the stage and the code. `Reply` holds
+  the server's text for the log, with the password removed, also its base64 form and the base64
+  AUTH PLAIN string a server may echo. It can echo an address, so it never goes to a client.
+- Tests run the dialogue over `net.Pipe` with a fake server and a test certificate, through the
+  `DialContext` field. AGENTS.md says no socket, so none is opened.
+- Stays in the consumer: the recipient, the sender address, the subject and body text, the rate
+  limits, and the privacy text. The package doc lists what a privacy text can quote.
+- Out of scope: attachments, HTML bodies, DKIM signing, a queue and retries.
+
 ### Component behaviour
 
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a

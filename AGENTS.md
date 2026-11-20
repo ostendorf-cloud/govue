@@ -48,9 +48,9 @@ repeated here.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
-- Twenty-one Go packages live at the module root: `account`, `analytics`, `api`, `appassoc`,
+- Twenty-two Go packages live at the module root: `account`, `analytics`, `api`, `appassoc`,
   `clientip`, `csrf`, `database`, `envconf`, `favicon`, `health`, `httpserver`, `language`,
-  `logging`, `metrics`, `middleware`, `oidc`, `passkey`, `pow`, `ratelimit`, `session`,
+  `logging`, `mail`, `metrics`, `middleware`, `oidc`, `passkey`, `pow`, `ratelimit`, `session`,
   `themeboot`.
 - `pow` issues and verifies stateless proof of work challenges, the ALTCHA shape, signed with
   HMAC-SHA-256 over a domain separator and the site name. Keys are at least 32 bytes, the first
@@ -59,6 +59,20 @@ repeated here.
   Proof of work is a speed bump, the rate limits are the control. It sets no cookie and stores
   nothing about a visitor. `pow/testdata/vectors.json` is shared with the Vue solver. It imports
   no other govue package.
+- `mail` sends plain text mail over SMTP submission and builds the message. `Message` is refused,
+  never repaired: CR, LF, NUL and any control character in a header value or address is an
+  error, an address is one plain ASCII mailbox (no group, local part up to 64 octets), Unicode
+  format characters (Cf) except ZWNJ and ZWJ are refused in names, subject and headers, non ASCII
+  subjects and names and a literal `=?` become folded RFC 2047 words with no line over 998, sizes
+  are limited. `SMTP` requires STARTTLS by default (`ErrNoStartTLS` before any credential
+  leaves), `ImplicitTLS` is an option, `Plain` is for a local test sink and refuses
+  credentials, AUTH PLAIN or LOGIN runs inside TLS only, TLS is 1.2 or newer, there are no
+  retries, `Config.Timeout` and the context are one deadline over dial and conversation, and
+  `Sender` is the interface consumers fake. `LoadConfig` reads `SMTP_HOST`,
+  `SMTP_PORT`, `SMTP_USERNAME` and `SMTP_PASSWORD` or `SMTP_PASSWORD_FILE`, the password is a
+  `mail.Secret`, and the environment never selects `Plain`. `*mail.Error` carries the reply for a
+  log, its `Error()` text never holds an address or the password. It imports `envconf` only.
+  Its tests run the SMTP dialogue over `net.Pipe`, through `Config.DialContext`, with no socket.
 - `database` holds the PostgreSQL connection of a product: `Config` and `LoadConfig` with the
   `DB_*` variables, the pgx pool, the migration runner over an `fs.FS` and `Check` for
   readiness. The password is a `database.Secret`, held in a closure, so no fmt verb, encoder,

@@ -17,6 +17,8 @@ Two halves, one repository, one version:
   imports pgx).
   Page views are counted on the server and sent to Umami, with no cookie and no script
   (`analytics`, see [Analytics](docs/concepts/govue.md#analytics)).
+  Plain text mail goes out over SMTP submission with STARTTLS required and a message builder
+  that refuses header injection (`mail`, see [Mail](docs/concepts/govue.md#mail)).
   Every package is importable on its own.
 - A Vue package with components and a design token contract, so an application themes itself by
   filling that contract instead of inventing a palette. It carries the account forms
