@@ -8,9 +8,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -29,7 +31,8 @@ const (
 	secretMessage = "Quillfeather asks about the invoice number 4711."
 )
 
-var testKey = []byte("0123456789abcdef0123456789abcdef")
+// testKey is built at run time so no literal in the source looks like a credential.
+var testKey = []byte(strings.Repeat("k3", 16))
 
 type clock struct {
 	mu sync.Mutex
@@ -559,10 +562,105 @@ func TestHoneypotAnswersLikeSuccess(t *testing.T) {
 	if trap.Code != ok.Code || trap.Body.String() != ok.Body.String() {
 		t.Fatalf("honeypot %d %q differs from success %d %q", trap.Code, trap.Body, ok.Code, ok.Body)
 	}
+	if !reflect.DeepEqual(trap.Header(), ok.Header()) {
+		t.Fatalf("honeypot headers %v differ from success headers %v", trap.Header(), ok.Header())
+	}
 	if e.sender.count() != 1 {
 		t.Fatalf("sent %d mails, want 1", e.sender.count())
 	}
 	e.assertNoContentInLogs(t)
+}
+
+func TestDecodeFailureDoesNotEchoTheRequest(t *testing.T) {
+	t.Parallel()
+	for name, body := range map[string]string{
+		"unknown field": `{"leak_Quillfeather_field": 1}`,
+		"wrong type":    `{"email_Quillfeather": 1, "name": 5}`,
+		"cut off":       `{"name": "Quillfeather"`,
+	} {
+		e := newEnv(t, nil)
+		w := e.post(t, body)
+		var got struct {
+			Error struct {
+				Code    string         `json:"code"`
+				Message string         `json:"message"`
+				Details map[string]any `json:"details"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if w.Code != 400 || got.Error.Code != "invalid_argument" || got.Error.Message != "body is not a valid submission" ||
+			len(got.Error.Details) != 0 {
+			t.Fatalf("%s: answer = %d %s", name, w.Code, w.Body)
+		}
+		if strings.Contains(w.Body.String(), "Quillfeather") || strings.Contains(w.Body.String(), "name") ||
+			strings.Contains(w.Body.String(), "email") {
+			t.Fatalf("%s: answer echoes the request: %s", name, w.Body)
+		}
+		e.assertNoContentInLogs(t)
+	}
+}
+
+func TestSendSurvivesACancelledRequest(t *testing.T) {
+	t.Parallel()
+	var sawErr error
+	var sawDeadline bool
+	e := newEnv(t, func(c *Config) {
+		c.Sender = senderFunc(func(ctx context.Context, _ mail.Message) error {
+			sawErr = ctx.Err()
+			_, sawDeadline = ctx.Deadline()
+			return nil
+		})
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	w := e.post(t, e.body(t), func(r *http.Request) { *r = *r.WithContext(ctx) })
+	if w.Code != 200 {
+		t.Fatalf("answer = %d %s", w.Code, w.Body)
+	}
+	if sawErr != nil || !sawDeadline {
+		t.Fatalf("send context: err = %v, deadline = %v", sawErr, sawDeadline)
+	}
+}
+
+type senderFunc func(context.Context, mail.Message) error
+
+func (f senderFunc) Send(ctx context.Context, m mail.Message) error { return f(ctx, m) }
+
+func TestCustomSenderErrorWithTheAddressIsNotLogged(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, func(c *Config) {
+		c.Sender = senderFunc(func(_ context.Context, m mail.Message) error {
+			return fmt.Errorf("relay refused <%s>: %s", m.ReplyTo, m.Body)
+		})
+	})
+	w := e.post(t, e.body(t))
+	if w.Code != 503 || code(t, w) != CodeSendFailed {
+		t.Fatalf("answer = %d %s", w.Code, w.Body)
+	}
+	if !strings.Contains(e.logs.String(), "*fmt.wrapError") && !strings.Contains(e.logs.String(), "*errors.errorString") {
+		t.Fatalf("the error type is not logged:\n%s", e.logs)
+	}
+	e.assertNoContentInLogs(t)
+}
+
+func TestPanickingSiteFunctionsAreRecoveredWithoutContent(t *testing.T) {
+	t.Parallel()
+	for name, mod := range map[string]func(*Config){
+		"subject": func(c *Config) { c.Subject = func(r Request) string { panic("bad subject for " + r.Email) } },
+		"body":    func(c *Config) { c.Body = func(r Request) string { panic(fmt.Errorf("bad body %q", r.Message)) } },
+	} {
+		e := newEnv(t, mod)
+		w := e.post(t, e.body(t))
+		if w.Code != 503 || code(t, w) != CodeSendFailed || e.sender.count() != 0 {
+			t.Fatalf("%s: answer = %d %s", name, w.Code, w.Body)
+		}
+		if !strings.Contains(e.logs.String(), "panicked with") {
+			t.Fatalf("%s: the panic is not logged:\n%s", name, e.logs)
+		}
+		e.assertNoContentInLogs(t)
+	}
 }
 
 func TestHoneypotComesBeforeTheClientLimit(t *testing.T) {
@@ -660,7 +758,7 @@ func TestSendFailureLogsTheCauseNotTheContent(t *testing.T) {
 	if w.Code != 503 || code(t, w) != CodeSendFailed {
 		t.Fatalf("answer = %d %s", w.Code, w.Body)
 	}
-	if !strings.Contains(e.logs.String(), "reply 550") {
+	if !strings.Contains(e.logs.String(), "stage rcpt code 550") {
 		t.Fatalf("the cause is not logged:\n%s", e.logs)
 	}
 	e.assertNoContentInLogs(t)
@@ -846,7 +944,7 @@ func TestNoContentInAnyLogPath(t *testing.T) {
 
 	f := newEnv(t, func(c *Config) { c.Sender = &fakeSender{err: errors.New("smtp: connection refused")} })
 	f.post(t, f.body(t)) // failed send
-	if !strings.Contains(f.logs.String(), "connection refused") {
+	if !strings.Contains(f.logs.String(), "send failed with *errors.errorString") {
 		t.Fatalf("cause missing:\n%s", f.logs)
 	}
 	f.assertNoContentInLogs(t)

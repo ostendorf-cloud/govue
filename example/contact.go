@@ -8,12 +8,18 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/ostendorf-cloud/govue/contact"
 	"github.com/ostendorf-cloud/govue/mail"
 	"github.com/ostendorf-cloud/govue/middleware"
 	"github.com/ostendorf-cloud/govue/pow"
 )
+
+// contactSendTimeout is below the 30 second write timeout and the 20 second
+// shutdown timeout of httpserver, so a send ends before the answer can no
+// longer be written and before a shutdown cuts it off.
+const contactSendTimeout = 15 * time.Second
 
 // contactPrefix is where the contact routes live.
 const contactPrefix = "/api/v1/contact"
@@ -65,6 +71,7 @@ func (a *app) buildContact() error {
 		ClientIP:       a.clientIPs,
 		TrustedOrigins: a.cfg.allowedOrigins,
 		Logger:         a.logger,
+		SendTimeout:    contactSendTimeout,
 		Now:            a.cfg.now,
 	})
 	if err != nil {
@@ -81,7 +88,13 @@ func (a *app) buildContact() error {
 // origin themselves. The general rate limit stays in front, and the outer
 // chain still applies.
 func (a *app) mountContact(mux *http.ServeMux) {
-	chain := func(h http.Handler) http.Handler { return middleware.Chain(h, a.rateLimit.Middleware) }
+	// CORS first, like every other route of the example: TrustedOrigins is set
+	// from ALLOWED_ORIGINS, so a cross origin page may send mail and must also
+	// be allowed to read the answer, or it retries and sends it twice. It also
+	// answers the preflight.
+	chain := func(h http.Handler) http.Handler {
+		return middleware.Chain(h, a.corsMiddleware(), a.rateLimit.Middleware)
+	}
 	mux.Handle("GET "+contactPrefix+"/challenge", chain(a.contact.Challenge()))
 	mux.Handle("POST "+contactPrefix, chain(a.contact.Submit()))
 }

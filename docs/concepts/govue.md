@@ -2565,8 +2565,10 @@ try {
      header, so the handler checks first. The body cap is 64 KiB, unknown fields and a second
      JSON value are refused. A decode failure answers one fixed text and never echoes a field.
   4. The honeypot field `website`. A non empty value answers the same 200 as a success and does
-     nothing else. It comes before the client limit, so it costs a bot nothing and tells it
-     nothing.
+     nothing else. It comes before the client limit, so it costs a bot nothing. It is not
+     invisible to a bot that tests: a filled `website` answers 200 while the same invalid
+     request without it answers 400, and the honeypot answers faster than a real send. The
+     answer is the same bytes and headers as a success, and the behaviour is not changed.
   5. The per client limit, 5 per 10 minutes, keyed by `clientip` with trusted proxies only.
      Every attempt counts, a refused one included.
   6. Validation with stable codes. Every failing field is reported as `{field: code}` under
@@ -2576,10 +2578,11 @@ try {
      `pow_required`, `pow_invalid`, `pow_expired`, `pow_too_fast`, `pow_replay` and `pow_busy`.
   8. The global mail ceiling, 50 per hour for the whole process. A token is taken before the
      send and never given back, so a failing mail server cannot be used to retry without limit.
-     A refusal answers 503 `mail_limit` and logs one warning per minute, with no content.
+     A refusal answers 503 `mail_limit` and logs one warning per minute, with no content. See
+     the lockout note below.
   9. Build and send with a timeout that survives a visitor who leaves. A failure answers 503
-     `send_failed`. The cause goes to the log, which holds the stage and the reply code of
-     `mail.Error` and never its `Reply`, because a reply can echo an address.
+     `send_failed`. The log holds the stage and the code of a `mail.Error`, never its `Reply`,
+     because a reply can echo an address, and only the type name of any other error.
 - The `Challenge` route is limited per client, 10 per 20 seconds, through
   `middleware.RateLimit`. It costs the server one HMAC and stores nothing.
 - Mail: From and To come from the configuration, never from a request. The visitor's address is
@@ -2594,14 +2597,36 @@ try {
   refused like in `mail`, except the zero width joiners. The message keeps LF and tab.
 - Answers carry codes. The text next to a code is a fixed English sentence for a log reader, and
   a site translates by code in its own frontend. There is no message catalogue in Go.
-- Logs: a line holds a code, a status and, for a send failure, the cause. It never holds a name,
-  an address or message text, and the test of the package drives every path with distinctive
-  values and searches the captured output.
+- Logs: a line holds a code, a status and, for a send failure, a cause that is safe by
+  construction: the stage and code of a `mail.Error`, the fixed text of a `mail` sentinel, and
+  for any other error the Go type name only, because a custom `Sender` can put the visitor's
+  address into its error. The tests drive the paths below with distinctive values and search
+  the captured output: success, the origin, media type and decode refusals, validation, no
+  proof of work, replay, the honeypot, the client limit, the ceiling, a send failure with a
+  `mail.Error`, with a custom error that holds the address and with a plain error, and a
+  panicking site function. Not every refusal code has its own log assertion. A site's own
+  `Subject` and `Body` functions must not log visitor input.
+- Site functions run after the ceiling token. They must not panic and must not put visitor input
+  unchecked into a header. A panic is recovered inside the handler, logged by the type of its
+  value only and answered 503 `send_failed`, because the value can hold visitor content and the
+  `Recover` middleware would log it.
+- Blank values: a value of only white space, format characters, the zero width joiners or the
+  filler characters that render blank (U+3164, U+115F, U+1160, U+FFA0, U+2800, U+17B4, U+17B5,
+  U+034F) counts as empty and answers `required`, in all three fields.
 - Per process. The client limit, the mail ceiling, the challenge limit and the replay set of
   `pow` live in memory of one process. With several replicas every budget multiplies by the
   replica count, and a solution can be used once per replica until it expires. A site that needs
   one global answer passes its own limiters or its own `pow.Seen`. Every limiter is bounded at
-  100000 keys.
+  100000 keys. A full limiter evicts an arbitrary active bucket, which fails open for that key
+  as `ratelimit` documents, and one IPv6 /48 holds 65536 /64 keys that can fill it.
+- Lockout by a few clients. The client limit allows 30 submissions per hour per key and the
+  ceiling is 50 per hour. Only a verified proof of work takes a ceiling token, so keeping the
+  form refused costs an attacker 50 valid solves per hour. Four IPv4 addresses or one IPv6 /62
+  are enough, because the key is the /64. The default is a fail closed choice for the mailbox:
+  it protects the owner from a flood and gives a few clients the power to switch the form off.
+  A site can lower `Limiter`, raise `MailLimiter` and watch the throttled warning log line
+  `global mail ceiling reached`, which is the signal. A token burns also when a site function
+  panics or the builder refuses the message, because both run after the ceiling.
 - Not configured: `New` accepts a missing `PoW` or `Sender`, and both routes answer 503
   `not_configured`, so a site boots without keys or SMTP. A bad envelope or trusted origin is a
   startup error.
@@ -2609,7 +2634,14 @@ try {
   text, the frontend and its worker (#198) and the translation of the codes.
 - `example/` wires the handlers outside the session and CSRF chain with a fake sender that keeps
   the last message in memory and opens no socket. `CONTACT_POW_KEY` or `CONTACT_POW_KEY_FILE`,
-  `CONTACT_FROM` and `CONTACT_TO` configure it.
+  `CONTACT_FROM` and `CONTACT_TO` configure it. The routes sit behind the same CORS handler as
+  every other route, because `TrustedOrigins` comes from `ALLOWED_ORIGINS`: a cross origin page
+  that may send mail can also read the answer and does not retry into a duplicate mail. The
+  example sets `SendTimeout` to 15 seconds.
+- Timeouts: the send is not cancelled when the visitor leaves, and `SendTimeout` defaults to 30
+  seconds. `httpserver` has a write timeout of 30 seconds and a shutdown timeout of 20 seconds
+  by default. A slow send can finish after the answer can no longer be written, and a send in
+  flight at shutdown can be cut off. A site sets `SendTimeout` below both.
 - Out of scope: a session or CSRF token variant and content scoring of messages.
 
 ### Component behaviour

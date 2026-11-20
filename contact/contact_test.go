@@ -87,6 +87,33 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestInvisibleOnlyValueIsRequired(t *testing.T) {
+	t.Parallel()
+	for _, r := range []rune{0x200d, 0x200c, 0x3164, 0x115f, 0x1160, 0xffa0, 0x2800, 0x17b4, 0x034f, 0x00ad, 0x202e, 0x00a0} {
+		blank := string(r) + string(r)
+		for _, f := range []struct {
+			field string
+			set   func(*Request)
+		}{
+			{FieldName, func(q *Request) { q.Name = blank }},
+			{FieldEmail, func(q *Request) { q.Email = blank }},
+			{FieldMessage, func(q *Request) { q.Message = blank + "\n" + blank }},
+		} {
+			q := valid()
+			f.set(&q)
+			if got := Validate(q); got[f.field] != CodeRequired {
+				t.Errorf("U+%04X in %s: Validate = %v, want required", r, f.field, got)
+			}
+		}
+	}
+	// A visible rune next to an invisible one is a value.
+	q := valid()
+	q.Name = string(rune(0x3164)) + "A"
+	if got := Validate(q); got != nil {
+		t.Fatalf("Validate = %v", got)
+	}
+}
+
 func TestValidateReportsEveryField(t *testing.T) {
 	t.Parallel()
 	got := Validate(Request{})

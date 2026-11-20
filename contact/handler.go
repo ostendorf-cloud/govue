@@ -84,10 +84,22 @@ type Config struct {
 
 	// Limiter limits Submit per client. Nil means 5 per 10 minutes and
 	// [MaxLimiterKeys] keys.
+	//
+	// The default allows 30 submissions per hour per key, and the default
+	// MailLimiter ceiling is 50 per hour. Only a verified proof of work takes a
+	// ceiling token, so a handful of addresses can keep the form refused: four
+	// IPv4 addresses or one IPv6 /62 (the key is the /64) that solve 50
+	// challenges per hour are enough. A site that expects this lowers Limiter
+	// and raises MailLimiter. A full limiter evicts an arbitrary active bucket
+	// and so fails open for that key, and one IPv6 /48 holds 65536 /64 keys
+	// that can fill a limiter of [MaxLimiterKeys].
 	Limiter *ratelimit.Limiter
 	// MailLimiter is the global ceiling on sent mails. A mail takes a token
 	// whether or not the send succeeds, so a failing server cannot be used to
-	// retry without limit. Nil means 50 per hour.
+	// retry without limit. Nil means 50 per hour. The ceiling is the control
+	// against a flood of mail and also the way a few valid clients lock the
+	// form out for everyone, see Limiter. The refusal logs one throttled
+	// warning per minute, which a site should watch.
 	MailLimiter *ratelimit.Limiter
 	// ChallengeLimiter limits the challenge route per client. Nil means 10 per
 	// 20 seconds and [MaxLimiterKeys] keys.
@@ -106,12 +118,20 @@ type Config struct {
 	// Subject and Body build the mail from a valid request. Nil means a fixed
 	// subject without the name and a body with the three fields. The subject
 	// goes through the mail package's checks, and so does everything else.
+	// Both run after the ceiling token is taken, so a refused message burns a
+	// token. They must not panic and must not put visitor input unchecked into
+	// a header. A panic is recovered here, logged by its type only, and answers
+	// 503 send_failed, because the value of a panic can hold visitor content.
 	Subject func(Request) string
 	Body    func(Request) string
 
 	// MaxBodyBytes is the body cap. Zero means [DefaultMaxBodyBytes].
 	MaxBodyBytes int64
-	// SendTimeout bounds a send. Zero means [DefaultSendTimeout].
+	// SendTimeout bounds a send. Zero means [DefaultSendTimeout]. The send is
+	// not cancelled when the visitor leaves. Keep it below the server's write
+	// timeout (30 s by default in httpserver), or a slow send can finish after
+	// the answer can no longer be written. A send still running at shutdown can
+	// be cut off when the shutdown timeout (20 s by default) ends.
 	SendTimeout time.Duration
 	// Now is the clock of the warning throttle. Nil means time.Now.
 	Now func() time.Time
@@ -319,24 +339,72 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) error {
 		e.Code, e.RetryAfter = CodeMailLimit, wait
 		return e
 	}
-	msg := mail.Message{
-		From:    h.from,
-		To:      h.to,
-		ReplyTo: req.Email,
-		Subject: h.subject(req),
-		Body:    h.body(req),
-		Headers: map[string]string{"Auto-Submitted": "auto-generated"},
+	msg, err := h.message(req)
+	if err != nil {
+		return sendFailed(err)
 	}
 	// The visitor leaving does not cancel a send that may already be on the
 	// wire. The timeout ends it.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), h.timeout)
 	defer cancel()
 	if err := h.sender.Send(ctx, msg); err != nil {
-		e := api.Unavailable("the message could not be sent").WithCause(err).Exposed()
-		e.Code = CodeSendFailed
-		return e
+		return sendFailed(err)
 	}
 	return h.ok(w)
+}
+
+// message builds the mail. A panic of a site function is recovered and
+// reported by its type only: the value can hold the visitor's content.
+func (h *Handler) message(req Request) (msg mail.Message, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = loggedCause("a Subject or Body function panicked with " + fmt.Sprintf("%T", p))
+		}
+	}()
+	return mail.Message{
+		From:    h.from,
+		To:      h.to,
+		ReplyTo: req.Email,
+		Subject: h.subject(req),
+		Body:    h.body(req),
+		Headers: map[string]string{"Auto-Submitted": "auto-generated"},
+	}, nil
+}
+
+// loggedCause is a cause whose text is safe for a log line.
+type loggedCause string
+
+func (c loggedCause) Error() string { return string(c) }
+
+// sendFailed answers 503 send_failed. The logged cause is the stage and the
+// code of a *mail.Error, the fixed text of a known sentinel, and for any
+// other error the Go type name only: a custom Sender's error can hold the
+// visitor's address.
+func sendFailed(err error) error {
+	e := api.Unavailable("the message could not be sent").WithCause(safeCause(err)).Exposed()
+	e.Code = CodeSendFailed
+	return e
+}
+
+func safeCause(err error) error {
+	var me *mail.Error
+	switch {
+	case errors.As(err, &me):
+		return loggedCause(fmt.Sprintf("mail: smtp stage %s code %d", me.Stage, me.Code))
+	case errors.Is(err, mail.ErrInvalid):
+		return loggedCause(mail.ErrInvalid.Error())
+	case errors.Is(err, mail.ErrNoStartTLS):
+		return loggedCause(mail.ErrNoStartTLS.Error())
+	case errors.Is(err, mail.ErrNoAuth):
+		return loggedCause(mail.ErrNoAuth.Error())
+	case errors.Is(err, context.DeadlineExceeded):
+		return loggedCause("send timed out")
+	}
+	var lc loggedCause
+	if errors.As(err, &lc) {
+		return lc
+	}
+	return loggedCause(fmt.Sprintf("send failed with %T", err))
 }
 
 // ok writes the one success answer, which the honeypot shares. A failed

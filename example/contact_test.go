@@ -99,6 +99,53 @@ func TestContactFormSendsThroughTheFakeSender(t *testing.T) {
 	}
 }
 
+// A cross origin page of ALLOWED_ORIGINS may send mail, so it must also read
+// the answer: the contact routes sit behind the example's CORS handler.
+func TestContactRoutesAnswerCORSForAnAllowedOrigin(t *testing.T) {
+	t.Parallel()
+	a, clock, _ := newContactApp(t, true)
+	const origin = "https://app.example.test"
+	cross := func(r *http.Request) {
+		r.Header.Set("Origin", origin)
+		r.Header.Set("Sec-Fetch-Site", "cross-site")
+	}
+
+	w := contactDo(t, a, http.MethodOptions, contactPrefix, "", func(r *http.Request) {
+		cross(r)
+		r.Header.Set("Access-Control-Request-Method", "POST")
+		r.Header.Set("Access-Control-Request-Headers", "content-type")
+	})
+	if w.Code != http.StatusNoContent || w.Header().Get("Access-Control-Allow-Origin") != origin {
+		t.Fatalf("preflight = %d %v", w.Code, w.Header())
+	}
+
+	w = contactDo(t, a, http.MethodGet, contactPrefix+"/challenge", "", cross)
+	if w.Code != http.StatusOK || w.Header().Get("Access-Control-Allow-Origin") != origin {
+		t.Fatalf("challenge = %d %v", w.Code, w.Header())
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"name": "Zora", "email": "zora@example.org", "message": "Hi", "pow": solveContact(t, a, clock),
+	})
+	w = contactDo(t, a, http.MethodPost, contactPrefix, string(body), cross)
+	if w.Code != http.StatusOK || w.Header().Get("Access-Control-Allow-Origin") != origin {
+		t.Fatalf("submit = %d %v %s", w.Code, w.Header(), w.Body)
+	}
+}
+
+func TestContactKeyErrorNamesNoKeyCharacter(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t, 1000)
+	env["CONTACT_POW_KEY"] = strings.Repeat("q", 64)
+	_, err := loadConfig(func(key string) string { return env[key] })
+	if err == nil || !strings.Contains(err.Error(), "CONTACT_POW_KEY: is not valid hex") {
+		t.Fatalf("loadConfig error = %v", err)
+	}
+	if strings.Contains(err.Error(), "U+0071") || strings.Contains(err.Error(), "'q'") {
+		t.Fatalf("error names a key character: %v", err)
+	}
+}
+
 func TestContactFormRefusesACrossSitePost(t *testing.T) {
 	t.Parallel()
 	a, clock, _ := newContactApp(t, true)

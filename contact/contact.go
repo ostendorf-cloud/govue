@@ -93,7 +93,7 @@ func Validate(r Request) map[string]string {
 
 func checkName(s string) string {
 	switch {
-	case s == "":
+	case empty(s):
 		return CodeRequired
 	case utf8.RuneCountInString(s) > MaxNameRunes:
 		return CodeTooLong
@@ -105,7 +105,7 @@ func checkName(s string) string {
 
 func checkMessage(s string) string {
 	switch {
-	case s == "":
+	case empty(s):
 		return CodeRequired
 	case utf8.RuneCountInString(s) > MaxMessageRunes:
 		return CodeTooLong
@@ -117,7 +117,7 @@ func checkMessage(s string) string {
 
 func checkEmail(s string) string {
 	switch {
-	case s == "":
+	case empty(s):
 		return CodeRequired
 	case utf8.RuneCountInString(s) > MaxEmailRunes:
 		return CodeTooLong
@@ -143,6 +143,24 @@ func checkEmail(s string) string {
 		return CodeInvalid
 	}
 	return ""
+}
+
+// empty reports a value with nothing visible in it: no rune, or only white
+// space, format characters, the zero width joiners and the filler characters
+// that render as blank (Hangul fillers, the blank braille pattern, the Khmer
+// inherent vowels and the combining grapheme joiner). Such a value counts as
+// missing, so a field cannot pass with a blank.
+func empty(s string) bool {
+	for _, r := range s {
+		switch {
+		case unicode.IsSpace(r), unicode.Is(unicode.Cf, r), unicode.Is(unicode.Zl, r), unicode.Is(unicode.Zp, r):
+		case r == 'ᅟ', r == 'ᅠ', r == 'ㅤ', r == 'ﾠ', r == '⠀',
+			r == '឴', r == '឵', r == '͏':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // badChars reports invalid UTF-8, a control character, a line or paragraph
