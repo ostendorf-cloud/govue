@@ -83,9 +83,10 @@ repeated here.
   ceiling (never refunded) and the send, in that order. From and To are fixed by the site, the
   visitor's address is only in Reply-To, and the mail holds no client address and no user agent.
   Missing keys or a missing sender answer 503 `not_configured` and the process still starts. A
-  log line holds codes, and for a send failure the stage and code of a `mail.Error` or the Go
-  type name of another error, never a name, an address or message text. Tests search the log
-  of the main paths, not of every refusal. The limits and the replay set are per process, so
+  log line holds codes, and for a send failure the allowed stage and code of a `mail.Error` or
+  the Go type name of another error, never a name, an address or message text. A panic of a
+  site function or of the `Sender` is recovered and logged by type. Tests search the log of the
+  main paths, not of every refusal. The limits and the replay set are per process, so
   several replicas multiply the budgets, and a few valid clients can use up the mail ceiling.
 - `database` holds the PostgreSQL connection of a product: `Config` and `LoadConfig` with the
   `DB_*` variables, the pgx pool, the migration runner over an `fs.FS` and `Check` for

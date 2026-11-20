@@ -2600,19 +2600,25 @@ try {
 - Logs: a line holds a code, a status and, for a send failure, a cause that is safe by
   construction: the stage and code of a `mail.Error`, the fixed text of a `mail` sentinel, and
   for any other error the Go type name only, because a custom `Sender` can put the visitor's
-  address into its error. The tests drive the paths below with distinctive values and search
+  address into its error. The stage is one of the stage names of `mail` and anything else logs
+  as `unknown`. The package never calls `Error` on a send error and never reads text out of one
+  through `errors.As`. The tests drive the paths below with distinctive values and search
   the captured output: success, the origin, media type and decode refusals, validation, no
   proof of work, replay, the honeypot, the client limit, the ceiling, a send failure with a
-  `mail.Error`, with a custom error that holds the address and with a plain error, and a
-  panicking site function. Not every refusal code has its own log assertion. A site's own
-  `Subject` and `Body` functions must not log visitor input.
-- Site functions run after the ceiling token. They must not panic and must not put visitor input
-  unchecked into a header. A panic is recovered inside the handler, logged by the type of its
-  value only and answered 503 `send_failed`, because the value can hold visitor content and the
-  `Recover` middleware would log it.
-- Blank values: a value of only white space, format characters, the zero width joiners or the
-  filler characters that render blank (U+3164, U+115F, U+1160, U+FFA0, U+2800, U+17B4, U+17B5,
-  U+034F) counts as empty and answers `required`, in all three fields.
+  `mail.Error`, with a custom error that holds the address, with an error whose `As` writes
+  text, with a typed nil `*mail.Error` and with a plain error, and a panicking site function or
+  `Sender`. Not every refusal code has its own log assertion. A site's own `Subject`, `Body` and
+  `Sender` must not log visitor input.
+- Site functions and the `Sender` run after the ceiling token. They must not panic and must not
+  put visitor input unchecked into a header or into an error text. A panic of any of them is
+  recovered inside the handler, logged by the type of its value only and answered 503
+  `send_failed`, because the value can hold visitor content and the `Recover` middleware would
+  log it. `http.ErrAbortHandler` is re-panicked unchanged, as `middleware.Recover` does.
+- Blank values: a value of only white space, format characters, the zero width joiners, combining
+  marks or variation selectors with no base rune, or the filler characters that render blank
+  (U+3164, U+115F, U+1160, U+FFA0, U+2800, U+17B4, U+17B5, U+034F) counts as empty and answers
+  `required`, in all three fields. A joiner between letters (Persian ZWNJ, Hindi ZWJ), an emoji
+  sequence and a mark on a base stay accepted.
 - Per process. The client limit, the mail ceiling, the challenge limit and the replay set of
   `pow` live in memory of one process. With several replicas every budget multiplies by the
   replica count, and a solution can be used once per replica until it expires. A site that needs
@@ -2634,14 +2640,18 @@ try {
   text, the frontend and its worker (#198) and the translation of the codes.
 - `example/` wires the handlers outside the session and CSRF chain with a fake sender that keeps
   the last message in memory and opens no socket. `CONTACT_POW_KEY` or `CONTACT_POW_KEY_FILE`,
-  `CONTACT_FROM` and `CONTACT_TO` configure it. The routes sit behind the same CORS handler as
-  every other route, because `TrustedOrigins` comes from `ALLOWED_ORIGINS`: a cross origin page
-  that may send mail can also read the answer and does not retry into a duplicate mail. The
-  example sets `SendTimeout` to 15 seconds.
+  `CONTACT_FROM` and `CONTACT_TO` configure it. The routes have a CORS handler of their own,
+  because `TrustedOrigins` comes from `ALLOWED_ORIGINS`: a cross origin page that may send mail
+  can also read the answer and does not retry into a duplicate mail. It lists the web origins
+  only, serves GET and POST, sends no `Access-Control-Allow-Credentials` and has explicit
+  OPTIONS routes, so a preflight is answered by it and not by the catch-all. A page of another
+  origin gets a 403 preflight, no CORS headers and 403 `cross_origin` on the POST.
 - Timeouts: the send is not cancelled when the visitor leaves, and `SendTimeout` defaults to 30
-  seconds. `httpserver` has a write timeout of 30 seconds and a shutdown timeout of 20 seconds
-  by default. A slow send can finish after the answer can no longer be written, and a send in
-  flight at shutdown can be cut off. A site sets `SendTimeout` below both.
+  seconds. `httpserver` has a read timeout of 15 seconds, a write timeout of 30 seconds and a
+  shutdown timeout of 20 seconds by default. A slow send can finish after the answer can no
+  longer be written, and a send in flight at shutdown can be cut off. A site keeps the read
+  timeout plus `SendTimeout` below the write timeout and `SendTimeout` below the shutdown
+  timeout. The example sets 10 seconds, and a test pins the value and the sums.
 - Out of scope: a session or CSRF token variant and content scoring of messages.
 
 ### Component behaviour

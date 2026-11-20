@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ostendorf-cloud/govue/httpserver"
 	"github.com/ostendorf-cloud/govue/logging"
 	"github.com/ostendorf-cloud/govue/pow"
 )
@@ -118,17 +119,66 @@ func TestContactRoutesAnswerCORSForAnAllowedOrigin(t *testing.T) {
 	if w.Code != http.StatusNoContent || w.Header().Get("Access-Control-Allow-Origin") != origin {
 		t.Fatalf("preflight = %d %v", w.Code, w.Header())
 	}
+	preflightHeader := w.Header().Clone()
 
 	w = contactDo(t, a, http.MethodGet, contactPrefix+"/challenge", "", cross)
 	if w.Code != http.StatusOK || w.Header().Get("Access-Control-Allow-Origin") != origin {
 		t.Fatalf("challenge = %d %v", w.Code, w.Header())
 	}
+	challengeHeader := w.Header().Clone()
 
 	body, _ := json.Marshal(map[string]any{
 		"name": "Zora", "email": "zora@example.org", "message": "Hi", "pow": solveContact(t, a, clock),
 	})
 	w = contactDo(t, a, http.MethodPost, contactPrefix, string(body), cross)
 	if w.Code != http.StatusOK || w.Header().Get("Access-Control-Allow-Origin") != origin {
+		t.Fatalf("submit = %d %v %s", w.Code, w.Header(), w.Body)
+	}
+	for _, h := range []http.Header{w.Header(), preflightHeader, challengeHeader} {
+		if _, ok := h["Access-Control-Allow-Credentials"]; ok {
+			t.Fatalf("credentials allowed: %v", h)
+		}
+	}
+	// The send ran under the example's timeout, which with the read timeout
+	// stays below the write timeout of the server.
+	if got := a.contactSender.budget; got <= contactSendTimeout-3*time.Second || got > contactSendTimeout {
+		t.Fatalf("send budget = %v, want about %v", got, contactSendTimeout)
+	}
+	if contactSendTimeout != 10*time.Second ||
+		httpserver.DefaultReadTimeout+contactSendTimeout >= httpserver.DefaultWriteTimeout ||
+		contactSendTimeout >= httpserver.DefaultShutdownTimeout {
+		t.Fatal("the send timeout does not fit the server timeouts")
+	}
+}
+
+func TestContactRoutesRefuseAnUnlistedOrigin(t *testing.T) {
+	t.Parallel()
+	a, clock, _ := newContactApp(t, true)
+	const origin = "https://evil.example"
+	cross := func(r *http.Request) {
+		r.Header.Set("Origin", origin)
+		r.Header.Set("Sec-Fetch-Site", "cross-site")
+	}
+
+	w := contactDo(t, a, http.MethodOptions, contactPrefix, "", func(r *http.Request) {
+		cross(r)
+		r.Header.Set("Access-Control-Request-Method", "POST")
+	})
+	if w.Code != http.StatusForbidden || hasACHeader(w) {
+		t.Fatalf("preflight = %d %v", w.Code, w.Header())
+	}
+
+	w = contactDo(t, a, http.MethodGet, contactPrefix+"/challenge", "", cross)
+	if hasACHeader(w) {
+		t.Fatalf("challenge answers CORS headers to an unlisted origin: %v", w.Header())
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"name": "Zora", "email": "zora@example.org", "message": "Hi", "pow": solveContact(t, a, clock),
+	})
+	w = contactDo(t, a, http.MethodPost, contactPrefix, string(body), cross)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "cross_origin") || hasACHeader(w) ||
+		a.contactSender.n != 0 {
 		t.Fatalf("submit = %d %v %s", w.Code, w.Header(), w.Body)
 	}
 }

@@ -75,6 +75,10 @@ type Config struct {
 	PoW *pow.Service
 	// Sender sends the mail. Nil means SMTP is not configured: Submit answers
 	// 503 not_configured. A typed nil pointer in the interface is not nil.
+	// Send must not panic and must not put visitor data in its error text. A
+	// panic is recovered here and logged by the type of its value only, and an
+	// error is logged by its type unless it is a *mail.Error or one of the
+	// mail sentinels.
 	Sender mail.Sender
 	// From is the fixed sender, on the site's own domain. To is the fixed
 	// recipient list. Both are required when Sender is set, and both are
@@ -111,8 +115,10 @@ type Config struct {
 	// on another host. Empty trusts the own origin only.
 	TrustedOrigins []string
 
-	// Logger receives the log lines. They never hold a name, an address or
-	// message text. Nil means the logger of the request context.
+	// Logger receives the log lines. They hold codes, the stage and code of a
+	// mail error and type names, never a name, an address or message text.
+	// That holds for this package only: a Subject, Body or Sender of the site
+	// must keep to it. Nil means the logger of the request context.
 	Logger *slog.Logger
 
 	// Subject and Body build the mail from a valid request. Nil means a fixed
@@ -339,28 +345,26 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) error {
 		e.Code, e.RetryAfter = CodeMailLimit, wait
 		return e
 	}
-	msg, err := h.message(req)
-	if err != nil {
-		return sendFailed(err)
+	var msg mail.Message
+	if cause := guard("a Subject or Body function", func() { msg = h.message(req) }); cause != nil {
+		return sendFailed(cause)
 	}
 	// The visitor leaving does not cancel a send that may already be on the
 	// wire. The timeout ends it.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), h.timeout)
 	defer cancel()
-	if err := h.sender.Send(ctx, msg); err != nil {
-		return sendFailed(err)
+	var sendErr error
+	if cause := guard("Sender.Send", func() { sendErr = h.sender.Send(ctx, msg) }); cause != nil {
+		return sendFailed(cause)
+	}
+	if sendErr != nil {
+		return sendFailed(safeCause(sendErr))
 	}
 	return h.ok(w)
 }
 
-// message builds the mail. A panic of a site function is recovered and
-// reported by its type only: the value can hold the visitor's content.
-func (h *Handler) message(req Request) (msg mail.Message, err error) {
-	defer func() {
-		if p := recover(); p != nil {
-			err = loggedCause("a Subject or Body function panicked with " + fmt.Sprintf("%T", p))
-		}
-	}()
+// message builds the mail from the site's functions.
+func (h *Handler) message(req Request) mail.Message {
 	return mail.Message{
 		From:    h.from,
 		To:      h.to,
@@ -368,29 +372,68 @@ func (h *Handler) message(req Request) (msg mail.Message, err error) {
 		Subject: h.subject(req),
 		Body:    h.body(req),
 		Headers: map[string]string{"Auto-Submitted": "auto-generated"},
-	}, nil
+	}
 }
 
-// loggedCause is a cause whose text is safe for a log line.
+// guard runs fn and turns a panic into a cause that names the type of the
+// panic value and nothing else: the value can hold the visitor's content, and
+// the Recover middleware would log it. http.ErrAbortHandler is another
+// handler's signal to abort the response and is re-panicked unchanged, as
+// middleware.Recover does.
+func guard(what string, fn func()) (cause error) {
+	defer func() {
+		p := recover()
+		if p == nil {
+			return
+		}
+		if err, ok := p.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+			panic(p)
+		}
+		cause = loggedCause(what + " panicked with " + fmt.Sprintf("%T", p))
+	}()
+	fn()
+	return nil
+}
+
+// loggedCause is a cause whose text is safe for a log line. Only this
+// package builds one, from fixed text and type names.
 type loggedCause string
 
 func (c loggedCause) Error() string { return string(c) }
 
-// sendFailed answers 503 send_failed. The logged cause is the stage and the
-// code of a *mail.Error, the fixed text of a known sentinel, and for any
-// other error the Go type name only: a custom Sender's error can hold the
-// visitor's address.
-func sendFailed(err error) error {
-	e := api.Unavailable("the message could not be sent").WithCause(safeCause(err)).Exposed()
+// sendFailed answers 503 send_failed with a cause that is already safe.
+func sendFailed(cause error) error {
+	e := api.Unavailable("the message could not be sent").WithCause(cause).Exposed()
 	e.Code = CodeSendFailed
 	return e
 }
 
-func safeCause(err error) error {
+// stages are the stage names of the mail package, the only ones a log line
+// may carry. Any other value logs as "unknown".
+var stages = map[string]bool{
+	"dial": true, "tls": true, "greeting": true, "ehlo": true, "starttls": true,
+	"auth": true, "mail": true, "rcpt": true, "data": true, "send": true,
+}
+
+// safeCause is the text of a send error that may reach a log: the allowed
+// stage and the code of a *mail.Error, the fixed text of a mail sentinel, and
+// for any other error the Go type name only, because a custom Sender's error
+// can hold the visitor's address. It never calls Error on the error, and it
+// survives an error whose methods panic, such as a typed nil *mail.Error.
+func safeCause(err error) (cause error) {
+	defer func() {
+		if recover() != nil {
+			cause = loggedCause(fmt.Sprintf("send failed with %T", err))
+		}
+	}()
 	var me *mail.Error
 	switch {
-	case errors.As(err, &me):
-		return loggedCause(fmt.Sprintf("mail: smtp stage %s code %d", me.Stage, me.Code))
+	case errors.As(err, &me) && me != nil:
+		stage := "unknown"
+		if stages[me.Stage] {
+			stage = me.Stage
+		}
+		return loggedCause(fmt.Sprintf("mail: smtp stage %s code %d", stage, me.Code))
 	case errors.Is(err, mail.ErrInvalid):
 		return loggedCause(mail.ErrInvalid.Error())
 	case errors.Is(err, mail.ErrNoStartTLS):
@@ -399,10 +442,6 @@ func safeCause(err error) error {
 		return loggedCause(mail.ErrNoAuth.Error())
 	case errors.Is(err, context.DeadlineExceeded):
 		return loggedCause("send timed out")
-	}
-	var lc loggedCause
-	if errors.As(err, &lc) {
-		return lc
 	}
 	return loggedCause(fmt.Sprintf("send failed with %T", err))
 }

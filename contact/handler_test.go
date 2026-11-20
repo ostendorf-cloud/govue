@@ -663,6 +663,95 @@ func TestPanickingSiteFunctionsAreRecoveredWithoutContent(t *testing.T) {
 	}
 }
 
+// asErr is an error whose As method tries to write text into any target.
+type asErr struct{}
+
+func (asErr) Error() string { return secretEmail }
+
+func (asErr) As(target any) bool {
+	switch t := target.(type) {
+	case *string:
+		*t = secretEmail
+		return true
+	case **mail.Error:
+		*t = &mail.Error{Stage: secretEmail, Code: 7}
+		return true
+	}
+	return false
+}
+
+func TestSendErrorLogsOnlyFixedText(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		err  error
+		want string
+	}{
+		"invalid message":   {fmt.Errorf("%w: "+secretEmail+" "+secretMessage, mail.ErrInvalid), "mail: invalid message"},
+		"no starttls":       {fmt.Errorf("%w for "+secretName, mail.ErrNoStartTLS), "mail: server does not offer STARTTLS"},
+		"no auth":           {fmt.Errorf("%w for "+secretName, mail.ErrNoAuth), "mail: server offers no usable AUTH"},
+		"deadline":          {fmt.Errorf("dial "+secretEmail+": %w", context.DeadlineExceeded), "send timed out"},
+		"unknown stage":     {&mail.Error{Stage: secretEmail, Code: 5}, "stage unknown code 5"},
+		"known stage":       {&mail.Error{Stage: "data", Code: 451, Reply: secretEmail}, "stage data code 451"},
+		"custom As":         {asErr{}, "stage unknown code 7"},
+		"typed nil":         {(*mail.Error)(nil), "send failed with *mail.Error"},
+		"plain error":       {errors.New(secretEmail), "send failed with *errors.errorString"},
+		"wrapped mail.Err.": {fmt.Errorf("relay: %w", &mail.Error{Stage: "rcpt", Code: 550}), "stage rcpt code 550"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, func(c *Config) { c.Sender = &fakeSender{err: tc.err} })
+			w := e.post(t, e.body(t))
+			if w.Code != 503 || code(t, w) != CodeSendFailed {
+				t.Fatalf("answer = %d %s", w.Code, w.Body)
+			}
+			if !strings.Contains(e.logs.String(), tc.want) {
+				t.Fatalf("log lacks %q:\n%s", tc.want, e.logs)
+			}
+			e.assertNoContentInLogs(t)
+		})
+	}
+}
+
+func TestPanickingSenderIsRecoveredWithoutContent(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, func(c *Config) {
+		c.Sender = senderFunc(func(_ context.Context, m mail.Message) error {
+			panic(fmt.Errorf("boom for %s: %s", m.ReplyTo, m.Body))
+		})
+	})
+	w := e.post(t, e.body(t))
+	if w.Code != 503 || code(t, w) != CodeSendFailed {
+		t.Fatalf("answer = %d %s", w.Code, w.Body)
+	}
+	if !strings.Contains(e.logs.String(), "Sender.Send panicked with") {
+		t.Fatalf("the panic is not logged:\n%s", e.logs)
+	}
+	e.assertNoContentInLogs(t)
+}
+
+func TestAbortHandlerPanicPassesThrough(t *testing.T) {
+	t.Parallel()
+	for name, mod := range map[string]func(*Config){
+		"sender": func(c *Config) {
+			c.Sender = senderFunc(func(context.Context, mail.Message) error { panic(http.ErrAbortHandler) })
+		},
+		"subject": func(c *Config) { c.Subject = func(Request) string { panic(http.ErrAbortHandler) } },
+		"body":    func(c *Config) { c.Body = func(Request) string { panic(http.ErrAbortHandler) } },
+	} {
+		e := newEnv(t, mod)
+		b := e.body(t)
+		var got any
+		func() {
+			defer func() { got = recover() }()
+			e.post(t, b)
+		}()
+		if got != http.ErrAbortHandler { //nolint:errorlint // the sentinel itself is re-panicked
+			t.Fatalf("%s: recovered %v, want http.ErrAbortHandler", name, got)
+		}
+	}
+}
+
 func TestHoneypotComesBeforeTheClientLimit(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, nil)

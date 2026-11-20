@@ -89,7 +89,10 @@ func TestValidate(t *testing.T) {
 
 func TestInvisibleOnlyValueIsRequired(t *testing.T) {
 	t.Parallel()
-	for _, r := range []rune{0x200d, 0x200c, 0x3164, 0x115f, 0x1160, 0xffa0, 0x2800, 0x17b4, 0x034f, 0x00ad, 0x202e, 0x00a0} {
+	for _, r := range []rune{
+		0x200d, 0x200c, 0x3164, 0x115f, 0x1160, 0xffa0, 0x2800, 0x17b4, 0x17b5, 0x034f, 0x00ad, 0x202e, 0x00a0,
+		0xfe0f, 0xfe00, 0x0301, 0x0300, 0xe0100, 0xe01ef,
+	} {
 		blank := string(r) + string(r)
 		for _, f := range []struct {
 			field string
@@ -106,11 +109,40 @@ func TestInvisibleOnlyValueIsRequired(t *testing.T) {
 			}
 		}
 	}
+	// A filler followed by a variation selector, and a mark run, have no base.
+	for _, s := range []string{runes(0x3164, 0xfe0f), runes(0x3164, 0xe0100), runes(0x0301, 0x0302, 0xfe0f)} {
+		q := valid()
+		q.Name, q.Message = s, s
+		if got := Validate(q); got[FieldName] != CodeRequired || got[FieldMessage] != CodeRequired {
+			t.Errorf("%q: Validate = %v, want required", s, got)
+		}
+	}
 	// A visible rune next to an invisible one is a value.
 	q := valid()
 	q.Name = string(rune(0x3164)) + "A"
 	if got := Validate(q); got != nil {
 		t.Fatalf("Validate = %v", got)
+	}
+}
+
+func runes(rs ...rune) string { return string(rs) }
+
+// Scripts and emoji that need a joiner, or a mark on a base, stay accepted.
+func TestJoinersAndMarksOnABaseAreAccepted(t *testing.T) {
+	t.Parallel()
+	for name, s := range map[string]string{
+		"persian zwnj":   runes(0x645, 0x6cc, 0x200c, 0x62e, 0x648, 0x627, 0x647, 0x645),
+		"hindi zwj":      runes(0x915, 0x94d, 0x200d, 0x937),
+		"emoji family":   runes(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467),
+		"emoji selector": runes(0x2764, 0xfe0f),
+		"accent on base": runes('e', 0x0301),
+		"keycap":         runes('1', 0xfe0f, 0x20e3),
+	} {
+		q := valid()
+		q.Name, q.Message = s, s
+		if got := Validate(q); got != nil {
+			t.Errorf("%s: Validate = %v", name, got)
+		}
 	}
 }
 

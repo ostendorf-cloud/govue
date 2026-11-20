@@ -146,14 +146,18 @@ func checkEmail(s string) string {
 }
 
 // empty reports a value with nothing visible in it: no rune, or only white
-// space, format characters, the zero width joiners and the filler characters
-// that render as blank (Hangul fillers, the blank braille pattern, the Khmer
-// inherent vowels and the combining grapheme joiner). Such a value counts as
+// space, format characters, the zero width joiners, combining marks and
+// variation selectors with no base rune, and the filler characters that render
+// as blank (Hangul fillers, the blank braille pattern, the Khmer inherent
+// vowels and the combining grapheme joiner). Such a value counts as
 // missing, so a field cannot pass with a blank.
 func empty(s string) bool {
 	for _, r := range s {
 		switch {
 		case unicode.IsSpace(r), unicode.Is(unicode.Cf, r), unicode.Is(unicode.Zl, r), unicode.Is(unicode.Zp, r):
+		// A combining mark or a variation selector needs a base rune. With
+		// none in the value, nothing is drawn.
+		case unicode.Is(unicode.Mn, r), r >= '︀' && r <= '️', r >= 0xe0100 && r <= 0xe01ef:
 		case r == 'ᅟ', r == 'ᅠ', r == 'ㅤ', r == 'ﾠ', r == '⠀',
 			r == '឴', r == '឵', r == '͏':
 		default:

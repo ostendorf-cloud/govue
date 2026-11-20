@@ -84,6 +84,9 @@ type app struct {
 	// sender. See buildContact.
 	contact       *contact.Handler
 	contactSender *fakeSender
+	// contactCORS is the CORS handler of the contact routes, without
+	// credentials.
+	contactCORS *middleware.CORS
 
 	health *health.Registry
 
