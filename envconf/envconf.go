@@ -40,6 +40,8 @@ func (l *Loader) Err() error {
 	return errors.Join(l.problems...)
 }
 
+var errBadDuration = errors.New("envconf: not a duration such as 30s, 5m or 7d (the value is not shown)")
+
 func (l *Loader) fail(key, format string, args ...any) {
 	l.problems = append(l.problems, fmt.Errorf("envconf: %s: "+format, append([]any{key}, args...)...))
 }
@@ -75,7 +77,8 @@ func (l *Loader) Bool(key string, fallback bool) bool {
 	}
 	value, err := strconv.ParseBool(raw)
 	if err != nil {
-		l.fail(key, "must be true or false, got %q", raw)
+		// Error text must not carry the raw value of a variable.
+		l.fail(key, "must be true or false (the value is not shown)")
 		return fallback
 	}
 	return value
@@ -90,7 +93,8 @@ func (l *Loader) Int(key string, fallback, minimum, maximum int) int {
 	}
 	value, err := strconv.Atoi(raw)
 	if err != nil {
-		l.fail(key, "must be a whole number, got %q", raw)
+		// The error of Atoi quotes the raw value, so it is dropped.
+		l.fail(key, "must be a whole number (the value is not shown)")
 		return fallback
 	}
 	if value < minimum || value > maximum {
@@ -109,7 +113,9 @@ func (l *Loader) Duration(key string, fallback, minimum, maximum time.Duration) 
 	}
 	value, err := ParseDuration(raw)
 	if err != nil {
-		l.fail(key, "must be a duration such as 30s, 5m or 7d, got %q", raw)
+		// The error of ParseDuration is dropped here: the variable name and the
+		// expected form are enough.
+		l.fail(key, "must be a duration such as 30s, 5m or 7d (the value is not shown)")
 		return fallback
 	}
 	if value < minimum || value > maximum {
@@ -249,17 +255,21 @@ func (l *Loader) RequiredSecretOrFile(key string) string {
 
 // ParseDuration reads a Go duration, plus a whole number of days with a d
 // suffix, which time.ParseDuration does not support.
+//
+// The error names the expected form only. It neither carries the input nor
+// wraps the errors of strconv and time, which quote it: error text must not
+// carry the raw value of a variable.
 func ParseDuration(raw string) (time.Duration, error) {
 	if days, ok := strings.CutSuffix(raw, "d"); ok {
 		n, err := strconv.Atoi(days)
 		if err != nil {
-			return 0, fmt.Errorf("envconf: parse days %q: %w", raw, err)
+			return 0, errBadDuration
 		}
 		return time.Duration(n) * 24 * time.Hour, nil
 	}
 	value, err := time.ParseDuration(raw)
 	if err != nil {
-		return 0, fmt.Errorf("envconf: parse duration %q: %w", raw, err)
+		return 0, errBadDuration
 	}
 	return value, nil
 }
