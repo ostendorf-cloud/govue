@@ -2550,6 +2550,68 @@ try {
   limits, and the privacy text. The package doc lists what a privacy text can quote.
 - Out of scope: attachments, HTML bodies, DKIM signing, a queue and retries.
 
+### Contact form
+
+- `contact` joins `pow` and `mail` into two handlers: `Challenge` issues a signed challenge and
+  `Submit` validates a submission and sends one plain text mail. `Normalize` and `Validate` are
+  usable on their own. The package is stateless by the owner's decision. It sets no cookie, reads
+  no session, uses no CSRF token and imports no `session` package.
+- Protection of `Submit`, in the order it runs:
+  1. Method POST and the origin check, `csrf.Protector` with no token half (Sec-Fetch-Site and
+     Origin). A cross site browser POST is refused with 403 `cross_origin`. A client that sends
+     neither header is a script, not a browser, and passes: the other layers are the control.
+  2. 503 `not_configured` when keys, sender or envelope are missing.
+  3. `Content-Type: application/json` is required. `api.DecodeLimit` alone accepts a missing
+     header, so the handler checks first. The body cap is 64 KiB, unknown fields and a second
+     JSON value are refused. A decode failure answers one fixed text and never echoes a field.
+  4. The honeypot field `website`. A non empty value answers the same 200 as a success and does
+     nothing else. It comes before the client limit, so it costs a bot nothing and tells it
+     nothing.
+  5. The per client limit, 5 per 10 minutes, keyed by `clientip` with trusted proxies only.
+     Every attempt counts, a refused one included.
+  6. Validation with stable codes. Every failing field is reported as `{field: code}` under
+     `details`, and a value is never echoed.
+  7. Proof of work through `pow`. It runs after validation, so a typo does not burn the solution.
+     The challenge is signed, bound to the site name, expires and is used once. The codes are
+     `pow_required`, `pow_invalid`, `pow_expired`, `pow_too_fast`, `pow_replay` and `pow_busy`.
+  8. The global mail ceiling, 50 per hour for the whole process. A token is taken before the
+     send and never given back, so a failing mail server cannot be used to retry without limit.
+     A refusal answers 503 `mail_limit` and logs one warning per minute, with no content.
+  9. Build and send with a timeout that survives a visitor who leaves. A failure answers 503
+     `send_failed`. The cause goes to the log, which holds the stage and the reply code of
+     `mail.Error` and never its `Reply`, because a reply can echo an address.
+- The `Challenge` route is limited per client, 10 per 20 seconds, through
+  `middleware.RateLimit`. It costs the server one HMAC and stores nothing.
+- Mail: From and To come from the configuration, never from a request. The visitor's address is
+  only in Reply-To, as a bare address. The name goes into the body, not into a header. The mail
+  carries `Auto-Submitted: auto-generated`, no client address and no user agent. The subject and
+  body are functions of the site. The defaults use a fixed subject without the name.
+- Header injection: a CR, LF or other control character in the name or the address is a
+  validation error with `invalid_chars`, never repaired. The address is checked by the mail
+  builder itself, so a value that passes cannot be refused at send time. Whatever a site puts in
+  a subject passes the same refusal checks in `mail`.
+- Limits count runes, not bytes: name 200, address 254, message 5000. Format characters are
+  refused like in `mail`, except the zero width joiners. The message keeps LF and tab.
+- Answers carry codes. The text next to a code is a fixed English sentence for a log reader, and
+  a site translates by code in its own frontend. There is no message catalogue in Go.
+- Logs: a line holds a code, a status and, for a send failure, the cause. It never holds a name,
+  an address or message text, and the test of the package drives every path with distinctive
+  values and searches the captured output.
+- Per process. The client limit, the mail ceiling, the challenge limit and the replay set of
+  `pow` live in memory of one process. With several replicas every budget multiplies by the
+  replica count, and a solution can be used once per replica until it expires. A site that needs
+  one global answer passes its own limiters or its own `pow.Seen`. Every limiter is bounded at
+  100000 keys.
+- Not configured: `New` accepts a missing `PoW` or `Sender`, and both routes answer 503
+  `not_configured`, so a site boots without keys or SMTP. A bad envelope or trusted origin is a
+  startup error.
+- Stays per site: the recipient and sender addresses, the subject and body text, the privacy
+  text, the frontend and its worker (#198) and the translation of the codes.
+- `example/` wires the handlers outside the session and CSRF chain with a fake sender that keeps
+  the last message in memory and opens no socket. `CONTACT_POW_KEY` or `CONTACT_POW_KEY_FILE`,
+  `CONTACT_FROM` and `CONTACT_TO` configure it.
+- Out of scope: a session or CSRF token variant and content scoring of messages.
+
 ### Component behaviour
 
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a

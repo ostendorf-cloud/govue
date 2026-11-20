@@ -79,6 +79,13 @@ type config struct {
 	passkeyRateLimitBurst int
 	passkeyRateLimitPer   time.Duration
 
+	// contactKey signs the proof of work challenges of the contact form. It is
+	// empty by default, and the form then answers 503 and the process still
+	// starts. contactFrom and contactTo are the fixed envelope.
+	contactKey  []byte
+	contactFrom string
+	contactTo   []string
+
 	allowPlainHTTP bool
 
 	// siteDir is the output directory of the prerender step. Empty means the
@@ -182,6 +189,16 @@ func loadConfig(getenv func(string) string) (config, error) {
 	cfg.passkeyRateLimitPer = l.Duration("PASSKEY_RATE_LIMIT_PER", time.Minute, time.Second, time.Hour)
 	if cfg.passkeyRPID != "" && len(cfg.allowedOrigins) == 0 {
 		fail(errors.New("PASSKEY_RP_ID: needs ALLOWED_ORIGINS, the origins a passkey ceremony may come from"))
+	}
+
+	// Optional. CONTACT_POW_KEY or CONTACT_POW_KEY_FILE is a hex key of at least
+	// 32 bytes. Unset means the contact form answers 503 until it is set.
+	cfg.contactKey, err = decodeKey("CONTACT_POW_KEY", l.SecretOrFile("CONTACT_POW_KEY"))
+	fail(err)
+	cfg.contactFrom = l.String("CONTACT_FROM", "Example <noreply@example.test>")
+	cfg.contactTo = l.List("CONTACT_TO")
+	if len(cfg.contactTo) == 0 {
+		cfg.contactTo = []string{"owner@example.test"}
 	}
 
 	cfg.allowPlainHTTP = l.Bool("ALLOW_PLAIN_HTTP", false)

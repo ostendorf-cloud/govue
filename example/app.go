@@ -20,6 +20,7 @@ import (
 	"github.com/ostendorf-cloud/govue/api"
 	"github.com/ostendorf-cloud/govue/appassoc"
 	"github.com/ostendorf-cloud/govue/clientip"
+	"github.com/ostendorf-cloud/govue/contact"
 	"github.com/ostendorf-cloud/govue/csrf"
 	"github.com/ostendorf-cloud/govue/database"
 	"github.com/ostendorf-cloud/govue/favicon"
@@ -78,6 +79,11 @@ type app struct {
 	// devices are the token handlers of a native app, over the same accounts.
 	// See buildDevices.
 	devices *devicehttp.Handlers
+
+	// contact is the stateless contact form and contactSender its fake mail
+	// sender. See buildContact.
+	contact       *contact.Handler
+	contactSender *fakeSender
 
 	health *health.Registry
 
@@ -321,6 +327,7 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 
 	fail(a.buildAppOrigins())
 	fail(a.buildAccounts())
+	fail(a.buildContact())
 
 	cors, err := middleware.NewCORS(middleware.CORSConfig{
 		Origins: cfg.allowedOrigins,
@@ -404,6 +411,7 @@ func (a *app) handler() http.Handler {
 	}
 	a.mountAccounts(mux, route, checked)
 	a.mountPasskeys(mux, route)
+	a.mountContact(mux)
 	a.mountDevices(mux, route, checked)
 
 	mux.Handle("GET /app", route(api.Handle(a.home)))
