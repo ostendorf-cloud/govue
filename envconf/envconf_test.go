@@ -279,8 +279,9 @@ func TestURL(t *testing.T) {
 		// Built at run time so the constant is not a secret-looking literal.
 		secret := strings.Repeat("s", 2) + "ecret"
 		for _, tc := range []struct{ name, raw string }{
-			{"unparsable scheme", "s3://user:" + secret + "@host"},
-			{"bad escape in the host", "http://user:" + secret + "@host/%zz"},
+			{"scheme that is not http or https", "s3://user:" + secret + "@host"},
+			{"bad escape in the host", "http://user:" + secret + "@ho%zzst/"},
+			{"bad escape in the path", "http://user:" + secret + "@host/%zz"},
 			{"bad escape in the user info", "http://user:" + secret + "%zz@host"},
 			{"user info is refused", "https://user:" + secret + "@www.example.test"},
 			{"no host", "https://user:" + secret + "@/path"},
@@ -317,8 +318,12 @@ func TestURL(t *testing.T) {
 		if got := l.URL("S3_ENDPOINT", "http://user:"+secret+"%zz@host"); got != nil {
 			t.Fatalf("URL = %v, want nil", got)
 		}
-		if err := l.Err(); err == nil || strings.Contains(err.Error(), secret) {
-			t.Errorf("Err() = %v, want an error without the raw value", err)
+		err := l.Err()
+		if err == nil || strings.Contains(err.Error(), secret) {
+			t.Fatalf("Err() = %v, want an error without the raw value", err)
+		}
+		if !strings.Contains(err.Error(), "S3_ENDPOINT") {
+			t.Errorf("error text does not name the variable: %v", err)
 		}
 	})
 
