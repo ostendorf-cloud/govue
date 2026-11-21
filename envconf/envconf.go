@@ -259,7 +259,8 @@ func (l *Loader) RequiredSecretOrFile(key string) string {
 }
 
 // ParseDuration reads a Go duration, plus a whole number of days with a d
-// suffix, which time.ParseDuration does not support.
+// suffix, which time.ParseDuration does not support. A day count must fit in
+// a time.Duration: at most 106751 days in either direction.
 //
 // The error names the expected form only. It neither carries the input nor
 // wraps the errors of strconv and time, which quote it: error text must not
