@@ -80,10 +80,15 @@ The design of the library and the reasoning behind it.
   Error text reaches CI and startup logs, and a value pasted into the wrong variable can be a
   secret. The error names the variable or the field, the position in a list and the expected
   form. An accepted value may be quoted in a conflict, a duplicate or an overlap, and a value
-  from a closed set may be quoted when the error lists the set. A file path stays in its
-  error: it names the file, not its content. The configured OIDC issuer is not quoted either,
-  although it is accepted: it can hold a credential, and its errors are logged on every failed
-  login.
+  from a closed set may be quoted when the error lists the set. The path of a secret file is
+  never shown: `envconf.Secret(key)` reads the path from the value of key itself, and
+  `SecretOrFile` from key_FILE, so a secret pasted there in place of a path would reach the
+  log. A read error names the variable and the kind, a missing file, a refused read, a file
+  that is not readable or an empty one, and keeps `fs.ErrNotExist` and `fs.ErrPermission`
+  matchable. `SITE_DIR` in the example follows the same rule. The configured OIDC issuer is
+  not quoted either, although it is accepted: it can hold a credential, and its errors are
+  logged on every failed login. A failed request to the provider names its kind, without the
+  URL, the host name or the names of a certificate.
 - The middleware chain is assembled by the application, not hidden behind a constructor. The
   places a constructor would hide, which checks are readiness and which limits apply to which
   route, are exactly the places applications differ.
