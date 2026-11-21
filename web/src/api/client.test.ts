@@ -190,6 +190,60 @@ describe('createClient', () => {
     expect(error.requestId).toBe('')
   })
 
+  it('reads a plain number of seconds from Retry-After', async () => {
+    respond = () =>
+      Promise.resolve(
+        new Response(JSON.stringify(errorBody('too_many_requests', 'slow down')), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '120' },
+        }),
+      )
+    const client = createClient({ fetch: fetchStub })
+
+    const error = (await client.get('/things').catch((caught: unknown) => caught)) as ApiError
+
+    expect(error.retryAfter).toBe(120)
+  })
+
+  it('reads Retry-After from an answer that is not the error shape too', async () => {
+    respond = () =>
+      Promise.resolve(
+        new Response('<html>503</html>', { status: 503, headers: { 'Retry-After': '2' } }),
+      )
+    const client = createClient({ fetch: fetchStub })
+
+    const error = (await client.get('/things').catch((caught: unknown) => caught)) as ApiError
+
+    expect(error.retryAfter).toBe(2)
+  })
+
+  it.each(['', 'soon', '-5', '0', '1.5', '1e3', 'Wed, 21 Oct 2026 07:28:00 GMT', '99999999'])(
+    'ignores the Retry-After value %j',
+    async (value) => {
+      respond = () =>
+        Promise.resolve(
+          new Response(JSON.stringify(errorBody('too_many_requests', 'slow down')), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json', 'Retry-After': value },
+          }),
+        )
+      const client = createClient({ fetch: fetchStub })
+
+      const error = (await client.get('/things').catch((caught: unknown) => caught)) as ApiError
+
+      expect(error.retryAfter).toBeUndefined()
+    },
+  )
+
+  it('has no retryAfter without the header', async () => {
+    respond = () => Promise.resolve(answer(404, errorBody('not_found', 'thing not found')))
+    const client = createClient({ fetch: fetchStub })
+
+    const error = (await client.get('/things/7').catch((caught: unknown) => caught)) as ApiError
+
+    expect(error.retryAfter).toBeUndefined()
+  })
+
   it('falls back when the answer is not the error shape', async () => {
     respond = () => Promise.resolve(new Response('<html>502</html>', { status: 502 }))
     const client = createClient({ fetch: fetchStub })

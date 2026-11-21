@@ -14,7 +14,7 @@ import {
   type SignInCredentials,
   type SignInOptions,
 } from './bearer'
-import { ApiError, ErrorCode, type ApiErrorPayload } from './errors'
+import { ApiError, ErrorCode, parseRetryAfter, type ApiErrorPayload } from './errors'
 import { createMemoryTokenStorage, type TokenStorage } from './tokenStorage'
 
 export type {
@@ -334,6 +334,7 @@ async function refusal(response: Response): Promise<ApiError> {
     code: ErrorCode.internal,
     message: 'Something went wrong. Please try again.',
     status: response.status,
+    retryAfter: parseRetryAfter(response.headers.get('Retry-After')),
   }
   let payload: { error?: ApiErrorPayload } | undefined
   try {
@@ -352,6 +353,7 @@ async function refusal(response: Response): Promise<ApiError> {
     status: response.status,
     details: error.details,
     requestId: error.request_id,
+    retryAfter: fallback.retryAfter,
   })
 }
 

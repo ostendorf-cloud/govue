@@ -24,9 +24,14 @@ repeated here.
   `GovueCheckbox`, `GovueSwitch`, `GovueTextarea`, `GovueButton`) with `useForm`, and the layout
   components (`GovuePage`, `GovueHeader`, `GovueFooter`, `GovueNav`, `GovueSkipLink`,
   `GovueCard`, `GovueBadge`, `GovueSkeleton`), `GovueThemeSwitch`, and the account forms
-  (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`), which take a `client` from
+  (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`), `GovueContactForm` with its proof
+  of work solver (`lib/pow.ts`, `lib/pow.worker.ts`), which take a `client` from
   `createClient`, and `GovuePasskeyButton` with the `usePasskey` composable and `isBearerClient`,
-  which take it too and refuse a bearer client. `createClient({ auth: { mode: 'bearer' } })` is
+  which take it too. `GovuePasskeyButton` and `GovueContactForm` refuse a bearer client: the
+  button is not offered, the form renders nothing, so a device token never reaches the contact
+  routes. `ApiError.retryAfter` carries a valid `Retry-After` in whole seconds (at most one day,
+  digits only), and the contact form names the wait in its 429, `mail_limit` and `pow_busy`
+  texts. `createClient({ auth: { mode: 'bearer' } })` is
   the client of a native app with a device token: `TokenStorage` (async `get`, `set`, `clear`,
   one opaque string) with the in memory default and no persistent adapter, rotation in
   `web/src/api/bearer.ts`, `signIn` and `signOut`.
@@ -42,9 +47,13 @@ repeated here.
   A visitor-facing default text goes into both catalogues under `govue.`, never into a
   component as a string. A text prop stays as an override.
   The legal pages (`language.HandleLegal`, `GovueLegalPage`, `govue-check-legal`) are structure
-  only: govue never ships an imprint, privacy or terms text.
-- `web/example/` is a placeholder site of the legal pages, prerendered and checked by its own
-  test. It is not shipped.
+  only: govue never ships an imprint, privacy or terms text. The same holds for the consent text
+  of `GovueContactForm`: there is no catalogue default. With `requireConsent` the site sets
+  `consentLabel` or fills the `consent` slot, and without one the form renders nothing and warns
+  in development. The consent state is never part of the request body.
+- `web/example/` is the example site: the placeholder legal pages and the contact page,
+  prerendered and checked by its own tests, the consumer build test of the worker bundle and the
+  fake of the contact handlers that the component tests use. It is not shipped.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.

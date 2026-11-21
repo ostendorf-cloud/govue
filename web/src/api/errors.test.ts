@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { ApiError, isApiError } from './errors'
+import { ApiError, isApiError, parseRetryAfter } from './errors'
 
 describe('isApiError', () => {
   it('narrows an ApiError instance', () => {
@@ -20,6 +20,47 @@ describe('isApiError', () => {
 
   it('rejects a plain Error', () => {
     expect(isApiError(new Error('boom'))).toBe(false)
+  })
+})
+
+describe('ApiError retryAfter', () => {
+  it('keeps a whole number of seconds within a day', () => {
+    for (const seconds of [1, 120, 86_400]) {
+      expect(new ApiError({ code: 'x', message: 'y', retryAfter: seconds }).retryAfter).toBe(
+        seconds,
+      )
+    }
+  })
+
+  it('drops anything else, and is undefined by default', () => {
+    expect(new ApiError({ code: 'x', message: 'y' }).retryAfter).toBeUndefined()
+    for (const seconds of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 86_401]) {
+      expect(
+        new ApiError({ code: 'x', message: 'y', retryAfter: seconds }).retryAfter,
+      ).toBeUndefined()
+    }
+  })
+})
+
+describe('parseRetryAfter', () => {
+  it('reads digits only', () => {
+    expect(parseRetryAfter('2')).toBe(2)
+    expect(parseRetryAfter(' 300 ')).toBe(300)
+    for (const value of [
+      null,
+      '',
+      'soon',
+      '-5',
+      '+5',
+      '1.5',
+      '1e3',
+      '0x10',
+      'Wed, 21 Oct 2026 07:28:00 GMT',
+      '86401',
+      '99999999',
+    ]) {
+      expect(parseRetryAfter(value), String(value)).toBeUndefined()
+    }
   })
 })
 

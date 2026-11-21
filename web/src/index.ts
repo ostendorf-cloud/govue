@@ -61,6 +61,18 @@ export type { Toast, ToastInput, ToastKind, ToastState } from './composables/use
 export { useForm } from './composables/useForm'
 export type { FieldErrors, FormOptions, FormState, Touched } from './composables/useForm'
 
+// The proof of work solver of the contact form. The worker file itself is never
+// imported: lib/pow.ts starts it, and a bundler follows that call.
+export { ChallengeError, createChallengeSolver, parseSalt, solveInWorker } from './lib/pow'
+export type {
+  ChallengeErrorKind,
+  ChallengeSolver,
+  ChallengeSolverOptions,
+  PowChallenge,
+  PowSolution,
+  SolveFunction,
+} from './lib/pow'
+
 // The language layer: the plugin, the composables and the catalogue registry.
 export { createGovueI18n, languageKey, pickLocale, useGovueText, useLanguage } from './i18n/plugin'
 export type {
@@ -95,6 +107,12 @@ export { default as GovueCard } from './components/GovueCard.vue'
 export type { CardAs, CardHeadingLevel } from './components/GovueCard.vue'
 export type { HeadingLevel } from './components/headingLevel'
 export { default as GovueCheckbox } from './components/GovueCheckbox.vue'
+export { default as GovueContactForm } from './components/GovueContactForm.vue'
+export {
+  CONTACT_FIELD_CODES,
+  CONTACT_LIMITS,
+  CONTACT_REFUSAL_CODES,
+} from './components/contactForm'
 export { default as GovueConfirmDialog } from './components/GovueConfirmDialog.vue'
 export { default as GovueDialog } from './components/GovueDialog.vue'
 export { default as GovueEmptyState } from './components/GovueEmptyState.vue'
