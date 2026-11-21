@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -118,16 +119,56 @@ func TestNewAppPasskeyOriginNamesTheVariables(t *testing.T) {
 func TestNewAppSiteDirKeepsThePathOut(t *testing.T) {
 	t.Parallel()
 
-	env := testEnv(t, 20)
-	env["SITE_DIR"] = filepath.Join(t.TempDir(), "s3cr3tTOKEN")
-	cfg, err := loadConfig(func(key string) string { return env[key] })
-	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
+	dir := filepath.Join(t.TempDir(), "s3cr3tTOKEN")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	_, err = newApp(cfg, logging.New(&strings.Builder{}, cfg.logLevel))
-	configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "SITE_DIR: cannot open the directory")
-	if !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("error %v is not fs.ErrNotExist", err)
+	locked := filepath.Join(dir, "locked")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, path, want string
+		// is is the sentinel the error keeps, or nil when it keeps none.
+		is error
+	}{
+		{"missing", filepath.Join(dir, "missing"), "SITE_DIR: cannot open the directory: file does not exist", fs.ErrNotExist},
+		{"permission denied", locked, "SITE_DIR: cannot open the directory: permission denied", fs.ErrPermission},
+		{"a file, not a directory", file, "SITE_DIR: cannot open the directory: it is not a readable directory", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// The cause os.OpenRoot gives here, so the test knows what must
+			// not appear. It also tells whether the case holds at all.
+			root, rawErr := os.OpenRoot(tc.path)
+			if rawErr == nil {
+				_ = root.Close()
+				t.Skip("the directory opens here, such as for root")
+			}
+
+			env := testEnv(t, 20)
+			env["SITE_DIR"] = tc.path
+			cfg, err := loadConfig(func(key string) string { return env[key] })
+			if err != nil {
+				t.Fatalf("loadConfig: %v", err)
+			}
+			_, err = newApp(cfg, logging.New(&strings.Builder{}, cfg.logLevel))
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", tc.want)
+			configtexttest.AssertHidden(t, err, rawErr.Error(), "SITE_DIR")
+			if tc.is != nil && !errors.Is(err, tc.is) {
+				t.Errorf("error %v is not %v", err, tc.is)
+			}
+			var pathErr *fs.PathError
+			if errors.As(err, &pathErr) {
+				t.Errorf("error %v wraps the *fs.PathError, which quotes the path", err)
+			}
+		})
 	}
 }
 
