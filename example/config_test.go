@@ -97,6 +97,22 @@ func TestNewAppAllowedOriginsWithUserinfoNamesTheVariable(t *testing.T) {
 	}
 }
 
+// With passkeys on, the same entry fails the passkey origins too, and that
+// error names both variables passkey.New reads in the example.
+func TestNewAppPasskeyOriginNamesTheVariables(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t, 20)
+	env["PASSKEY_RP_ID"] = "app.example.test"
+	env["ALLOWED_ORIGINS"] = "https://app.example.test,https://user:s3cr3tTOKEN@app.example.test"
+	cfg, err := loadConfig(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	_, err = newApp(cfg, logging.New(&strings.Builder{}, cfg.logLevel))
+	configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "passkey handlers (PASSKEY_RP_ID, ALLOWED_ORIGINS): passkey: origin 2")
+}
+
 // A SITE_DIR that cannot be opened names the variable and the kind, never
 // the path, and a missing directory stays matchable.
 func TestNewAppSiteDirKeepsThePathOut(t *testing.T) {
