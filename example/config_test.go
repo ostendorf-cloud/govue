@@ -4,7 +4,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -73,6 +76,43 @@ func TestNewAppAllowedOriginsKeepsTheValueOut(t *testing.T) {
 	}
 	_, err = newApp(cfg, logging.New(&strings.Builder{}, cfg.logLevel))
 	configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "ALLOWED_ORIGINS entry 2")
+}
+
+// An ALLOWED_ORIGINS entry with userinfo passes csrf.Protector.TrustOrigin,
+// whose standard library check allows userinfo, and fails in the two CORS
+// policies. Both name the variable and neither shows the value.
+func TestNewAppAllowedOriginsWithUserinfoNamesTheVariable(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t, 20)
+	env["ALLOWED_ORIGINS"] = "https://app.example.test,https://user:s3cr3tTOKEN@app2.example.test"
+	cfg, err := loadConfig(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	_, err = newApp(cfg, logging.New(&strings.Builder{}, cfg.logLevel))
+	configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "ALLOWED_ORIGINS for the web CORS: middleware: origin 2")
+	if err != nil && !strings.Contains(err.Error(), "ALLOWED_ORIGINS for the contact CORS: middleware: origin 2") {
+		t.Errorf("error %q does not name ALLOWED_ORIGINS for the contact CORS", err)
+	}
+}
+
+// A SITE_DIR that cannot be opened names the variable and the kind, never
+// the path, and a missing directory stays matchable.
+func TestNewAppSiteDirKeepsThePathOut(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t, 20)
+	env["SITE_DIR"] = filepath.Join(t.TempDir(), "s3cr3tTOKEN")
+	cfg, err := loadConfig(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	_, err = newApp(cfg, logging.New(&strings.Builder{}, cfg.logLevel))
+	configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "SITE_DIR: cannot open the directory")
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("error %v is not fs.ErrNotExist", err)
+	}
 }
 
 // SESSION_KEY holds the path of the key file. A secret pasted into it in

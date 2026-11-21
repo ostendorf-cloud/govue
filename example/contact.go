@@ -78,7 +78,7 @@ func (a *app) buildContact() error {
 		ExposeHeaders: []string{"Retry-After"},
 	})
 	if err != nil {
-		return fmt.Errorf("example: contact cors: %w", err)
+		return fmt.Errorf("example: ALLOWED_ORIGINS for the contact CORS: %w", err)
 	}
 	a.contactCORS = cors
 	handlers, err := contact.New(contact.Config{

@@ -178,6 +178,21 @@ var migrationFiles embed.FS
 // migrationDir is the directory inside migrationFiles.
 const migrationDir = "migrations"
 
+// siteDirFailure names SITE_DIR and the kind of failure of opening it, and
+// not the path: the *fs.PathError of os.OpenRoot quotes it, and a refused
+// configuration value is never shown. A missing directory and a refused open
+// stay matchable with errors.Is.
+func siteDirFailure(err error) error {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("example: SITE_DIR: cannot open the directory: %w (the path is not shown)", fs.ErrNotExist)
+	case errors.Is(err, fs.ErrPermission):
+		return fmt.Errorf("example: SITE_DIR: cannot open the directory: %w (the path is not shown)", fs.ErrPermission)
+	default:
+		return errors.New("example: SITE_DIR: cannot open the directory: it is not a readable directory (the path is not shown)")
+	}
+}
+
 // newApp constructs every dependency from cfg. It returns every construction
 // problem at once, the same way loadConfig does, rather than stopping at the
 // first one.
@@ -283,7 +298,9 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 		// the directory, so a page or an asset can never be read from
 		// outside it. A page that links out fails startup, naming the page.
 		root, err := os.OpenRoot(cfg.siteDir)
-		fail(err)
+		if err != nil {
+			fail(siteDirFailure(err))
+		}
 		if err == nil {
 			a.siteRoot = root
 			site, err := loadSite(root.FS(), siteLanguages, a.icons)
@@ -341,7 +358,9 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 		Headers:     []string{"Content-Type", csrf.HeaderName},
 		Credentials: true,
 	})
-	fail(err)
+	if err != nil {
+		fail(fmt.Errorf("example: ALLOWED_ORIGINS for the web CORS: %w", err))
+	}
 	a.cors = cors
 	fail(a.buildAppCORS())
 
