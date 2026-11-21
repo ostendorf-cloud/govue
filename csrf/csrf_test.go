@@ -288,6 +288,10 @@ func TestProtectorTrustOriginKeepsACredentialOutOfTheError(t *testing.T) {
 	for _, origin := range []string{
 		"s3cr3tTOKEN",
 		"https://user:s3cr3tTOKEN@app.example.test/",
+		// Userinfo without a path is the form the standard library accepts.
+		"https://user:s3cr3tTOKEN@app.example.test",
+		"https://s3cr3tTOKEN@app.example.test:8443",
+		"https://app.example.test@s3cr3tTOKEN",
 		"https://app.example.test/?token=s3cr3tTOKEN",
 		"https://user:s3cr3tTOKEN@app example.test\x7f",
 	} {
@@ -300,7 +304,7 @@ func TestProtectorTrustOriginKeepsACredentialOutOfTheError(t *testing.T) {
 			}
 			// The expected form is pinned with the name: without it the
 			// error would say what is wrong but not what is right.
-			const form = "must be scheme://host[:port] without a path, a query or a fragment"
+			const form = "must be scheme://host[:port] without userinfo, a path, a query or a fragment"
 			configtexttest.AssertHidden(t, protector.TrustOrigin(origin), "s3cr3tTOKEN", "csrf: trusted origin "+form)
 			err = protector.TrustOriginOnRoute(http.MethodPost, "/device/issue", []string{origin})
 			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "POST /device/issue: origin 1 "+form)

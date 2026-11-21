@@ -163,14 +163,25 @@ func New(expected Expected) (*Protector, error) {
 // error reaches CI and startup logs, and a value pasted wrongly can hold a
 // credential. The caller names the variable or the position.
 func (p *Protector) TrustOrigin(origin string) error {
-	if p.cross.AddTrustedOrigin(origin) != nil {
+	if !trustable(p.cross, origin) {
 		return errors.New("csrf: trusted origin " + originForm)
 	}
 	return nil
 }
 
+// trustable adds origin to cross and reports whether it was accepted. An
+// origin with userinfo is refused before the standard library sees it: an at
+// sign is never part of a scheme, a host and a port, and the user and
+// password it introduces are a credential that must not be kept.
+func trustable(cross *http.CrossOriginProtection, origin string) bool {
+	if strings.Contains(origin, "@") {
+		return false
+	}
+	return cross.AddTrustedOrigin(origin) == nil
+}
+
 // originForm is the expected form of a trusted origin, for an error.
-const originForm = "must be scheme://host[:port] without a path, a query or a fragment (the value is not shown)"
+const originForm = "must be scheme://host[:port] without userinfo, a path, a query or a fragment (the value is not shown)"
 
 // TrustOriginOnRoute trusts the given origins for requests with exactly this
 // method and exactly this path, and for no other route. It is for the one
@@ -222,7 +233,7 @@ func (p *Protector) TrustOriginOnRoute(method, path string, origins []string) er
 	}
 	cross := http.NewCrossOriginProtection()
 	for i, origin := range origins {
-		if cross.AddTrustedOrigin(origin) != nil {
+		if !trustable(cross, origin) {
 			return fmt.Errorf("csrf: trust origin on route: %s: origin %d %s", key, i+1, originForm)
 		}
 	}
