@@ -6,6 +6,7 @@ package database
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -63,6 +64,10 @@ func TestPingFailureNamesTheKindAndNotTheHost(t *testing.T) {
 		{"net timeout", quoting{timeoutErr{}}, "timeout", nil, nil},
 		{"canceled", quoting{context.Canceled}, "canceled", context.Canceled, nil},
 		{"unknown authority", quoting{x509.UnknownAuthorityError{}}, "tls failed", nil, nil},
+		{"invalid certificate", quoting{x509.CertificateInvalidError{Reason: x509.Expired, Detail: host}}, "tls failed", nil, nil},
+		{"verification error", quoting{&tls.CertificateVerificationError{Err: errors.New(host)}}, "tls failed", nil, nil},
+		{"tls alert", quoting{tls.AlertError(40)}, "tls failed", nil, nil},
+		{"not a tls server", quoting{tls.RecordHeaderError{Msg: host}}, "tls failed", nil, nil},
 		{"wrong host name", quoting{x509.HostnameError{Host: host}}, "tls failed", nil, nil},
 		{"password refused", quoting{&pgconn.PgError{Code: "28P01", Message: host}}, "authentication failed", nil, nil},
 		{"other server error", quoting{&pgconn.PgError{Code: "57P03", Message: host}}, "server refused", nil, nil},

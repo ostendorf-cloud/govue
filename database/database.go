@@ -179,9 +179,10 @@ func poolConfig(cfg Config) (*pgxpool.Config, error) {
 	cfg = cfg.withDefaults()
 	pc, err := pgxpool.ParseConfig(dsn(cfg))
 	if err != nil {
-		// pgx' parse error quotes the connection string, which holds no
-		// password: the password is set below.
-		return nil, fmt.Errorf("database: parse config: %w", err)
+		// pgx' parse error quotes the connection string, host included, so
+		// it is not wrapped. Validate has refused what pgx cannot read, so
+		// this is a version difference of pgx and not an input.
+		return nil, errors.New("database: parse config: pgx did not accept the connection settings (the value is not shown)")
 	}
 	pc.ConnConfig.Password = cfg.Password.Reveal()
 	pc.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
