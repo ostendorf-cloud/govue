@@ -240,3 +240,96 @@ func TestCORSNeverSendsAWildcardWithCredentials(t *testing.T) {
 		t.Errorf("credentials = %q, want unset without a matched origin", got)
 	}
 }
+
+// exposeRecord serves one request through a CORS built from expose and
+// returns the response.
+func exposeRecord(t *testing.T, expose []string, method, origin string, preflight bool) *httptest.ResponseRecorder {
+	t.Helper()
+	cors, err := NewCORS(CORSConfig{Origins: []string{"https://app.example.test"}, ExposeHeaders: expose})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := cors.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), method, "/api/v1/things", nil)
+	req.Header.Set("Origin", origin)
+	if preflight {
+		req.Header.Set("Access-Control-Request-Method", "POST")
+	}
+	handler.ServeHTTP(rec, req)
+
+	return rec
+}
+
+func TestCORSExposeHeadersOnAnAllowedOrigin(t *testing.T) {
+	rec := exposeRecord(t, []string{"Retry-After"}, http.MethodPost, "https://app.example.test", false)
+	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != "Retry-After" {
+		t.Errorf("expose headers = %q, want Retry-After", got)
+	}
+}
+
+func TestCORSExposeHeadersNotOnARefusedOrigin(t *testing.T) {
+	rec := exposeRecord(t, []string{"Retry-After"}, http.MethodPost, "https://evil.example.test", false)
+	if _, ok := rec.Header()["Access-Control-Expose-Headers"]; ok {
+		t.Errorf("a refused origin got expose headers: %v", rec.Header())
+	}
+}
+
+func TestCORSExposeHeadersNotOnAPreflight(t *testing.T) {
+	rec := exposeRecord(t, []string{"Retry-After"}, http.MethodOptions, "https://app.example.test", true)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("preflight status = %d", rec.Code)
+	}
+	if _, ok := rec.Header()["Access-Control-Expose-Headers"]; ok {
+		t.Errorf("a preflight got expose headers: %v", rec.Header())
+	}
+}
+
+func TestCORSExposeHeadersEmptyListSendsNothing(t *testing.T) {
+	for _, expose := range [][]string{nil, {}} {
+		rec := exposeRecord(t, expose, http.MethodPost, "https://app.example.test", false)
+		if _, ok := rec.Header()["Access-Control-Expose-Headers"]; ok {
+			t.Errorf("expose %#v sent a header: %v", expose, rec.Header())
+		}
+	}
+}
+
+func TestCORSExposeHeadersAreNormalisedAndOrdered(t *testing.T) {
+	rec := exposeRecord(t,
+		[]string{"x-request-id", "RETRY-AFTER", "Retry-After", "X-Request-Id", "etag"},
+		http.MethodGet, "https://app.example.test", false)
+	const want = "X-Request-Id, Retry-After, Etag"
+	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != want {
+		t.Errorf("expose headers = %q, want %q", got, want)
+	}
+}
+
+func TestNewCORSRefusesBadExposeHeaders(t *testing.T) {
+	// A distinctive value that must never appear in an error text.
+	const secret = "X-Never-Echo-Me bad"
+	for _, tc := range []struct {
+		name   string
+		expose []string
+	}{
+		{"empty name", []string{"Retry-After", ""}},
+		{"space in name", []string{secret}},
+		{"colon", []string{"Retry-After:"}},
+		{"comma", []string{"A,B"}},
+		{"control character", []string{"A\r\nB"}},
+		{"non ASCII", []string{"Retry-Äfter"}},
+		{"wildcard alone", []string{"*"}},
+		{"wildcard mixed", []string{"Retry-After", "*"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewCORS(CORSConfig{Origins: []string{"https://app.example.test"}, ExposeHeaders: tc.expose})
+			if err == nil {
+				t.Fatalf("NewCORS(%q) was accepted", tc.expose)
+			}
+			for _, v := range tc.expose {
+				if v != "" && strings.Contains(err.Error(), v) {
+					t.Errorf("error %q carries the value %q", err, v)
+				}
+			}
+		})
+	}
+}

@@ -74,6 +74,8 @@ func (a *app) buildContact() error {
 		Origins: a.cfg.allowedOrigins,
 		Methods: []string{http.MethodGet, http.MethodPost},
 		Headers: []string{"Content-Type"},
+		// A cross origin page reads Retry-After of a 429 to name the wait.
+		ExposeHeaders: []string{"Retry-After"},
 	})
 	if err != nil {
 		return fmt.Errorf("example: contact cors: %w", err)

@@ -216,8 +216,12 @@ const (
 // tried. It sends no Access-Control header of its own for an origin that is not
 // listed, and never echoes one.
 //
-// Not sent: Access-Control-Expose-Headers, so a page reads the CORS safelisted
-// response headers only and cannot read Retry-After. Access-Control-Allow-
+// Not sent: Access-Control-Expose-Headers. The app policy is fixed and has no
+// configuration, and [CORSConfig.ExposeHeaders] belongs to the web policy and
+// reaches web origins only, so a page of an app origin reads the CORS
+// safelisted response headers only and cannot read Retry-After. The policy has
+// no configuration of its own, so exposing a header waits for an app that
+// needs it. Access-Control-Allow-
 // Private-Network is not sent either: a preflight with
 // Access-Control-Request-Private-Network gets the answer without it, and a
 // browser that enforces Private Network Access, such as Chrome, then fails the
