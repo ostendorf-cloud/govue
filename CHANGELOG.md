@@ -1,5 +1,26 @@
 # Changelog
 
+## [v0.6.0](https://github.com/ostendorf-cloud/govue/compare/v0.5.0...v0.6.0) (2026-11-21)
+
+### Features
+
+- **middleware:** expose response headers to app origins ([#225](https://github.com/ostendorf-cloud/govue/pull/225))
+- **middleware:** expose headers through the CORS config ([#221](https://github.com/ostendorf-cloud/govue/pull/221))
+- **web:** GovueContactForm with a proof of work Web Worker ([#208](https://github.com/ostendorf-cloud/govue/pull/208))
+- **contact:** contact form validation and stateless handlers ([#207](https://github.com/ostendorf-cloud/govue/pull/207))
+- **mail:** SMTP submission and header safe message building ([#204](https://github.com/ostendorf-cloud/govue/pull/204))
+- **pow:** proof of work challenge issue and verify ([#203](https://github.com/ostendorf-cloud/govue/pull/203))
+- **api:** add head to the Vue API client ([#202](https://github.com/ostendorf-cloud/govue/pull/202))
+- **account:** let a known device skip the per-login ceiling ([#200](https://github.com/ostendorf-cloud/govue/pull/200))
+
+### Bug Fixes
+
+- keep config values out of connect errors and refuse four more inputs ([#226](https://github.com/ostendorf-cloud/govue/pull/226))
+- keep environment values out of startup errors ([#222](https://github.com/ostendorf-cloud/govue/pull/222))
+- **envconf:** refuse a day count that overflows ParseDuration ([#220](https://github.com/ostendorf-cloud/govue/pull/220))
+- **envconf:** keep raw values out of the other parse errors ([#215](https://github.com/ostendorf-cloud/govue/pull/215))
+- **envconf:** keep the raw value of a URL variable out of errors ([#213](https://github.com/ostendorf-cloud/govue/pull/213))
+
 ## [v0.5.0](https://github.com/ostendorf-cloud/govue/compare/v0.4.0...v0.5.0) (2026-11-19)
 
 ### Features
