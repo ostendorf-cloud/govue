@@ -699,9 +699,11 @@ The design of the library and the reasoning behind it.
 - `example/` turns the mode on with `APP_ORIGINS` and `APP_SCHEMES`, both empty by default. A
   custom scheme is an opt in, one scheme at a time: `APP_ORIGINS=capacitor://localhost` needs
   `APP_SCHEMES=capacitor`. The list goes to `Issue` as `IssueTrustedOrigins`, to the issue route
-  of the protector and to `NewAppCORS`, and to nothing else. `ALLOWED_ORIGINS` stays the web
-  list. `newApp` passes it to `RejectOverlap` as the trusted origins, because the example feeds
-  the same list to `TrustOrigin`, and `NewAppCORS` checks it against the web CORS policy.
+  of the protector and to `NewAppCORSWithConfig`, and to nothing else. `ALLOWED_ORIGINS` stays
+  the web list. `newApp` passes it to `RejectOverlap` as the trusted origins, because the example
+  feeds the same list to `TrustOrigin`, and `NewAppCORSWithConfig` checks it against the web CORS
+  policy. The example exposes `Retry-After` through `AppCORSConfig.ExposeHeaders`, so a page of an
+  app origin reads the wait of a 429.
   Startup fails for an overlap, a wildcard, `null`, a path, a duplicate, `http`, a bad port, a
   Unicode host, a custom scheme that is not opted in, and `APP_SCHEMES` without `APP_ORIGINS`.
 - A cookie request from an app origin stays a cross site request. The protector refuses it on
