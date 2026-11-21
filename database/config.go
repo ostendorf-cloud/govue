@@ -374,10 +374,11 @@ func (c Config) MarshalText() ([]byte, error) {
 	return []byte(c.String()), nil
 }
 
-// LogValue keeps the password out of structured logs.
+// LogValue keeps the password out of structured logs, and the host too: a
+// host is an environment value and can carry one. It is left out, not
+// replaced by a marker.
 func (c Config) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.String("host", c.Host),
 		slog.Int("port", c.Port),
 		slog.String("name", c.Name),
 		slog.String("user", c.User),

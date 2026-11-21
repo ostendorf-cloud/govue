@@ -16,7 +16,9 @@ import (
 	"math/big"
 	"net"
 	"net/url"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -422,15 +424,19 @@ func (f fakePinger) Ping(context.Context) error { return f.err }
 func TestCheck(t *testing.T) {
 	t.Parallel()
 
-	down := errors.New("connection refused")
+	// The dial error of a refused connection, as the net package builds it.
+	down := &net.OpError{
+		Op: "dial", Net: "tcp",
+		Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+	}
 	cases := []struct {
 		name     string
 		ping     error
 		migrated bool
 		want     error
 	}{
-		{"unreachable", down, false, down},
-		{"unreachable after migrate", down, true, down},
+		{"unreachable", down, false, syscall.ECONNREFUSED},
+		{"unreachable after migrate", down, true, syscall.ECONNREFUSED},
 		{"reachable, not migrated", nil, false, ErrNotMigrated},
 		{"reachable and migrated", nil, true, nil},
 	}
