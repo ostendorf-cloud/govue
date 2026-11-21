@@ -58,6 +58,8 @@ export default defineConfig({
         ADDR: GO_ADDR,
         ADMIN_ADDR: '127.0.0.1:18081',
         ALLOW_PLAIN_HTTP: 'true',
+        // The contact CORS needs one origin: the page of the Vite harness.
+        ALLOWED_ORIGINS: 'http://localhost:4173',
         SESSION_KEY: sessionKeyFile,
         CSRF_KEY: csrfKeyFile,
         CONTACT_POW_KEY: '0a1b'.repeat(16),
