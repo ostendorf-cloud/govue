@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"github.com/ostendorf-cloud/govue/account"
+	"github.com/ostendorf-cloud/govue/internal/configtext"
 )
 
 // Defaults of the durations in [Config].
@@ -199,16 +200,16 @@ func checkRPID(rpID string) error {
 	case len(rpID) > 253:
 		return fmt.Errorf("rp id is longer than 253 bytes")
 	case net.ParseIP(rpID) != nil:
-		return fmt.Errorf("rp id %q is an IP address, a passkey needs a host name", rpID)
+		return fmt.Errorf("rp id %s is an IP address, a passkey needs a host name", configtext.Quote(rpID))
 	}
 
 	labels := strings.Split(rpID, ".")
 	if len(labels) < 2 {
-		return fmt.Errorf("rp id %q is a single label, use the application's full host name", rpID)
+		return fmt.Errorf("rp id %s is a single label, use the application's full host name", configtext.Quote(rpID))
 	}
 	for _, label := range labels {
 		if !validLabel(label) {
-			return fmt.Errorf("rp id %q is not a lower case host name without scheme, port or path", rpID)
+			return fmt.Errorf("rp id %s is not a lower case host name without scheme, port or path", configtext.Quote(rpID))
 		}
 	}
 
@@ -259,32 +260,33 @@ func checkDisplayName(name string) error {
 func checkOrigin(origin, rpID string) error {
 	u, err := url.Parse(origin)
 	if err != nil {
-		return fmt.Errorf("origin %q is not a URL: %w", origin, err)
+		// The error of url.Parse quotes the whole input, so it is not wrapped.
+		return fmt.Errorf("origin %s is not a URL", configtext.Quote(origin))
 	}
 	host := u.Hostname()
 	// url.Parse folds the scheme to lower case, so the raw text is checked.
 	scheme, _, _ := strings.Cut(origin, ":")
 	switch {
 	case scheme != strings.ToLower(scheme):
-		return fmt.Errorf("origin %q needs a lower case scheme", origin)
+		return fmt.Errorf("origin %s needs a lower case scheme", configtext.Quote(origin))
 	case scheme == "https":
 	case scheme == "http" && host == "localhost":
 	case scheme == "http" && strings.ToLower(host) == "localhost":
-		return fmt.Errorf("origin %q needs a lower case host", origin)
+		return fmt.Errorf("origin %s needs a lower case host", configtext.Quote(origin))
 	default:
-		return fmt.Errorf("origin %q is not https, plain http is allowed on localhost only", origin)
+		return fmt.Errorf("origin %s is not https, plain http is allowed on localhost only", configtext.Quote(origin))
 	}
 	if u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" ||
 		strings.HasSuffix(origin, "?") || strings.HasSuffix(origin, "#") {
-		return fmt.Errorf("origin %q holds more than a scheme, a host and a port", origin)
+		return fmt.Errorf("origin %s holds more than a scheme, a host and a port", configtext.Quote(origin))
 	}
 	if host == "" {
-		return fmt.Errorf("origin %q has no host", origin)
+		return fmt.Errorf("origin %s has no host", configtext.Quote(origin))
 	}
 	if host != "localhost" {
 		for _, label := range strings.Split(host, ".") {
 			if !validLabel(label) {
-				return fmt.Errorf("origin %q needs a lower case host of DNS labels, no wildcard", origin)
+				return fmt.Errorf("origin %s needs a lower case host of DNS labels, no wildcard", configtext.Quote(origin))
 			}
 		}
 	}
@@ -292,7 +294,7 @@ func checkOrigin(origin, rpID string) error {
 		return err
 	}
 	if rpID != "" && host != rpID && !strings.HasSuffix(host, "."+rpID) {
-		return fmt.Errorf("origin %q is not rp id %q or a subdomain of it", origin, rpID)
+		return fmt.Errorf("origin %s is not rp id %s or a subdomain of it", configtext.Quote(origin), configtext.Quote(rpID))
 	}
 
 	return nil
@@ -305,16 +307,16 @@ func checkPort(origin string, u *url.URL) error {
 	port := u.Port()
 	if port == "" {
 		if strings.HasSuffix(u.Host, ":") {
-			return fmt.Errorf("origin %q has a colon without a port", origin)
+			return fmt.Errorf("origin %s has a colon without a port", configtext.Quote(origin))
 		}
 		return nil
 	}
 	n, err := strconv.Atoi(port)
 	if err != nil || n < 1 || n > 65535 || port[0] == '0' {
-		return fmt.Errorf("origin %q needs a port of 1 to 65535 without leading zeros", origin)
+		return fmt.Errorf("origin %s needs a port of 1 to 65535 without leading zeros", configtext.Quote(origin))
 	}
 	if n == 443 && u.Scheme == "https" || n == 80 && u.Scheme == "http" {
-		return fmt.Errorf("origin %q names the default port, a browser sends it without", origin)
+		return fmt.Errorf("origin %s names the default port, a browser sends it without", configtext.Quote(origin))
 	}
 
 	return nil

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ostendorf-cloud/govue/account"
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 )
 
 // nopStore satisfies Store for the config tests, which never call it.
@@ -131,6 +132,41 @@ func TestConfigValidation(t *testing.T) {
 			if !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("New: got %q, want it to contain %q", err, tt.want)
 			}
+		})
+	}
+}
+
+// A value that may carry a credential stays out of every startup error, and
+// so does the error of url.Parse, which quotes the whole input.
+func TestConfigErrorHidesCredentials(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*Config)
+		want   string
+	}{
+		{"origin with userinfo", func(c *Config) {
+			c.Origins = []string{"https://user:s3cr3tTOKEN@app.example.com"}
+		}, "origin"},
+		{"origin with a query token", func(c *Config) {
+			c.Origins = []string{"https://app.example.com?token=s3cr3tTOKEN"}
+		}, "origin"},
+		{"origin that is not a URL", func(c *Config) {
+			c.Origins = []string{"https://user:s3cr3tTOKEN@app example.com\x7f"}
+		}, "is not a URL"},
+		{"rp id with userinfo", func(c *Config) { c.RPID = "user:s3cr3tTOKEN@app.example.com" }, "rp id"},
+		{"trusted origin with userinfo", func(c *Config) {
+			c.TrustedOrigins = []string{"https://user:s3cr3tTOKEN@app.example.com/"}
+		}, "trusted origin"},
+		{"trusted origin that is not a URL", func(c *Config) {
+			c.TrustedOrigins = []string{"https://user:s3cr3tTOKEN@app example.com\x7f"}
+		}, "trusted origin"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			tt.change(&cfg)
+			_, err := New(cfg)
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", tt.want)
 		})
 	}
 }

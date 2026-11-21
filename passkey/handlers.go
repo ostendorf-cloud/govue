@@ -15,6 +15,7 @@ import (
 
 	"github.com/ostendorf-cloud/govue/account"
 	"github.com/ostendorf-cloud/govue/api"
+	"github.com/ostendorf-cloud/govue/internal/configtext"
 )
 
 // The error codes of the handlers, next to the codes of the api package and
@@ -96,8 +97,11 @@ func New(cfg Config) (*Handlers, error) {
 
 	cross := http.NewCrossOriginProtection()
 	for _, origin := range cfg.TrustedOrigins {
-		if err := cross.AddTrustedOrigin(origin); err != nil {
-			problems = append(problems, fmt.Errorf("trusted origin %q: %w", origin, err))
+		// The error of AddTrustedOrigin quotes the origin, and the one of
+		// url.Parse inside it quotes it again, so neither is wrapped.
+		if cross.AddTrustedOrigin(origin) != nil {
+			problems = append(problems, fmt.Errorf("trusted origin %s must be scheme://host[:port] "+
+				"without a path, a query or a fragment", configtext.Quote(origin)))
 		}
 	}
 

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 	"github.com/ostendorf-cloud/govue/logging"
 	"github.com/ostendorf-cloud/govue/middleware"
 )
@@ -81,6 +82,41 @@ func TestNewRefusesABrokenConfig(t *testing.T) {
 			if _, err := New(cfg); err == nil {
 				t.Error("the config was accepted")
 			}
+		})
+	}
+}
+
+// A configured URL can hold credentials or a token, so a refused one never
+// reaches the error, and neither does the error of url.Parse, which quotes
+// it.
+func TestNewKeepsTheURLOutOfTheError(t *testing.T) {
+	base := Config{
+		Issuer:       testIssuer,
+		ClientID:     testClientID,
+		ClientSecret: "a client secret",
+		RedirectURL:  testRedirect,
+	}
+	for _, tc := range []struct {
+		name   string
+		adjust func(*Config)
+		want   string
+	}{
+		{"http issuer with userinfo", func(c *Config) {
+			c.Issuer = "http://user:s3cr3tTOKEN@accounts.example.test/realms/apps"
+		}, "issuer"},
+		{"issuer without a host", func(c *Config) { c.Issuer = "https:///realms/apps?token=s3cr3tTOKEN" }, "issuer"},
+		{"issuer that is not a url", func(c *Config) {
+			c.Issuer = "https://user:s3cr3tTOKEN@accounts.example.test/realms/\x7f"
+		}, "issuer"},
+		{"http redirect with a token", func(c *Config) {
+			c.RedirectURL = "http://catalogue.example.test/auth/callback?token=s3cr3tTOKEN"
+		}, "redirect url"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := base
+			tc.adjust(&cfg)
+			_, err := New(cfg)
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", tc.want)
 		})
 	}
 }

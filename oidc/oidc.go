@@ -352,16 +352,20 @@ func (p *Provider) Issuer() string { return p.issuer }
 // code, the tokens and the client secret all travel over these. Plain HTTP is
 // allowed against a loopback address alone, which is where a provider used in
 // development runs and where nothing leaves the machine.
+//
+// No error carries raw or the error of url.Parse, which quotes it: a URL can
+// hold credentials or a token, and a startup error reaches CI and startup
+// logs.
 func checkEndpoint(name, raw string) error {
 	if raw == "" {
 		return fmt.Errorf("%s is empty", name)
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("%s is not a URL: %w", name, err)
+		return fmt.Errorf("%s is not a URL (the value is not shown)", name)
 	}
 	if u.Host == "" {
-		return fmt.Errorf("%s %q has no host", name, shorten(raw, 200))
+		return fmt.Errorf("%s has no host, want an absolute https URL (the value is not shown)", name)
 	}
 	if u.Scheme == "https" {
 		return nil
@@ -369,7 +373,7 @@ func checkEndpoint(name, raw string) error {
 	if u.Scheme == "http" && isLoopback(u.Hostname()) {
 		return nil
 	}
-	return fmt.Errorf("%s %q is not an https URL", name, shorten(raw, 200))
+	return fmt.Errorf("%s is not an https URL, plain http is allowed on a loopback host only (the value is not shown)", name)
 }
 
 func isLoopback(host string) bool {
