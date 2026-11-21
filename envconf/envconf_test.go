@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 )
 
 // env makes a lookup out of a map, as the process environment would answer.
@@ -454,6 +456,68 @@ func TestSecret(t *testing.T) {
 	})
 }
 
+// The path of a secret file is never shown: an operator may paste the secret
+// itself into the variable. Each failure names the variable and its kind, and
+// a missing file and a refused read stay matchable with errors.Is.
+func TestSecretFileErrorsKeepThePathOut(t *testing.T) {
+	t.Parallel()
+
+	const token = "s3cr3tTOKEN"
+	dir := filepath.Join(t.TempDir(), token)
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	empty := filepath.Join(dir, "empty.key")
+	if err := os.WriteFile(empty, []byte("\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	locked := filepath.Join(dir, "locked.key")
+	if err := os.WriteFile(locked, []byte("x"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	_, lockedErr := os.ReadFile(locked)
+	lockedRefused := errors.Is(lockedErr, fs.ErrPermission)
+
+	for _, tc := range []struct {
+		name, path, want string
+		is               error
+		skip             bool
+	}{
+		{"missing, a pasted secret", token, "cannot read the file", fs.ErrNotExist, false},
+		{"a directory", dir, "cannot read the file: it is not a readable file", nil, false},
+		{"permission denied", locked, "cannot read the file: permission denied", fs.ErrPermission, !lockedRefused},
+		{"empty", empty, "the file is empty", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if tc.skip {
+				t.Skip("the file is readable here, such as for root")
+			}
+			for _, read := range []struct {
+				name string
+				run  func(*Loader)
+				env  map[string]string
+				want string
+			}{
+				{"Secret", func(l *Loader) { l.Secret("SESSION_KEY") }, map[string]string{"SESSION_KEY": tc.path}, "SESSION_KEY: " + tc.want},
+				{"SecretOrFile", func(l *Loader) { l.SecretOrFile("CONTACT_POW_KEY") }, map[string]string{"CONTACT_POW_KEY_FILE": tc.path}, "CONTACT_POW_KEY_FILE: " + tc.want},
+				{"RequiredSecretOrFile", func(l *Loader) { l.RequiredSecretOrFile("DB_PASSWORD") }, map[string]string{"DB_PASSWORD_FILE": tc.path}, "DB_PASSWORD_FILE: " + tc.want},
+			} {
+				t.Run(read.name, func(t *testing.T) {
+					t.Parallel()
+					l := New(env(read.env))
+					read.run(l)
+					err := l.Err()
+					configtexttest.AssertHidden(t, err, token, read.want)
+					if tc.is != nil && !errors.Is(err, tc.is) {
+						t.Errorf("Err() = %v, want it to wrap %v", err, tc.is)
+					}
+				})
+			}
+		})
+	}
+}
+
 // joinedErrors counts the errors an errors.Join result unwraps to, or 0 for
 // nil.
 func joinedErrors(err error) int {
@@ -541,7 +605,7 @@ func TestSecretOrFile(t *testing.T) {
 		}
 	})
 
-	t.Run("a missing _FILE path is a wrapped read error", func(t *testing.T) {
+	t.Run("a missing _FILE path is a read error that names the variable, not the path", func(t *testing.T) {
 		t.Parallel()
 
 		path := filepath.Join(dir, "nope.key")
@@ -550,11 +614,14 @@ func TestSecretOrFile(t *testing.T) {
 			t.Errorf("SecretOrFile(KEY) = %q, want empty", got)
 		}
 		err := l.Err()
-		if err == nil || !strings.Contains(err.Error(), "cannot read") || !strings.Contains(err.Error(), path) {
-			t.Errorf("Err() = %v, want a wrapped read error naming %s", err, path)
+		if err == nil || !strings.Contains(err.Error(), "KEY_FILE: cannot read the file") || strings.Contains(err.Error(), path) {
+			t.Errorf("Err() = %v, want a read error naming KEY_FILE and not %s", err, path)
 		}
-		if !errors.As(err, new(*fs.PathError)) {
-			t.Errorf("Err() = %v, want it to wrap a *fs.PathError", err)
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("Err() = %v, want it to wrap fs.ErrNotExist", err)
+		}
+		if errors.As(err, new(*fs.PathError)) {
+			t.Errorf("Err() = %v wraps the *fs.PathError, which quotes the path", err)
 		}
 	})
 

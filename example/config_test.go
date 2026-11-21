@@ -75,6 +75,27 @@ func TestNewAppAllowedOriginsKeepsTheValueOut(t *testing.T) {
 	configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "ALLOWED_ORIGINS entry 2")
 }
 
+// SESSION_KEY holds the path of the key file. A secret pasted into it in
+// place of a path is never shown, and neither is the path of a
+// CONTACT_POW_KEY_FILE.
+func TestLoadConfigKeepsASecretPathOut(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ key, want string }{
+		{"SESSION_KEY", "SESSION_KEY: cannot read the file"},
+		{"CSRF_KEY", "CSRF_KEY: cannot read the file"},
+		{"CONTACT_POW_KEY_FILE", "CONTACT_POW_KEY_FILE: cannot read the file"},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			t.Parallel()
+			env := testEnv(t, 20)
+			env[tc.key] = "s3cr3tTOKEN"
+			_, err := loadConfig(func(key string) string { return env[key] })
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", tc.want)
+		})
+	}
+}
+
 // A wrong TRUSTED_PROXIES entry is named by the variable and its position,
 // never by its value.
 func TestLoadConfigTrustedProxiesKeepsTheValueOut(t *testing.T) {
