@@ -281,7 +281,8 @@ func NewAppCORSWithConfig(origins AppOrigins, web *CORS, cfg AppCORSConfig) (*Ap
 
 	expose, err := exposeHeaderList(cfg.ExposeHeaders)
 	if err != nil {
-		return nil, err
+		// The prefix tells AppCORSConfig from CORSConfig. The text stays fixed.
+		return nil, fmt.Errorf("middleware: app CORS: %w", err)
 	}
 
 	return &AppCORS{origins: origins, web: web, expose: expose}, nil

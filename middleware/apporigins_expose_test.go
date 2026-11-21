@@ -6,6 +6,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
@@ -45,7 +46,9 @@ func appExposeDo(t *testing.T, h http.Handler, method, origin string, preflight 
 func TestAppCORSExposeHeadersOnAnAllowedOrigin(t *testing.T) {
 	t.Parallel()
 	rec := appExposeDo(t, exposingAppCORS(t, nil, []string{"Retry-After"}), http.MethodPost, "capacitor://localhost", false)
-	if got := rec.Header().Get(exposeHeader); got != "Retry-After" {
+	// The snapshot at WriteHeader, not the live map: the inner handler writes
+	// a 429, and a header set after that never reaches a client.
+	if got := rec.Result().Header.Get(exposeHeader); got != "Retry-After" {
 		t.Errorf("expose headers = %q, want Retry-After", got)
 	}
 	if got := rec.Header().Values("Vary"); len(got) != 1 || got[0] != "Origin" {
@@ -142,6 +145,9 @@ func TestNewAppCORSRefusesBadExposeHeaders(t *testing.T) {
 				AppCORSConfig{ExposeHeaders: tc.expose})
 			if err == nil || c != nil {
 				t.Fatalf("%q was accepted", tc.expose)
+			}
+			if !strings.Contains(err.Error(), "middleware: app CORS: ") {
+				t.Errorf("error %q does not name the app CORS handler", err)
 			}
 			for _, v := range tc.expose {
 				if v != "" && v != "*" {
