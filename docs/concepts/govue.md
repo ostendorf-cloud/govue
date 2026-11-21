@@ -94,6 +94,13 @@ The design of the library and the reasoning behind it.
 - An origin that does not parse as a bare `scheme://host`, carrying a path, a query, userinfo, or
   the literal `null` a sandboxed context sends, is refused at construction rather than silently
   never matching: a config entry that could never fire is a mistake worth catching at startup.
+- `CORSConfig.ExposeHeaders` lists response headers a page of an allowed origin may read, such as
+  `Retry-After`, which a browser hides from a cross origin page unless it is exposed. The default
+  is empty and sends nothing. The real response of an allowed origin carries
+  `Access-Control-Expose-Headers` with the names in canonical form, deduplicated, in the given
+  order. A refused origin and a preflight answer get none. An empty name, a name that is not an
+  HTTP token and `*` are refused at construction with a fixed error text that never carries the
+  value. `*` is not accepted because the browser ignores it on a credentialed request.
 - The origins of a native app are not web origins and never go into this list. They have their
   own type and handler, see "App origins" under "Token handlers".
 
@@ -641,8 +648,10 @@ The design of the library and the reasoning behind it.
   matched origin and `Vary: Origin`. No response carries `Access-Control-Allow-Credentials`: a
   bearer token is not a cookie, so credentials mode stays off. An origin that is not listed gets
   `Vary: Origin` and no `Access-Control-` header, and is never echoed. No `Expose-Headers` is
-  sent, so a page reads the CORS safelisted response headers only. An app that needs
-  `Retry-After` of a 429 or the request id has to ask for it, and that is not decided here.
+  sent, so a page reads the CORS safelisted response headers only. `CORSConfig.ExposeHeaders`
+  belongs to the web policy and does not reach an app origin, and `AppCORS` has no field of its
+  own, because one would change the signature of `NewAppCORS`. An app that needs `Retry-After`
+  of a 429 or the request id has to ask for it, and that is not decided here.
   `Access-Control-Allow-Private-Network` is not sent either: a preflight with
   `Access-Control-Request-Private-Network` gets the answer without it, and a browser that
   enforces Private Network Access, such as Chrome, fails the request when the API is on a private
@@ -2640,7 +2649,8 @@ try {
   `CONTACT_FROM` and `CONTACT_TO` configure it. The routes have a CORS handler of their own,
   because `TrustedOrigins` comes from `ALLOWED_ORIGINS`: a cross origin page that may send mail
   can also read the answer and does not retry into a duplicate mail. It lists the web origins
-  only, serves GET and POST, sends no `Access-Control-Allow-Credentials` and has explicit
+  only, serves GET and POST, sends no `Access-Control-Allow-Credentials`, exposes `Retry-After`
+  through `ExposeHeaders` so a page reads the wait of a 429, and has explicit
   OPTIONS routes, so a preflight is answered by it and not by the catch-all. A page of another
   origin gets a 403 preflight, no CORS headers and 403 `cross_origin` on the POST.
 - Timeouts: the send is not cancelled when the visitor leaves, and `SendTimeout` defaults to 10

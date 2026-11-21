@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"slices"
 	"strconv"
@@ -33,6 +34,7 @@ type CORS struct {
 	headers     string
 	credentials bool
 	maxAge      string
+	expose      string
 }
 
 // CORSConfig is what NewCORS validates into a CORS.
@@ -61,6 +63,17 @@ type CORSConfig struct {
 	// MaxAge caches a preflight answer for this long. Zero sends no
 	// Access-Control-Max-Age, so the browser falls back to its own default.
 	MaxAge time.Duration
+	// ExposeHeaders lists response headers a page of an allowed origin may
+	// read, sent as Access-Control-Expose-Headers on the real response of an
+	// allowed origin: not on a preflight answer and never to a refused
+	// origin. Without it a browser hides every header outside the CORS
+	// safelist, Retry-After among them. The default is empty and sends no
+	// header. Names are written in canonical form and deduplicated, in the
+	// order given. An empty name or a name that is not an HTTP token is
+	// refused by NewCORS. The wildcard "*" is refused too: it does not apply
+	// to a credentialed request, so it would silently expose nothing exactly
+	// where Credentials is set.
+	ExposeHeaders []string
 }
 
 // defaultCORSMethods is the method list used when CORSConfig.Methods is
@@ -114,16 +127,60 @@ func NewCORS(cfg CORSConfig) (*CORS, error) {
 		headers = []string{"Content-Type"}
 	}
 
+	expose, err := exposeHeaderList(cfg.ExposeHeaders)
+	if err != nil {
+		return nil, err
+	}
+
 	c := &CORS{
 		origins:     origins,
 		methods:     strings.Join(methods, ", "),
 		headers:     strings.Join(headers, ", "),
 		credentials: cfg.Credentials,
+		expose:      expose,
 	}
 	if cfg.MaxAge > 0 {
 		c.maxAge = strconv.Itoa(int(cfg.MaxAge.Seconds()))
 	}
 	return c, nil
+}
+
+// exposeHeaderList validates names and returns them canonical, deduplicated
+// and joined. The error texts are fixed and never carry a name.
+func exposeHeaderList(names []string) (string, error) {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if name == "*" {
+			return "", errors.New("middleware: a wildcard is not accepted in ExposeHeaders, list the names")
+		}
+		if !isHeaderToken(name) {
+			return "", errors.New("middleware: ExposeHeaders holds an empty name or a name that is not a valid header name")
+		}
+		canonical := textproto.CanonicalMIMEHeaderKey(name)
+		if !slices.Contains(out, canonical) {
+			out = append(out, canonical)
+		}
+	}
+
+	return strings.Join(out, ", "), nil
+}
+
+// isHeaderToken reports whether name is a non-empty RFC 9110 token.
+func isHeaderToken(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+		case strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0:
+		default:
+			return false
+		}
+	}
+
+	return true
 }
 
 // errInvalidOrigin is wrapped into NewCORS' error so a caller can match on
@@ -171,6 +228,12 @@ func (c *CORS) Middleware(next http.Handler) http.Handler {
 			}
 			w.WriteHeader(http.StatusNoContent)
 			return
+		}
+
+		// Only the real response carries the exposed names: the preflight
+		// above is answered without them, and a refused origin gets none.
+		if allowed && c.expose != "" {
+			w.Header().Set("Access-Control-Expose-Headers", c.expose)
 		}
 
 		next.ServeHTTP(w, r)

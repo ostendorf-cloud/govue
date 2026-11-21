@@ -151,6 +151,36 @@ func TestContactRoutesAnswerCORSForAnAllowedOrigin(t *testing.T) {
 	}
 }
 
+// A cross origin page reads Retry-After of a 429 only when the CORS handler
+// exposes it. The general rate limiter sits behind the CORS handler.
+func TestContactRoutesExposeRetryAfterOnA429(t *testing.T) {
+	t.Parallel()
+	a, _ := newTestAppEnv(t, 1, map[string]string{"CONTACT_POW_KEY": contactTestKey})
+	const origin = "https://app.example.test"
+	do := func(origin string) *httptest.ResponseRecorder {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, contactPrefix+"/challenge", nil)
+		r.Header.Set("Origin", origin)
+		r.Header.Set("Sec-Fetch-Site", "cross-site")
+		w := httptest.NewRecorder()
+		a.handler().ServeHTTP(w, r)
+		return w
+	}
+
+	if w := do(origin); w.Code != http.StatusOK {
+		t.Fatalf("first request = %d, want 200", w.Code)
+	}
+	w := do(origin)
+	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" {
+		t.Fatalf("second request = %d, Retry-After %q, want 429 with one", w.Code, w.Header().Get("Retry-After"))
+	}
+	if got := w.Header().Get("Access-Control-Expose-Headers"); got != "Retry-After" {
+		t.Fatalf("expose headers = %q, want Retry-After", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != origin {
+		t.Fatalf("allow origin = %q, want %q", got, origin)
+	}
+}
+
 func TestContactRoutesRefuseAnUnlistedOrigin(t *testing.T) {
 	t.Parallel()
 	a, clock, _ := newContactApp(t, true)
