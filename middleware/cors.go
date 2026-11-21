@@ -106,10 +106,10 @@ func NewCORS(cfg CORSConfig) (*CORS, error) {
 		}
 		parsed, err := url.Parse(origin)
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") ||
-			parsed.Path != "" || parsed.RawQuery != "" || parsed.User != nil {
+			parsed.Path != "" || parsed.RawQuery != "" || parsed.User != nil || strings.Contains(origin, "#") {
 			// The refused value is not shown: it may hold a credential.
 			return nil, fmt.Errorf("middleware: origin %d must be http or https scheme://host without a path, "+
-				"a query or userinfo (the value is not shown): %w", i+1, errInvalidOrigin)
+				"a query, a fragment or userinfo (the value is not shown): %w", i+1, errInvalidOrigin)
 		}
 		// Stored and compared case-insensitively: browsers normalize the
 		// scheme and host of an Origin header to lowercase before sending
