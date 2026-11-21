@@ -10,6 +10,7 @@ import (
 	"testing/fstest"
 
 	"github.com/ostendorf-cloud/govue/favicon"
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 )
 
 func publicFS() fstest.MapFS {
@@ -172,6 +173,17 @@ func TestLoad(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A refused theme colour is never shown. The error names the expected form.
+func TestLoadKeepsARefusedColourOut(t *testing.T) {
+	t.Parallel()
+
+	_, err := favicon.Load(publicFS(), "s3cr3tTOKEN")
+	configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "theme colour must be a hex value")
+	if !errors.Is(err, favicon.ErrThemeColor) {
+		t.Errorf("err = %v, want ErrThemeColor", err)
 	}
 }
 
