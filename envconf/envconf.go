@@ -12,6 +12,7 @@ package envconf
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"strconv"
@@ -41,6 +42,10 @@ func (l *Loader) Err() error {
 }
 
 var errBadDuration = errors.New("envconf: not a duration such as 30s, 5m or 7d (the value is not shown)")
+
+// maxDays is the largest whole number of days, in either direction, whose
+// duration fits in a time.Duration: 106751 days.
+const maxDays = int64(math.MaxInt64 / (24 * time.Hour))
 
 func (l *Loader) fail(key, format string, args ...any) {
 	l.problems = append(l.problems, fmt.Errorf("envconf: %s: "+format, append([]any{key}, args...)...))
@@ -254,15 +259,21 @@ func (l *Loader) RequiredSecretOrFile(key string) string {
 }
 
 // ParseDuration reads a Go duration, plus a whole number of days with a d
-// suffix, which time.ParseDuration does not support.
+// suffix, which time.ParseDuration does not support. A day count must fit in
+// a time.Duration: at most 106751 days in either direction.
 //
 // The error names the expected form only. It neither carries the input nor
 // wraps the errors of strconv and time, which quote it: error text must not
 // carry the raw value of a variable.
 func ParseDuration(raw string) (time.Duration, error) {
 	if days, ok := strings.CutSuffix(raw, "d"); ok {
-		n, err := strconv.Atoi(days)
+		n, err := strconv.ParseInt(days, 10, 64)
 		if err != nil {
+			return 0, errBadDuration
+		}
+		// A count whose duration does not fit in an int64 of nanoseconds
+		// would wrap, so it is refused like any other bad shape.
+		if n > maxDays || n < -maxDays {
 			return 0, errBadDuration
 		}
 		return time.Duration(n) * 24 * time.Hour, nil

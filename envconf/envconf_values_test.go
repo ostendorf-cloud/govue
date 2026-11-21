@@ -4,6 +4,7 @@
 package envconf
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -120,6 +121,11 @@ func TestParseDurationDecisions(t *testing.T) {
 		{input: ".5s", want: 500 * time.Millisecond},
 		{input: "5s", want: 5 * time.Second},
 		{input: "106751d", want: 106751 * 24 * time.Hour},
+		{input: "+106751d", want: 106751 * 24 * time.Hour},
+		{input: "-106751d", want: -106751 * 24 * time.Hour},
+		{input: "106752d", wantErr: true},
+		{input: "+106752d", wantErr: true},
+		{input: "-106752d", wantErr: true},
 		{input: " 1d", wantErr: true},
 		{input: "1D", wantErr: true},
 		{input: "1dd", wantErr: true},
@@ -145,6 +151,36 @@ func TestParseDurationDecisions(t *testing.T) {
 			if err != nil || got != tc.want {
 				t.Errorf("ParseDuration(%q) = %s, %v; want %s, nil", tc.input, got, err, tc.want)
 			}
+		})
+	}
+}
+
+// TestDayCountOverflow pins that a day count whose duration does not fit is
+// refused with the fixed error text, never wrapped, and that neither the value
+// nor the range text of strconv reaches the error.
+func TestDayCountOverflow(t *testing.T) {
+	t.Parallel()
+
+	huge := strings.Repeat("9", 30)
+	for _, raw := range []string{"106752d", "+106752d", "-106752d", huge + "d", "-" + huge + "d"} {
+		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ParseDuration(raw)
+			if !errors.Is(err, errBadDuration) || got != 0 {
+				t.Fatalf("ParseDuration(%q) = %s, %v; want 0 and the fixed error", raw, got, err)
+			}
+			for _, bad := range []string{"106752", huge, "range", "strconv"} {
+				if strings.Contains(err.Error(), bad) {
+					t.Errorf("error %q contains %q", err, bad)
+				}
+			}
+
+			l := New(env(map[string]string{"TTL": raw}))
+			if got := l.Duration("TTL", time.Hour, -1<<63, 1<<63-1); got != time.Hour || l.Err() == nil {
+				t.Fatalf("Duration(%q) = %s, %v; want the fallback and an error", raw, got, l.Err())
+			}
+			assertNoValue(t, l.Err(), strings.TrimSuffix(strings.TrimLeft(raw, "+-"), "d"), "TTL")
 		})
 	}
 }
