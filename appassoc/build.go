@@ -84,7 +84,7 @@ func buildApple(c AppleConfig) ([]byte, []error) {
 		where := "apple.applinks[" + strconv.Itoa(i) + "]"
 		problems := checkAppleID(where, app.AppleID)
 		if seen[app.String()] {
-			problems = append(problems, invalid("%s: app %s is listed twice", where, show(app.String())))
+			problems = append(problems, listedTwice(where, "app", app.String(), len(problems) == 0))
 		}
 		seen[app.String()] = true
 		problems = append(problems, checkPaths(where+".paths", app.Paths, true)...)
@@ -114,7 +114,7 @@ func buildApple(c AppleConfig) ([]byte, []error) {
 		where := "apple.webcredentials[" + strconv.Itoa(i) + "]"
 		problems := checkAppleID(where, id)
 		if seen[id.String()] {
-			problems = append(problems, invalid("%s: app %s is listed twice", where, show(id.String())))
+			problems = append(problems, listedTwice(where, "app", id.String(), len(problems) == 0))
 		}
 		seen[id.String()] = true
 		errs = append(errs, problems...)
@@ -136,10 +136,10 @@ func buildApple(c AppleConfig) ([]byte, []error) {
 func checkAppleID(where string, id AppleID) []error {
 	var errs []error
 	if !teamIDPattern.MatchString(id.TeamID) {
-		errs = append(errs, invalid("%s: team id %s must be 10 uppercase letters or digits", where, show(id.TeamID)))
+		errs = append(errs, invalid("%s: team id must be 10 uppercase letters or digits%s", where, notShown))
 	}
 	if len(id.BundleID) > maxBundleIDLength || !bundleIDPattern.MatchString(id.BundleID) {
-		errs = append(errs, invalid("%s: bundle id %s must be dot separated labels of letters, digits and hyphens, at most %d characters", where, show(id.BundleID), maxBundleIDLength))
+		errs = append(errs, invalid("%s: bundle id must be dot separated labels of letters, digits and hyphens, at most %d characters%s", where, maxBundleIDLength, notShown))
 	}
 	return errs
 }
@@ -151,7 +151,7 @@ func checkPaths(where string, paths []string, required bool) []error {
 	}
 	for i, p := range paths {
 		if len(p) > maxPathLength || !pathPattern.MatchString(p) {
-			errs = append(errs, invalid("%s[%d]: path %s must start with a slash, hold only letters, digits and / _ . ~ * ? -, and be at most %d characters", where, i, show(p), maxPathLength))
+			errs = append(errs, invalid("%s[%d]: path must start with a slash, hold only letters, digits and / _ . ~ * ? -, and be at most %d characters%s", where, i, maxPathLength, notShown))
 		}
 	}
 	return errs
@@ -169,10 +169,10 @@ func buildAndroid(c AndroidConfig) ([]byte, []error) {
 		where := "android.apps[" + strconv.Itoa(i) + "]"
 		var problems []error
 		if len(app.PackageName) > maxPackageLength || !packagePattern.MatchString(app.PackageName) {
-			problems = append(problems, invalid("%s: package name %s must be at least two dot separated segments of letters, digits and underscores, each starting with a letter, at most %d characters", where, show(app.PackageName), maxPackageLength))
+			problems = append(problems, invalid("%s: package name must be at least two dot separated segments of letters, digits and underscores, each starting with a letter, at most %d characters%s", where, maxPackageLength, notShown))
 		}
 		if seen[app.PackageName] {
-			problems = append(problems, invalid("%s: package %s is listed twice", where, show(app.PackageName)))
+			problems = append(problems, listedTwice(where, "package", app.PackageName, len(problems) == 0))
 		}
 		seen[app.PackageName] = true
 
@@ -214,7 +214,7 @@ func normalizeFingerprints(where string, in []string) ([]string, []error) {
 	seen := map[string]bool{}
 	for i, fp := range in {
 		if !fingerprintPattern.MatchString(fp) {
-			errs = append(errs, invalid("%s.fingerprints[%d]: %s must be 32 hex bytes separated by colons", where, i, show(fp)))
+			errs = append(errs, invalid("%s.fingerprints[%d]: must be 32 hex bytes separated by colons%s", where, i, notShown))
 			continue
 		}
 		fp = strings.ToUpper(fp)
@@ -239,7 +239,8 @@ func normalizeRelations(where string, in []Relation) ([]Relation, []error) {
 		case RelationHandleAllURLs, RelationGetLoginCreds:
 			have[r] = true
 		default:
-			errs = append(errs, invalid("%s.relations[%d]: %s is not a known relation", where, i, show(string(r))))
+			errs = append(errs, invalid("%s.relations[%d]: is not a known relation, want %s or %s%s",
+				where, i, RelationHandleAllURLs, RelationGetLoginCreds, notShown))
 		}
 	}
 	out := []Relation{}

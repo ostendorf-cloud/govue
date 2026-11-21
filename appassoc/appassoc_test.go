@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files")
@@ -614,6 +616,50 @@ func TestDocumentSizeBoundary(t *testing.T) {
 	if len(body) > limit || len(body) < limit-400 {
 		t.Fatalf("largest accepted document is %d bytes, want just under %d", len(body), limit)
 	}
+}
+
+// A refused identifier comes from the configuration and is never shown, a
+// duplicate one included. A duplicate that passed its checks is an accepted
+// value and is named.
+func TestValidationKeepsARefusedValueOut(t *testing.T) {
+	const token = "s3cr3tTOKEN"
+	okID := AppleID{TeamID: "ABCDE12345", BundleID: "com.example.app"}
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{"team id", Config{Apple: AppleConfig{WebCredentials: []AppleID{{TeamID: token, BundleID: "com.example.app"}}}}, "apple.webcredentials[0]: team id"},
+		{"bundle id", Config{Apple: AppleConfig{WebCredentials: []AppleID{{TeamID: "ABCDE12345", BundleID: token + "!"}}}}, "apple.webcredentials[0]: bundle id"},
+		{"path", Config{Apple: AppleConfig{AppLinks: []AppleApp{{AppleID: okID, Paths: []string{token}}}}}, "apple.applinks[0].paths[0]: path"},
+		{"package name", Config{Android: AndroidConfig{Apps: []AndroidApp{{PackageName: token, Fingerprints: []string{fpUpper}}}}}, "android.apps[0]: package name"},
+		{"fingerprint", Config{Android: AndroidConfig{Apps: []AndroidApp{{PackageName: "com.example.app", Fingerprints: []string{token}}}}}, "android.apps[0].fingerprints[0]"},
+		{"relation", Config{Android: AndroidConfig{Apps: []AndroidApp{{
+			PackageName: "com.example.app", Fingerprints: []string{fpUpper}, Relations: []Relation{token},
+		}}}}, "android.apps[0].relations[0]: is not a known relation"},
+		{"refused duplicate", Config{Android: AndroidConfig{Apps: []AndroidApp{
+			{PackageName: token, Fingerprints: []string{fpUpper}},
+			{PackageName: token, Fingerprints: []string{fpUpper}},
+		}}}, "android.apps[1]: package is listed twice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := New(tc.cfg)
+			configtexttest.AssertHidden(t, err, token, tc.want)
+			if !errors.Is(err, ErrInvalid) {
+				t.Errorf("error %v is not ErrInvalid", err)
+			}
+		})
+	}
+
+	t.Run("accepted duplicate", func(t *testing.T) {
+		_, err := New(Config{Android: AndroidConfig{Apps: []AndroidApp{
+			{PackageName: "com.example.app", Fingerprints: []string{fpUpper}},
+			{PackageName: "com.example.app", Fingerprints: []string{fpUpper}},
+		}}})
+		if err == nil || !strings.Contains(err.Error(), `package "com.example.app" is listed twice`) {
+			t.Errorf("error %v does not name the accepted duplicate", err)
+		}
+	})
 }
 
 func TestValidationReportsEveryProblem(t *testing.T) {
