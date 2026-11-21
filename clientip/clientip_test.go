@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ostendorf-cloud/govue/clientip"
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 )
 
 func TestResolverResolve(t *testing.T) {
@@ -275,6 +276,28 @@ func TestParseCIDRs(t *testing.T) {
 					t.Errorf("prefix %d = %s, want %s", i, prefix, tc.want[i])
 				}
 			}
+		})
+	}
+}
+
+// A wrong entry is named by its position, never by its value: the entry may
+// be a secret pasted into the wrong variable, and the error of net/netip
+// quotes it.
+func TestParseCIDRs_errorHidesTheEntry(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "an address", raw: "10.0.0.1, s3cr3tTOKEN"},
+		{name: "a prefix", raw: "10.0.0.1,, s3cr3tTOKEN/8"},
+		{name: "a url with credentials", raw: "10.0.0.1, https://user:s3cr3tTOKEN@proxy.example.test"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := clientip.ParseCIDRs(tc.raw)
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "trusted proxy entry 2")
 		})
 	}
 }

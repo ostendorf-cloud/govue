@@ -150,7 +150,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	cfg.logLevel = level
 
 	proxies, err := clientip.ParseCIDRs(l.String("TRUSTED_PROXIES", ""))
-	fail(err)
+	if err != nil {
+		fail(fmt.Errorf("TRUSTED_PROXIES: %w", err))
+	}
 	cfg.trustedProxies = proxies
 
 	cfg.sessionKey, err = decodeKey("SESSION_KEY", l.Secret("SESSION_KEY"))

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 )
 
 func TestDecodeKeyKeepsTheRawValueOut(t *testing.T) {
@@ -55,4 +57,18 @@ func TestDecodeKeyKeepsTheRawValueOut(t *testing.T) {
 			t.Fatalf("decodeKey = %d bytes, %v", len(key), err)
 		}
 	})
+}
+
+// A wrong TRUSTED_PROXIES entry is named by the variable and its position,
+// never by its value.
+func TestLoadConfigTrustedProxiesKeepsTheValueOut(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t, 20)
+	env["TRUSTED_PROXIES"] = "10.0.0.0/8, https://user:s3cr3tTOKEN@proxy.example.test"
+	_, err := loadConfig(func(key string) string { return env[key] })
+	configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "TRUSTED_PROXIES")
+	if err != nil && !strings.Contains(err.Error(), "entry 2") {
+		t.Errorf("error does not name the position: %v", err)
+	}
 }
