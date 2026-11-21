@@ -135,12 +135,19 @@ func Run(ctx context.Context, cfg Config) error {
 // *os.SyscallError of a failed bind or listen carries the errno only, such as
 // EADDRINUSE, so it stays wrapped for a caller that matches it.
 func listenFailure(field string, err error) error {
-	var sys *os.SyscallError
-	if errors.As(err, &sys) {
+	var (
+		sys *os.SyscallError
+		dns *net.DNSError
+	)
+	switch {
+	case errors.As(err, &sys):
 		return fmt.Errorf("listen on %s (the address is not shown): %w", field, sys)
+	case errors.As(err, &dns):
+		return fmt.Errorf("listen on %s: the host does not resolve (the address is not shown)", field)
+	default:
+		return fmt.Errorf("listen on %s: the address must be host:port with a numeric port, such as :8080 "+
+			"(the address and the cause are not shown)", field)
 	}
-	return fmt.Errorf("listen on %s: the address must be host:port with a numeric port, such as :8080 "+
-		"(the address and the cause are not shown)", field)
 }
 
 // Serve runs an HTTP server on listener until ctx is cancelled, then shuts it

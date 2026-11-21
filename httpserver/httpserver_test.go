@@ -187,6 +187,24 @@ func TestRunKeepsTheAddressOutOfTheError(t *testing.T) {
 		}, AdminConfig{Addr: "s3cr3tTOKEN", Handler: echoHandler("admin")}, listen)
 		configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "AdminConfig.Addr")
 	})
+
+	t.Run("a host that does not resolve", func(t *testing.T) {
+		t.Parallel()
+		listen := func(_ context.Context, addr string) (net.Listener, error) {
+			if addr == "primary.invalid:0" {
+				return newMemListener(), nil
+			}
+			return nil, &net.OpError{Op: "listen", Net: "tcp", Err: &net.DNSError{
+				Err: "no such host", Name: "s3cr3tTOKEN.invalid", IsNotFound: true,
+			}}
+		}
+		err := runAdmin(context.Background(), Config{
+			Addr:    "primary.invalid:0",
+			Logger:  discardLogger(),
+			Handler: echoHandler("primary"),
+		}, AdminConfig{Addr: "s3cr3tTOKEN.invalid:8080", Handler: echoHandler("admin")}, listen)
+		configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "listen on AdminConfig.Addr: the host does not resolve")
+	})
 }
 
 func TestRunWrapsAListenFailure(t *testing.T) {
