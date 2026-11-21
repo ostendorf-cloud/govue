@@ -49,6 +49,10 @@ func TestOriginErrorsKeepACredentialOut(t *testing.T) {
 			_, err := NewCORS(CORSConfig{Origins: []string{"https://app.example.test#"}})
 			return err
 		}, "middleware: origin 1 must be http or https scheme://host without a path, a query, a fragment"},
+		{"cors origin with an empty query", func() error {
+			_, err := NewCORS(CORSConfig{Origins: []string{"https://app.example.test?"}})
+			return err
+		}, "middleware: origin 1 must be http or https scheme://host without a path, a query, a fragment"},
 		{"app origin with an empty fragment", func() error {
 			_, err := NewAppOrigins([]string{"https://localhost#"})
 			return err
