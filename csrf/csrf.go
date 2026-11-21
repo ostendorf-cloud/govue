@@ -36,7 +36,6 @@ import (
 	"strings"
 
 	"github.com/ostendorf-cloud/govue/internal/bearer"
-	"github.com/ostendorf-cloud/govue/internal/configtext"
 )
 
 // HeaderName is where a fetch sends the token; FieldName is where a form does.
@@ -159,18 +158,19 @@ func New(expected Expected) (*Protector, error) {
 // error for anything that is not a scheme and host without a trailing slash,
 // so a typo cannot silently widen what is trusted.
 //
-// The error names the origin, unless it holds an @, a ? or a #, where a URL
-// carries a credential. It does not wrap the error of the standard library,
-// which quotes the origin again.
+// The error names the expected form and never the refused origin, and it does
+// not wrap the error of the standard library, which quotes it: a startup
+// error reaches CI and startup logs, and a value pasted wrongly can hold a
+// credential. The caller names the variable or the position.
 func (p *Protector) TrustOrigin(origin string) error {
 	if p.cross.AddTrustedOrigin(origin) != nil {
-		return fmt.Errorf("csrf: trusted origin %s %s", configtext.Quote(origin), originForm)
+		return errors.New("csrf: trusted origin " + originForm)
 	}
 	return nil
 }
 
 // originForm is the expected form of a trusted origin, for an error.
-const originForm = "must be scheme://host[:port] without a path, a query or a fragment"
+const originForm = "must be scheme://host[:port] without a path, a query or a fragment (the value is not shown)"
 
 // TrustOriginOnRoute trusts the given origins for requests with exactly this
 // method and exactly this path, and for no other route. It is for the one
@@ -221,9 +221,9 @@ func (p *Protector) TrustOriginOnRoute(method, path string, origins []string) er
 		return fmt.Errorf("csrf: trust origin on route: %s is already set", key)
 	}
 	cross := http.NewCrossOriginProtection()
-	for _, origin := range origins {
+	for i, origin := range origins {
 		if cross.AddTrustedOrigin(origin) != nil {
-			return fmt.Errorf("csrf: trust origin on route: %s: origin %s %s", key, configtext.Quote(origin), originForm)
+			return fmt.Errorf("csrf: trust origin on route: %s: origin %d %s", key, i+1, originForm)
 		}
 	}
 	if p.routes == nil {

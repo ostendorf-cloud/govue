@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
+	"github.com/ostendorf-cloud/govue/logging"
 )
 
 func TestDecodeKeyKeepsTheRawValueOut(t *testing.T) {
@@ -57,6 +58,21 @@ func TestDecodeKeyKeepsTheRawValueOut(t *testing.T) {
 			t.Fatalf("decodeKey = %d bytes, %v", len(key), err)
 		}
 	})
+}
+
+// A refused ALLOWED_ORIGINS entry is named by the variable and its position,
+// never by its value, in every package the list reaches.
+func TestNewAppAllowedOriginsKeepsTheValueOut(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t, 20)
+	env["ALLOWED_ORIGINS"] = "https://app.example.test,s3cr3tTOKEN"
+	cfg, err := loadConfig(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	_, err = newApp(cfg, logging.New(&strings.Builder{}, cfg.logLevel))
+	configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "ALLOWED_ORIGINS entry 2")
 }
 
 // A wrong TRUSTED_PROXIES entry is named by the variable and its position,

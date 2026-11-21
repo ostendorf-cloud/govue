@@ -280,12 +280,13 @@ func TestProtectorCheckRefusesACrossSiteRequest(t *testing.T) {
 	}
 }
 
-// A trusted origin that may carry a credential stays out of the error, and
-// so does the error of the standard library, which quotes it.
+// A refused trusted origin stays out of the error, and so does the error of
+// the standard library, which quotes it.
 func TestProtectorTrustOriginKeepsACredentialOutOfTheError(t *testing.T) {
 	t.Parallel()
 
 	for _, origin := range []string{
+		"s3cr3tTOKEN",
 		"https://user:s3cr3tTOKEN@app.example.test/",
 		"https://app.example.test/?token=s3cr3tTOKEN",
 		"https://user:s3cr3tTOKEN@app example.test\x7f",
@@ -299,7 +300,7 @@ func TestProtectorTrustOriginKeepsACredentialOutOfTheError(t *testing.T) {
 			}
 			configtexttest.AssertHidden(t, protector.TrustOrigin(origin), "s3cr3tTOKEN", "trusted origin")
 			err = protector.TrustOriginOnRoute(http.MethodPost, "/device/issue", []string{origin})
-			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "POST /device/issue: origin")
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "POST /device/issue: origin 1")
 		})
 	}
 }

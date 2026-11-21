@@ -16,7 +16,6 @@ import (
 
 	"github.com/ostendorf-cloud/govue/api"
 	"github.com/ostendorf-cloud/govue/internal/bearer"
-	"github.com/ostendorf-cloud/govue/internal/configtext"
 	"github.com/ostendorf-cloud/govue/logging"
 	"github.com/ostendorf-cloud/govue/session"
 )
@@ -214,12 +213,12 @@ func NewHandlers(cfg HandlerConfig) (*Handlers, error) {
 		problems = append(problems, fmt.Errorf("max body bytes %d is negative", cfg.MaxBodyBytes))
 	}
 	issueCross := http.NewCrossOriginProtection()
-	for _, origin := range cfg.IssueTrustedOrigins {
-		// The error of AddTrustedOrigin quotes the origin, and the one of
-		// url.Parse inside it quotes it again, so neither is wrapped.
+	for i, origin := range cfg.IssueTrustedOrigins {
+		// A refused origin is not shown, and the error of AddTrustedOrigin,
+		// which quotes it, is not wrapped: it may hold a credential.
 		if issueCross.AddTrustedOrigin(origin) != nil {
-			problems = append(problems, fmt.Errorf("trusted origin %s must be scheme://host[:port] "+
-				"without a path, a query or a fragment", configtext.Quote(origin)))
+			problems = append(problems, fmt.Errorf("trusted origin %d must be scheme://host[:port] "+
+				"without a path, a query or a fragment (the value is not shown)", i+1))
 		}
 	}
 	// A manager without a device store would fail every issue after the

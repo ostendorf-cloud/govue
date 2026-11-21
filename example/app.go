@@ -236,8 +236,10 @@ func newApp(cfg config, logger *slog.Logger) (*app, error) {
 	a.protector.OnRefusal(func(w http.ResponseWriter, r *http.Request, _ error) {
 		api.WriteError(w, r, api.PermissionDenied("cross origin or stale request, please reload"))
 	})
-	for _, origin := range cfg.allowedOrigins {
-		fail(a.protector.TrustOrigin(origin))
+	for i, origin := range cfg.allowedOrigins {
+		if err := a.protector.TrustOrigin(origin); err != nil {
+			fail(fmt.Errorf("example: ALLOWED_ORIGINS entry %d: %w", i+1, err))
+		}
 	}
 	// App mode: a native app's bearer request skips the CSRF check. That is
 	// safe only because every route sits behind the session middleware,
