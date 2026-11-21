@@ -102,7 +102,10 @@ func (a *app) buildAppCORS() error {
 	if len(a.cfg.appOrigins) == 0 {
 		return nil
 	}
-	appCORS, err := middleware.NewAppCORS(a.appOrigins, a.cors)
+	// Retry-After is exposed so a page of an app origin reads the wait of a 429
+	// from the rate limit, which sits behind this handler on every route.
+	appCORS, err := middleware.NewAppCORSWithConfig(a.appOrigins, a.cors,
+		middleware.AppCORSConfig{ExposeHeaders: []string{"Retry-After"}})
 	if err != nil {
 		return fmt.Errorf("example: app CORS: %w", err)
 	}
