@@ -649,8 +649,8 @@ The design of the library and the reasoning behind it.
   bearer token is not a cookie, so credentials mode stays off. An origin that is not listed gets
   `Vary: Origin` and no `Access-Control-` header, and is never echoed. No `Expose-Headers` is
   sent, so a page reads the CORS safelisted response headers only. `CORSConfig.ExposeHeaders`
-  belongs to the web policy and does not reach an app origin, and `AppCORS` has no field of its
-  own, because one would change the signature of `NewAppCORS`. An app that needs `Retry-After`
+  belongs to the web policy and does not reach an app origin, and `AppCORS` has no configuration
+  of its own, so exposing a header waits for an app that needs it. An app that needs `Retry-After`
   of a 429 or the request id has to ask for it, and that is not decided here.
   `Access-Control-Allow-Private-Network` is not sent either: a preflight with
   `Access-Control-Request-Private-Network` gets the answer without it, and a browser that
