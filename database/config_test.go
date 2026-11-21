@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 )
 
 // fakePassword is an obvious dummy with the characters a DSN would have to
@@ -291,6 +293,32 @@ func TestHostShapes(t *testing.T) {
 					t.Errorf("%s() error = %v, want one containing %q", name, err, tc.wantErr)
 				}
 			}
+		})
+	}
+}
+
+// A connection URL pasted into DB_HOST carries the password, and every host
+// error stays clear of it: the value is never quoted.
+func TestHostErrorKeepsTheValueOut(t *testing.T) {
+	t.Parallel()
+
+	for _, host := range []string{
+		"postgres://app:s3cr3tTOKEN@db.example.invalid:5432/app",
+		"app:s3cr3tTOKEN@db.example.invalid",
+		"/s3cr3tTOKEN",
+		"[s3cr3tTOKEN]",
+		"s3cr3tTOKEN,db.example.invalid",
+		"s3cr3tTOKEN db.example.invalid",
+	} {
+		t.Run(host, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := Config{Host: host, Name: "n", User: "u", Password: fakeSecret, SSLMode: SSLDisable}
+			configtexttest.AssertHidden(t, cfg.Validate(), "s3cr3tTOKEN", EnvHost)
+			_, err := LoadConfig(envOf(map[string]string{
+				"DB_HOST": host, "DB_NAME": "n", "DB_USER": "u", "DB_PASSWORD": fakePassword, "DB_SSLMODE": "disable",
+			}))
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", EnvHost)
 		})
 	}
 }
