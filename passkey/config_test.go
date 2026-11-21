@@ -154,6 +154,23 @@ func TestConfigErrorHidesCredentials(t *testing.T) {
 			c.Origins = []string{"https://user:s3cr3tTOKEN@app example.com\x7f"}
 		}, "is not a URL"},
 		{"rp id with userinfo", func(c *Config) { c.RPID = "user:s3cr3tTOKEN@app.example.com" }, "rp id"},
+		{"rp id that is a single label", func(c *Config) { c.RPID = "s3cr3tTOKEN@localhost" }, "rp id is a single label"},
+		{"rp id that is a pasted token", func(c *Config) { c.RPID = "s3cr3tTOKEN" }, "rp id is a single label"},
+		{"origin with an upper case scheme", func(c *Config) {
+			c.Origins = []string{"HTTPS://u:s3cr3tTOKEN@app.example.com"}
+		}, "origin 1 needs a lower case scheme"},
+		{"origin that is not https", func(c *Config) {
+			c.Origins = []string{"https://app.example.com", "ftp://u:s3cr3tTOKEN@app.example.com"}
+		}, "origin 2 is not https"},
+		{"origin on localhost with an upper case host", func(c *Config) {
+			c.RPID = "localhost"
+			c.Origins = []string{"http://u:s3cr3tTOKEN@LOCALHOST"}
+		}, "origin 1 needs a lower case host"},
+		{"origin that is a pasted token", func(c *Config) { c.Origins = []string{"s3cr3tTOKEN"} }, "origin 1"},
+		{"origin below a refused rp id", func(c *Config) {
+			c.RPID = "s3cr3tTOKEN"
+			c.Origins = []string{"https://app.example.com"}
+		}, "rp id"},
 		{"trusted origin with userinfo", func(c *Config) {
 			c.TrustedOrigins = []string{"https://user:s3cr3tTOKEN@app.example.com/"}
 		}, "trusted origin"},
