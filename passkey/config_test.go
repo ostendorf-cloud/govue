@@ -188,6 +188,19 @@ func TestConfigErrorHidesCredentials(t *testing.T) {
 	}
 }
 
+// The RP id mismatch is the one origin error that names values: both passed
+// their own checks, so they are accepted configuration, and the operator
+// needs both to see which one is wrong.
+func TestConfigMismatchNamesTheAcceptedValues(t *testing.T) {
+	cfg := validConfig()
+	cfg.Origins = []string{"https://app.example.com", "https://other.example.org"}
+	_, err := New(cfg)
+	want := `origin 2 "https://other.example.org" is not rp id "app.example.com" or a subdomain of it`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("New: %v, want it to contain %q", err, want)
+	}
+}
+
 func TestConfigNamesEveryProblem(t *testing.T) {
 	_, err := New(Config{})
 	if err == nil {
