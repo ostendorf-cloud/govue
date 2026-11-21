@@ -126,12 +126,54 @@ func TestNewKeepsTheURLOutOfTheError(t *testing.T) {
 	}
 }
 
-// probeIssuers are issuers New accepts although they carry a credential: in
-// the userinfo, in the query or in the path.
+// Userinfo, a query and a fragment have no place in an issuer, and the
+// refusal names the field and never the value.
+func TestNewRefusesAnIssuerWithUserinfoQueryOrFragment(t *testing.T) {
+	for _, issuer := range []string{
+		"https://user:s3cr3tTOKEN@idp.example.test/realms/apps",
+		"https://s3cr3tTOKEN@idp.example.test/realms/apps",
+		"http://user:s3cr3tTOKEN@127.0.0.1:8080/realms/apps",
+		"https://idp.example.test/realms/apps?token=s3cr3tTOKEN",
+		"https://idp.example.test/realms/apps?",
+		"https://idp.example.test/realms/apps#s3cr3tTOKEN",
+		"https://idp.example.test/realms/apps#",
+		"https://idp.example.test?token=s3cr3tTOKEN/",
+	} {
+		t.Run(issuer, func(t *testing.T) {
+			_, err := New(Config{
+				Issuer: issuer, ClientID: testClientID, ClientSecret: "a client secret", RedirectURL: testRedirect,
+			})
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "issuer")
+		})
+	}
+}
+
+// What the check refuses is the shape of an issuer. A path, a trailing slash,
+// a port, a loopback http issuer and an at sign in the path still work.
+func TestNewAcceptsAnIssuerOfSchemeHostAndPath(t *testing.T) {
+	for _, issuer := range []string{
+		"https://idp.example.test",
+		"https://idp.example.test/",
+		"https://idp.example.test:8443/realms/apps/",
+		"http://127.0.0.1:8080/realms/apps",
+		"http://localhost/realms/apps",
+		"https://idp.example.test/tenants/a@b/v2.0",
+	} {
+		t.Run(issuer, func(t *testing.T) {
+			if _, err := New(Config{
+				Issuer: issuer, ClientID: testClientID, ClientSecret: "a client secret", RedirectURL: testRedirect,
+			}); err != nil {
+				t.Errorf("New refused an issuer of scheme, host and path: %v", err)
+			}
+		})
+	}
+}
+
+// probeIssuers are issuers New accepts although they carry a value a log
+// must not show: here in the path.
 var probeIssuers = []string{
-	"http://user:s3cr3tTOKEN@127.0.0.1:8080/realms/apps",
-	"https://idp.example.test/realms/apps?token=s3cr3tTOKEN",
 	"https://idp.example.test/s3cr3tTOKEN",
+	"http://127.0.0.1:8080/s3cr3tTOKEN",
 }
 
 // failingTransport fails every request with err.
@@ -259,7 +301,7 @@ func TestExchangeKeepsTheIssuerOutOfTheError(t *testing.T) {
 // the names of a certificate, and the ones a caller can act on stay
 // matchable.
 func TestRequestFailureKinds(t *testing.T) {
-	const issuer = "https://idp.example.test/realms/apps?token=s3cr3tTOKEN"
+	const issuer = "https://idp.example.test/realms/s3cr3tTOKEN"
 	for _, tc := range []struct {
 		name string
 		err  error
