@@ -266,6 +266,22 @@ func TestSubmitUsesTheSiteSubjectAndBody(t *testing.T) {
 	}
 }
 
+// envelopeKey sends a valid body with one extra envelope key.
+func envelopeKey(key, value string) func(t *testing.T, e *env) *httptest.ResponseRecorder {
+	return func(t *testing.T, e *env) *httptest.ResponseRecorder {
+		b := e.body(t)
+		b[key] = value
+		return e.post(t, b)
+	}
+}
+
+func TestDefaultSendTimeout(t *testing.T) {
+	t.Parallel()
+	if DefaultSendTimeout != 10*time.Second {
+		t.Fatalf("DefaultSendTimeout = %v, want 10s", DefaultSendTimeout)
+	}
+}
+
 func TestSubmitRefusals(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -322,6 +338,27 @@ func TestSubmitRefusals(t *testing.T) {
 				b["admin"] = true
 				return e.post(t, b)
 			},
+			status: 400, code: "invalid_argument",
+		},
+		{
+			name: "envelope key reply_to",
+			run:  envelopeKey("reply_to", "attacker@example.org"),
+			// The wire schema cannot set the envelope.
+			status: 400, code: "invalid_argument",
+		},
+		{
+			name:   "envelope key from",
+			run:    envelopeKey("from", "attacker@example.org"),
+			status: 400, code: "invalid_argument",
+		},
+		{
+			name:   "envelope key to",
+			run:    envelopeKey("to", "attacker@example.org"),
+			status: 400, code: "invalid_argument",
+		},
+		{
+			name:   "envelope key subject",
+			run:    envelopeKey("subject", "Injected"),
 			status: 400, code: "invalid_argument",
 		},
 		{

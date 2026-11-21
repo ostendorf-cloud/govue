@@ -18,6 +18,14 @@
 //
 // The limits and the replay set are per process. With several replicas the
 // budgets multiply. This package imports no session package.
+//
+// Privacy facts for a site's own privacy text. Nothing is persisted by this
+// package. In process memory it holds the limiter keys, which are the IPv4
+// address or the IPv6 /64 of a client (up to 100000 keys, kept until the
+// bucket refills), and the replay set of the proof of work. The visitor's
+// name, address and message leave the process only through the mail. The site
+// has to say so in its privacy text. This is a statement of fact, not legal
+// advice.
 package contact
 
 import (

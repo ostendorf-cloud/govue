@@ -45,7 +45,7 @@ const (
 	// DefaultMaxBodyBytes is the body cap of a submission.
 	DefaultMaxBodyBytes int64 = 64 << 10
 	// DefaultSendTimeout bounds one send, over the dial and the conversation.
-	DefaultSendTimeout = 30 * time.Second
+	DefaultSendTimeout = 10 * time.Second
 	// MaxLimiterKeys bounds the keys of the limiters this package builds.
 	MaxLimiterKeys = 100_000
 
@@ -109,6 +109,10 @@ type Config struct {
 	// 20 seconds and [MaxLimiterKeys] keys.
 	ChallengeLimiter *ratelimit.Limiter
 	// ClientIP resolves the client address. Nil trusts no proxy header.
+	// Behind a reverse proxy the resolver needs the proxy's address as a
+	// trusted proxy (TRUSTED_PROXIES in the example). Without it every visitor
+	// shares the proxy's address and one bucket, which fails closed: the
+	// default allows 5 submissions per 10 minutes for the whole site.
 	ClientIP *clientip.Resolver
 
 	// TrustedOrigins are cross origin callers Submit accepts, for a frontend
@@ -134,8 +138,8 @@ type Config struct {
 	// MaxBodyBytes is the body cap. Zero means [DefaultMaxBodyBytes].
 	MaxBodyBytes int64
 	// SendTimeout bounds a send. Zero means [DefaultSendTimeout]. The send is
-	// not cancelled when the visitor leaves. Keep it below the server's write
-	// timeout (30 s by default in httpserver), or a slow send can finish after
+	// not cancelled when the visitor leaves. The default is 10 s. Keep it below
+	// the server's write timeout (30 s by default in httpserver), or a slow send can finish after
 	// the answer can no longer be written. A send still running at shutdown can
 	// be cut off when the shutdown timeout (20 s by default) ends.
 	SendTimeout time.Duration

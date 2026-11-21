@@ -2646,12 +2646,20 @@ try {
   only, serves GET and POST, sends no `Access-Control-Allow-Credentials` and has explicit
   OPTIONS routes, so a preflight is answered by it and not by the catch-all. A page of another
   origin gets a 403 preflight, no CORS headers and 403 `cross_origin` on the POST.
-- Timeouts: the send is not cancelled when the visitor leaves, and `SendTimeout` defaults to 30
+- Timeouts: the send is not cancelled when the visitor leaves, and `SendTimeout` defaults to 10
   seconds. `httpserver` has a read timeout of 15 seconds, a write timeout of 30 seconds and a
   shutdown timeout of 20 seconds by default. A slow send can finish after the answer can no
   longer be written, and a send in flight at shutdown can be cut off. A site keeps the read
   timeout plus `SendTimeout` below the write timeout and `SendTimeout` below the shutdown
-  timeout. The example sets 10 seconds, and a test pins the value and the sums.
+  timeout. The example sets 10 seconds as well, and a test pins the value and the sums.
+- Privacy facts, for the privacy text of a site. The package persists nothing. In process memory
+  it holds the limiter keys, which are the IPv4 address or the IPv6 /64 of a client, up to 100000
+  keys, kept until the bucket refills, and the replay set of the proof of work. The visitor's
+  name, address and message leave the process only through the mail. A site's privacy text needs
+  to say so. This is a statement of fact, not legal advice.
+- Deploy: behind a reverse proxy, `TRUSTED_PROXIES` (or the site's own `clientip.Resolver` in
+  `Config.ClientIP`) must name the proxy. Without it every visitor shares the proxy's address and
+  one bucket, which fails closed: 5 submissions per 10 minutes for the whole site.
 - Out of scope: a session or CSRF token variant and content scoring of messages.
 
 ### Component behaviour
