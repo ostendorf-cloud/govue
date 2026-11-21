@@ -263,9 +263,12 @@ func decodeKey(name, raw string) ([]byte, error) {
 	if raw == "" {
 		return nil, nil //nolint:nilnil // envconf.Secret already recorded the problem for an empty value
 	}
+	// The error of hex.DecodeString names the offending character, so it is
+	// not wrapped: error text must not carry the raw value of a variable.
 	key, err := hex.DecodeString(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%s: must be hex encoded: %w", name, err)
+		return nil, fmt.Errorf("%s: is not valid hex, expected at least %d bytes (%d hex characters)",
+			name, minKeyBytes, 2*minKeyBytes)
 	}
 	if len(key) < minKeyBytes {
 		return nil, fmt.Errorf("%s: decodes to %d bytes, at least %d are required", name, len(key), minKeyBytes)
