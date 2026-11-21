@@ -205,7 +205,11 @@ task example:build   # compile the example application
   ids and tokens.
 - Tests use no network and no socket. A test that binds a port does not run in the sandbox or in
   CI. The tests of `database` against a real PostgreSQL are the one exception, see Deviations.
-- Errors wrap with `%w` and name the component.
+- Errors wrap with `%w` and name the component. A library error that quotes a configuration
+  value, such as the `*url.Error` of `url.Parse` or the `*net.OpError` of a listen, is not
+  wrapped, and a refused configuration value is never quoted: the error names the variable and
+  the expected form. A sentinel or an errno without the value may stay wrapped. See "Small,
+  independent, standard library" in the concept doc.
 - Logging through `log/slog`. A package takes a logger, it never builds one.
 
 ### Vue
