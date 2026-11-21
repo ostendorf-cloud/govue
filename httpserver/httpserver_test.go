@@ -10,11 +10,15 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 )
 
 // safetyNet bounds a select that should resolve almost instantly. A bug
@@ -143,6 +147,64 @@ func TestServeRejectsAnEmptyConfigWithoutDemandingAnAddr(t *testing.T) {
 	if strings.Contains(err.Error(), "addr") {
 		t.Errorf("error %q demands an addr, which a listener makes unnecessary", err)
 	}
+}
+
+// A listen address is configuration and may hold anything an operator
+// pasted, so a failed listen names the field and never the address. Run
+// fails these before binding: the address does not parse or does not
+// resolve, so no socket is opened.
+func TestRunKeepsTheAddressOutOfTheError(t *testing.T) {
+	t.Parallel()
+
+	for _, addr := range []string{
+		"s3cr3tTOKEN",
+		"127.0.0.1:s3cr3tTOKEN",
+		"user:s3cr3tTOKEN@127.0.0.1:8080",
+	} {
+		t.Run(addr, func(t *testing.T) {
+			t.Parallel()
+			err := Run(context.Background(), Config{
+				Addr:    addr,
+				Logger:  discardLogger(),
+				Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+			})
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "Config.Addr")
+		})
+	}
+
+	t.Run("admin", func(t *testing.T) {
+		t.Parallel()
+		listen := func(_ context.Context, addr string) (net.Listener, error) {
+			if addr == "primary.invalid:0" {
+				return newMemListener(), nil
+			}
+			return nil, &net.OpError{Op: "listen", Net: "tcp", Err: &net.AddrError{Err: "missing port in address", Addr: addr}}
+		}
+		err := runAdmin(context.Background(), Config{
+			Addr:    "primary.invalid:0",
+			Logger:  discardLogger(),
+			Handler: echoHandler("primary"),
+		}, AdminConfig{Addr: "s3cr3tTOKEN", Handler: echoHandler("admin")}, listen)
+		configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "AdminConfig.Addr")
+	})
+
+	t.Run("a host that does not resolve", func(t *testing.T) {
+		t.Parallel()
+		listen := func(_ context.Context, addr string) (net.Listener, error) {
+			if addr == "primary.invalid:0" {
+				return newMemListener(), nil
+			}
+			return nil, &net.OpError{Op: "listen", Net: "tcp", Err: &net.DNSError{
+				Err: "no such host", Name: "s3cr3tTOKEN.invalid", IsNotFound: true,
+			}}
+		}
+		err := runAdmin(context.Background(), Config{
+			Addr:    "primary.invalid:0",
+			Logger:  discardLogger(),
+			Handler: echoHandler("primary"),
+		}, AdminConfig{Addr: "s3cr3tTOKEN.invalid:8080", Handler: echoHandler("admin")}, listen)
+		configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "listen on AdminConfig.Addr: the host does not resolve")
+	})
 }
 
 func TestRunWrapsAListenFailure(t *testing.T) {
@@ -390,7 +452,12 @@ func TestRunAdminClosesThePrimaryListenerWhenTheAdminListenFails(t *testing.T) {
 	t.Parallel()
 
 	primary := newMemListener()
-	wantErr := errors.New("admin: address already in use")
+	// The shape of a real failed bind: the address in the *net.OpError, the
+	// errno in the *os.SyscallError below it.
+	wantErr := &net.OpError{
+		Op: "listen", Net: "tcp", Addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8081},
+		Err: os.NewSyscallError("bind", syscall.EADDRINUSE),
+	}
 
 	var calls int
 	listen := func(_ context.Context, _ string) (net.Listener, error) {
@@ -413,8 +480,12 @@ func TestRunAdminClosesThePrimaryListenerWhenTheAdminListenFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("runAdmin accepted a listen failure on the admin address")
 	}
-	if !errors.Is(err, wantErr) {
-		t.Errorf("runAdmin = %v, want it to wrap %v", err, wantErr)
+	// The errno stays for a caller that matches it, the address does not.
+	if !errors.Is(err, syscall.EADDRINUSE) {
+		t.Errorf("runAdmin = %v, want it to wrap EADDRINUSE", err)
+	}
+	if strings.Contains(err.Error(), "127.0.0.1") {
+		t.Errorf("runAdmin = %v, shows the address", err)
 	}
 	if !strings.Contains(err.Error(), "admin") {
 		t.Errorf("runAdmin = %v, does not name the admin listener", err)

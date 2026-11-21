@@ -69,7 +69,8 @@ func (a *app) buildPasskeys(accounts *accounttest.MemoryStore) error {
 		Now:            a.cfg.now,
 	})
 	if err != nil {
-		return fmt.Errorf("example: passkey handlers: %w", err)
+		// The RP id is PASSKEY_RP_ID and the origins are ALLOWED_ORIGINS.
+		return fmt.Errorf("example: passkey handlers (PASSKEY_RP_ID, ALLOWED_ORIGINS): %w", err)
 	}
 	a.passkeys = handlers
 	a.passkeyStore = store

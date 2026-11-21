@@ -160,7 +160,8 @@ func verifySignature(spec algSpec, key crypto.PublicKey, digest, signature []byt
 // else to be accepted here, so none of them is optional.
 func (p *Provider) checkClaims(c idClaims, groups []string, raw, nonce string) (Identity, error) {
 	if c.Issuer != p.issuer {
-		return Identity{}, loginProblem(fmt.Errorf("id token issuer %q, want %q", shorten(c.Issuer, 200), p.issuer))
+		// Neither issuer is shown: the configured one can hold a credential.
+		return Identity{}, loginProblem(errors.New("id token names another issuer than Config.Issuer (neither is shown)"))
 	}
 	if c.Subject == "" {
 		return Identity{}, loginProblem(errors.New("id token has no sub"))

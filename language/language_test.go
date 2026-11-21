@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 	"github.com/ostendorf-cloud/govue/language"
 )
 
@@ -447,6 +448,35 @@ func TestRedirect_invalidConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A refused code or cookie name is never shown. A default that is not listed
+// is named, because the error lists every language it may be.
+func TestRedirectKeepsARefusedValueOut(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name string
+		cfg  language.Config
+		want string
+	}{
+		{"code", language.Config{Languages: []string{"de", "s3cr3tTOKEN"}}, "language code 2"},
+		{"cookie name", language.Config{Cookie: "s3cr3tTOKEN;"}, "cookie name"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := language.Redirect(tt.cfg)
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", tt.want)
+		})
+	}
+
+	t.Run("default", func(t *testing.T) {
+		t.Parallel()
+		_, err := language.Redirect(language.Config{Languages: []string{"de", "en"}, Default: "fr"})
+		if err == nil || !strings.Contains(err.Error(), `default language "fr" is not one of ["de" "en"]`) {
+			t.Errorf("err = %v, want the default and the list named", err)
+		}
+	})
 }
 
 func TestRedirect_invalidConfigAggregates(t *testing.T) {

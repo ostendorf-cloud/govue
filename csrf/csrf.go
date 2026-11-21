@@ -157,12 +157,20 @@ func New(expected Expected) (*Protector, error) {
 // host. An API reached from its own origin only needs none. It returns an
 // error for anything that is not a scheme and host without a trailing slash,
 // so a typo cannot silently widen what is trusted.
+//
+// The error names the expected form and never the refused origin, and it does
+// not wrap the error of the standard library, which quotes it: a startup
+// error reaches CI and startup logs, and a value pasted wrongly can hold a
+// credential. The caller names the variable or the position.
 func (p *Protector) TrustOrigin(origin string) error {
-	if err := p.cross.AddTrustedOrigin(origin); err != nil {
-		return fmt.Errorf("csrf: trusted origin %q: %w", origin, err)
+	if p.cross.AddTrustedOrigin(origin) != nil {
+		return errors.New("csrf: trusted origin " + originForm)
 	}
 	return nil
 }
+
+// originForm is the expected form of a trusted origin, for an error.
+const originForm = "must be scheme://host[:port] without a path, a query or a fragment (the value is not shown)"
 
 // TrustOriginOnRoute trusts the given origins for requests with exactly this
 // method and exactly this path, and for no other route. It is for the one
@@ -213,9 +221,9 @@ func (p *Protector) TrustOriginOnRoute(method, path string, origins []string) er
 		return fmt.Errorf("csrf: trust origin on route: %s is already set", key)
 	}
 	cross := http.NewCrossOriginProtection()
-	for _, origin := range origins {
-		if err := cross.AddTrustedOrigin(origin); err != nil {
-			return fmt.Errorf("csrf: trust origin on route: %s: origin %q: %w", key, origin, err)
+	for i, origin := range origins {
+		if cross.AddTrustedOrigin(origin) != nil {
+			return fmt.Errorf("csrf: trust origin on route: %s: origin %d %s", key, i+1, originForm)
 		}
 	}
 	if p.routes == nil {

@@ -63,14 +63,18 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -352,16 +356,20 @@ func (p *Provider) Issuer() string { return p.issuer }
 // code, the tokens and the client secret all travel over these. Plain HTTP is
 // allowed against a loopback address alone, which is where a provider used in
 // development runs and where nothing leaves the machine.
+//
+// No error carries raw or the error of url.Parse, which quotes it: a URL can
+// hold credentials or a token, and a startup error reaches CI and startup
+// logs.
 func checkEndpoint(name, raw string) error {
 	if raw == "" {
 		return fmt.Errorf("%s is empty", name)
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("%s is not a URL: %w", name, err)
+		return fmt.Errorf("%s is not a URL (the value is not shown)", name)
 	}
 	if u.Host == "" {
-		return fmt.Errorf("%s %q has no host", name, shorten(raw, 200))
+		return fmt.Errorf("%s has no host, want an absolute https URL (the value is not shown)", name)
 	}
 	if u.Scheme == "https" {
 		return nil
@@ -369,7 +377,7 @@ func checkEndpoint(name, raw string) error {
 	if u.Scheme == "http" && isLoopback(u.Hostname()) {
 		return nil
 	}
-	return fmt.Errorf("%s %q is not an https URL", name, shorten(raw, 200))
+	return fmt.Errorf("%s is not an https URL, plain http is allowed on a loopback host only (the value is not shown)", name)
 }
 
 func isLoopback(host string) bool {
@@ -412,12 +420,70 @@ func refuseDowngradeThen(next func(*http.Request, []*http.Request) error) func(*
 // hop limit the standard library applies by default.
 func refuseDowngrade(req *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {
-		return errors.New("stopped after 10 redirects")
+		return errTooManyRedirects
 	}
 	if req.URL.Scheme == "https" || (req.URL.Scheme == "http" && isLoopback(req.URL.Hostname())) {
 		return nil
 	}
-	return fmt.Errorf("redirect to %q is not an https URL", shorten(req.URL.Scheme+"://"+req.URL.Host, 200))
+	return errDowngrade
+}
+
+// The kinds of a failed request to the provider. A request error is reduced
+// to one of them by requestFailure, because the *url.Error the client returns
+// quotes the URL with its query, and the configured issuer is part of every
+// URL this package builds.
+var (
+	errTooManyRedirects = errors.New("stopped after 10 redirects")
+	errDowngrade        = errors.New("a redirect left https")
+	errTimeout          = errors.New("the request timed out")
+	errDNS              = errors.New("the host does not resolve (the name is not shown)")
+	errTLS              = errors.New("TLS verification failed (the certificate is not shown)")
+	errRequest          = errors.New("the request failed (the URL and the cause are not shown)")
+)
+
+// requestFailure keeps the kind of a failed request and drops the rest: the
+// context errors, a refused redirect, a name that does not resolve, a
+// certificate that does not verify, the errno of a failed connect, a timeout
+// or a plain failure.
+//
+// A *net.DNSError names the host and a certificate error names the hosts of
+// the certificate, so neither is wrapped. An *os.SyscallError carries the
+// system call and the errno only, so it stays wrapped and
+// errors.Is(err, syscall.ECONNREFUSED) holds.
+func requestFailure(err error) error {
+	var (
+		netErr     net.Error
+		dnsErr     *net.DNSError
+		sysErr     *os.SyscallError
+		verifyErr  *tls.CertificateVerificationError
+		unknownCA  x509.UnknownAuthorityError
+		hostErr    x509.HostnameError
+		invalidErr x509.CertificateInvalidError
+	)
+	switch {
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("request: %w", context.Canceled)
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("request: %w", context.DeadlineExceeded)
+	case errors.Is(err, errTooManyRedirects):
+		return fmt.Errorf("request: %w", errTooManyRedirects)
+	case errors.Is(err, errDowngrade):
+		return fmt.Errorf("request: %w", errDowngrade)
+	case errors.As(err, &dnsErr) && dnsErr.IsTimeout:
+		// A resolver that did not answer in time is a timeout, not a name
+		// that does not resolve.
+		return fmt.Errorf("request: %w", errTimeout)
+	case errors.As(err, &dnsErr):
+		return fmt.Errorf("request: %w", errDNS)
+	case errors.As(err, &verifyErr), errors.As(err, &unknownCA), errors.As(err, &hostErr), errors.As(err, &invalidErr):
+		return fmt.Errorf("request: %w", errTLS)
+	case errors.As(err, &sysErr):
+		return fmt.Errorf("request (the URL is not shown): %w", sysErr)
+	case errors.As(err, &netErr) && netErr.Timeout():
+		return fmt.Errorf("request: %w", errTimeout)
+	default:
+		return fmt.Errorf("request: %w", errRequest)
+	}
 }
 
 // AuthCodeURL is where the browser is sent to log in. The returned URL carries
@@ -515,7 +581,8 @@ func (p *Provider) exchange(ctx context.Context, code string, login Login) (Iden
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return Identity{}, providerProblem(fmt.Errorf("token request: %w", err))
+		// The error of url.Parse quotes the URL, so it is not wrapped.
+		return Identity{}, providerProblem(errors.New("token request: the URL does not parse (the URL is not shown)"))
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -527,7 +594,7 @@ func (p *Provider) exchange(ctx context.Context, code string, login Login) (Iden
 
 	resp, err := p.http.Do(req)
 	if err != nil {
-		return Identity{}, providerProblem(fmt.Errorf("token endpoint: %w", err))
+		return Identity{}, providerProblem(fmt.Errorf("token endpoint: %w", requestFailure(err)))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
@@ -630,8 +697,12 @@ func (p *Provider) discover(ctx context.Context) (*metadata, error) {
 	// A document naming another issuer is a misrouted or a hostile provider,
 	// and its endpoints must not be used: that is the check that stops a
 	// redirect of the discovery URL from moving the login somewhere else.
+	//
+	// Neither issuer is shown. The configured one can hold a credential and
+	// this error is logged on every login, and the other one comes from the
+	// network.
 	if m.Issuer != p.issuer {
-		return nil, providerProblem(fmt.Errorf("discovery document names issuer %q, want %q", shorten(m.Issuer, 200), p.issuer))
+		return nil, providerProblem(errors.New("discovery document names another issuer than Config.Issuer (neither is shown)"))
 	}
 	for _, endpoint := range []struct{ name, raw string }{
 		{"authorization_endpoint", m.AuthURL},
@@ -651,13 +722,14 @@ func (p *Provider) discover(ctx context.Context) (*metadata, error) {
 func (p *Provider) getJSON(ctx context.Context, endpoint string, out any) (http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("build the request: %w", err)
+		// The error of url.Parse quotes the URL, so it is not wrapped.
+		return nil, errors.New("build the request: the URL does not parse (the URL is not shown)")
 	}
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := p.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, requestFailure(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ostendorf-cloud/govue/account"
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 )
 
 // nopStore satisfies Store for the config tests, which never call it.
@@ -132,6 +133,71 @@ func TestConfigValidation(t *testing.T) {
 				t.Fatalf("New: got %q, want it to contain %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// A value that may carry a credential stays out of every startup error, and
+// so does the error of url.Parse, which quotes the whole input.
+func TestConfigErrorHidesCredentials(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*Config)
+		want   string
+	}{
+		{"origin with userinfo", func(c *Config) {
+			c.Origins = []string{"https://user:s3cr3tTOKEN@app.example.com"}
+		}, "origin"},
+		{"origin with a query token", func(c *Config) {
+			c.Origins = []string{"https://app.example.com?token=s3cr3tTOKEN"}
+		}, "origin"},
+		{"origin that is not a URL", func(c *Config) {
+			c.Origins = []string{"https://user:s3cr3tTOKEN@app example.com\x7f"}
+		}, "is not a URL"},
+		{"rp id with userinfo", func(c *Config) { c.RPID = "user:s3cr3tTOKEN@app.example.com" }, "rp id"},
+		{"rp id that is a single label", func(c *Config) { c.RPID = "s3cr3tTOKEN@localhost" }, "rp id is a single label"},
+		{"rp id that is a pasted token", func(c *Config) { c.RPID = "s3cr3tTOKEN" }, "rp id is a single label"},
+		{"origin with an upper case scheme", func(c *Config) {
+			c.Origins = []string{"HTTPS://u:s3cr3tTOKEN@app.example.com"}
+		}, "origin 1 needs a lower case scheme"},
+		{"origin that is not https", func(c *Config) {
+			c.Origins = []string{"https://app.example.com", "ftp://u:s3cr3tTOKEN@app.example.com"}
+		}, "origin 2 is not https"},
+		{"origin on localhost with an upper case host", func(c *Config) {
+			c.RPID = "localhost"
+			c.Origins = []string{"http://u:s3cr3tTOKEN@LOCALHOST"}
+		}, "origin 1 needs a lower case host"},
+		{"origin that is a pasted token", func(c *Config) { c.Origins = []string{"s3cr3tTOKEN"} }, "origin 1"},
+		{"origin below a refused rp id", func(c *Config) {
+			c.RPID = "s3cr3tTOKEN"
+			c.Origins = []string{"https://app.example.com"}
+		}, "rp id"},
+		{"trusted origin with userinfo", func(c *Config) {
+			c.TrustedOrigins = []string{"https://user:s3cr3tTOKEN@app.example.com/"}
+		}, "trusted origin"},
+		{"trusted origin that is not a URL", func(c *Config) {
+			c.TrustedOrigins = []string{"https://user:s3cr3tTOKEN@app example.com\x7f"}
+		}, "trusted origin"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			tt.change(&cfg)
+			_, err := New(cfg)
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", tt.want)
+		})
+	}
+}
+
+// The RP id mismatch is the one origin error that names values: both passed
+// their own checks, so they are accepted configuration, and the operator
+// needs both to see which one is wrong.
+func TestConfigMismatchNamesTheAcceptedValues(t *testing.T) {
+	cfg := validConfig()
+	cfg.Origins = []string{"https://app.example.com", "https://other.example.org"}
+	_, err := New(cfg)
+	want := `origin 2 "https://other.example.org" is not rp id "app.example.com" or a subdomain of it`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("New: %v, want it to contain %q", err, want)
 	}
 }
 

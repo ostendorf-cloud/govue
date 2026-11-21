@@ -128,8 +128,12 @@ type Config struct {
 func (cfg Config) validate() (Config, error) {
 	var problems []error
 
+	// A refused RP id is not compared with the origins: the comparison names
+	// it, and a refused value is never shown.
+	rpID := cfg.RPID
 	if err := checkRPID(cfg.RPID); err != nil {
 		problems = append(problems, err)
+		rpID = ""
 	}
 	if err := checkDisplayName(cfg.RPDisplayName); err != nil {
 		problems = append(problems, err)
@@ -137,8 +141,8 @@ func (cfg Config) validate() (Config, error) {
 	if len(cfg.Origins) == 0 {
 		problems = append(problems, errors.New("origins are required"))
 	}
-	for _, origin := range cfg.Origins {
-		if err := checkOrigin(origin, cfg.RPID); err != nil {
+	for i, origin := range cfg.Origins {
+		if err := checkOrigin(i+1, origin, rpID); err != nil {
 			problems = append(problems, err)
 		}
 	}
@@ -190,6 +194,9 @@ func (cfg Config) validate() (Config, error) {
 // at least two labels, or localhost. It cannot tell a public suffix such as
 // "co.uk" from a registrable domain, since that needs the public suffix list,
 // and a browser refuses such an RP id at the ceremony.
+//
+// No error shows the refused value: a startup error reaches CI and startup
+// logs, and a value pasted wrongly can hold a credential.
 func checkRPID(rpID string) error {
 	switch {
 	case rpID == "":
@@ -197,23 +204,26 @@ func checkRPID(rpID string) error {
 	case rpID == "localhost":
 		return nil
 	case len(rpID) > 253:
-		return fmt.Errorf("rp id is longer than 253 bytes")
+		return errors.New("rp id is longer than 253 bytes")
 	case net.ParseIP(rpID) != nil:
-		return fmt.Errorf("rp id %q is an IP address, a passkey needs a host name", rpID)
+		return errors.New("rp id is an IP address, a passkey needs a host name" + notShown)
 	}
 
 	labels := strings.Split(rpID, ".")
 	if len(labels) < 2 {
-		return fmt.Errorf("rp id %q is a single label, use the application's full host name", rpID)
+		return errors.New("rp id is a single label, use the application's full host name" + notShown)
 	}
 	for _, label := range labels {
 		if !validLabel(label) {
-			return fmt.Errorf("rp id %q is not a lower case host name without scheme, port or path", rpID)
+			return errors.New("rp id is not a lower case host name without scheme, port or path" + notShown)
 		}
 	}
 
 	return nil
 }
+
+// notShown ends an error about a refused value.
+const notShown = " (the value is not shown)"
 
 // validLabel reports whether label is a lower case DNS label: 1 to 63 bytes
 // of a to z, digits and inner hyphens.
@@ -256,66 +266,75 @@ func checkDisplayName(name string) error {
 // normalises the port, so a sloppy entry might still match. Refusing it
 // keeps the configured list equal to what browsers send, which is what a
 // reviewer reads and what the RP id suffix rule is checked against.
-func checkOrigin(origin, rpID string) error {
+//
+// A refused origin is named by its position, counted from 1, never by its
+// value. The RP id mismatch names both: the origin passed every other rule
+// and the caller passes rpID only when it was accepted.
+func checkOrigin(position int, origin, rpID string) error {
+	bad := func(rule string) error {
+		return fmt.Errorf("origin %d %s%s", position, rule, notShown)
+	}
 	u, err := url.Parse(origin)
 	if err != nil {
-		return fmt.Errorf("origin %q is not a URL: %w", origin, err)
+		// The error of url.Parse quotes the whole input, so it is not wrapped.
+		return bad("is not a URL")
 	}
 	host := u.Hostname()
 	// url.Parse folds the scheme to lower case, so the raw text is checked.
 	scheme, _, _ := strings.Cut(origin, ":")
 	switch {
 	case scheme != strings.ToLower(scheme):
-		return fmt.Errorf("origin %q needs a lower case scheme", origin)
+		return bad("needs a lower case scheme")
 	case scheme == "https":
 	case scheme == "http" && host == "localhost":
 	case scheme == "http" && strings.ToLower(host) == "localhost":
-		return fmt.Errorf("origin %q needs a lower case host", origin)
+		return bad("needs a lower case host")
 	default:
-		return fmt.Errorf("origin %q is not https, plain http is allowed on localhost only", origin)
+		return bad("is not https, plain http is allowed on localhost only")
 	}
 	if u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" ||
 		strings.HasSuffix(origin, "?") || strings.HasSuffix(origin, "#") {
-		return fmt.Errorf("origin %q holds more than a scheme, a host and a port", origin)
+		return bad("holds more than a scheme, a host and a port")
 	}
 	if host == "" {
-		return fmt.Errorf("origin %q has no host", origin)
+		return bad("has no host")
 	}
 	if host != "localhost" {
 		for _, label := range strings.Split(host, ".") {
 			if !validLabel(label) {
-				return fmt.Errorf("origin %q needs a lower case host of DNS labels, no wildcard", origin)
+				return bad("needs a lower case host of DNS labels, no wildcard")
 			}
 		}
 	}
-	if err := checkPort(origin, u); err != nil {
-		return err
+	if rule := portRule(u); rule != "" {
+		return bad(rule)
 	}
 	if rpID != "" && host != rpID && !strings.HasSuffix(host, "."+rpID) {
-		return fmt.Errorf("origin %q is not rp id %q or a subdomain of it", origin, rpID)
+		return fmt.Errorf("origin %d %q is not rp id %q or a subdomain of it", position, origin, rpID)
 	}
 
 	return nil
 }
 
-// checkPort refuses a port a browser never serialises: an empty one after a
-// colon, one with a leading zero, one outside 1 to 65535 and the default port
-// of the scheme, which a browser leaves out.
-func checkPort(origin string, u *url.URL) error {
+// portRule names why a browser never serialises the port of u: an empty one
+// after a colon, one with a leading zero, one outside 1 to 65535 and the
+// default port of the scheme, which a browser leaves out. It is empty for a
+// port that is fine.
+func portRule(u *url.URL) string {
 	port := u.Port()
 	if port == "" {
 		if strings.HasSuffix(u.Host, ":") {
-			return fmt.Errorf("origin %q has a colon without a port", origin)
+			return "has a colon without a port"
 		}
-		return nil
+		return ""
 	}
 	n, err := strconv.Atoi(port)
 	if err != nil || n < 1 || n > 65535 || port[0] == '0' {
-		return fmt.Errorf("origin %q needs a port of 1 to 65535 without leading zeros", origin)
+		return "needs a port of 1 to 65535 without leading zeros"
 	}
 	if n == 443 && u.Scheme == "https" || n == 80 && u.Scheme == "http" {
-		return fmt.Errorf("origin %q names the default port, a browser sends it without", origin)
+		return "names the default port, a browser sends it without"
 	}
 
-	return nil
+	return ""
 }

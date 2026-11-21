@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -122,9 +123,31 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.Addr)
 	if err != nil {
-		return fmt.Errorf("http server: listen: %w", err)
+		return fmt.Errorf("http server: %w", listenFailure("Config.Addr", err))
 	}
 	return Serve(ctx, cfg, listener)
+}
+
+// listenFailure names the field whose address could not be listened on and
+// never the address: the *net.OpError of a failed listen quotes it, and so do
+// the *net.AddrError and *net.DNSError inside it, while an address is a value
+// from the configuration that may hold anything an operator pasted. The
+// *os.SyscallError of a failed bind or listen carries the errno only, such as
+// EADDRINUSE, so it stays wrapped for a caller that matches it.
+func listenFailure(field string, err error) error {
+	var (
+		sys *os.SyscallError
+		dns *net.DNSError
+	)
+	switch {
+	case errors.As(err, &sys):
+		return fmt.Errorf("listen on %s (the address is not shown): %w", field, sys)
+	case errors.As(err, &dns):
+		return fmt.Errorf("listen on %s: the host does not resolve (the address is not shown)", field)
+	default:
+		return fmt.Errorf("listen on %s: the address must be host:port with a numeric port, such as :8080 "+
+			"(the address and the cause are not shown)", field)
+	}
 }
 
 // Serve runs an HTTP server on listener until ctx is cancelled, then shuts it
@@ -261,12 +284,12 @@ func runAdmin(ctx context.Context, cfg Config, admin AdminConfig, listen listenF
 
 	listener, err := listen(ctx, cfg.Addr)
 	if err != nil {
-		return fmt.Errorf("http server: listen: %w", err)
+		return fmt.Errorf("http server: %w", listenFailure("Config.Addr", err))
 	}
 	adminListener, err := listen(ctx, adminCfg.Addr)
 	if err != nil {
 		_ = listener.Close()
-		return fmt.Errorf("http server: admin: listen: %w", err)
+		return fmt.Errorf("http server: admin: %w", listenFailure("AdminConfig.Addr", err))
 	}
 
 	return ServeAdmin(ctx, cfg, listener, admin, adminListener)

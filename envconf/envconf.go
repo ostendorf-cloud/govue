@@ -12,6 +12,7 @@ package envconf
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"net/url"
 	"os"
@@ -103,7 +104,9 @@ func (l *Loader) Int(key string, fallback, minimum, maximum int) int {
 		return fallback
 	}
 	if value < minimum || value > maximum {
-		l.fail(key, "must be between %d and %d, got %d", minimum, maximum, value)
+		// A refused value is never shown: a numeric secret pasted into the
+		// wrong variable would otherwise reach CI and startup logs.
+		l.fail(key, "must be between %d and %d (the value is not shown)", minimum, maximum)
 		return fallback
 	}
 	return value
@@ -124,7 +127,7 @@ func (l *Loader) Duration(key string, fallback, minimum, maximum time.Duration) 
 		return fallback
 	}
 	if value < minimum || value > maximum {
-		l.fail(key, "must be between %s and %s, got %s", minimum, maximum, value)
+		l.fail(key, "must be between %s and %s (the value is not shown)", minimum, maximum)
 		return fallback
 	}
 	return value
@@ -174,25 +177,47 @@ func (l *Loader) List(key string) []string {
 	return out
 }
 
-// Secret reads the file the variable points at, which is how a secret reaches
-// the process: an injected file, never an environment value that shows up in
-// every "kubectl describe". An empty file is a problem, because running with
-// an empty signing key is worse than not starting.
+// Secret reads the file whose path is the value of key itself, which is how a
+// secret reaches the process: an injected file, never an environment value
+// that shows up in every "kubectl describe". An empty file is a problem,
+// because running with an empty signing key is worse than not starting.
+//
+// An error names key and the kind of failure, never the path: a secret pasted
+// into the variable instead of a path would otherwise reach CI and startup
+// logs. See readSecretFile.
 func (l *Loader) Secret(key string) string {
 	path := l.Required(key)
 	if path == "" {
 		return ""
 	}
-	raw, err := os.ReadFile(path)
+	secret, err := readSecretFile(path)
 	if err != nil {
-		l.fail(key, "cannot read %s: %w", path, err)
+		l.fail(key, "%w", err)
 		return ""
+	}
+	return secret
+}
+
+// readSecretFile reads and trims the secret file at path. Its errors carry
+// the kind of failure and never the path, and they do not wrap the
+// *fs.PathError of the read, which quotes it. A missing file wraps
+// fs.ErrNotExist and a refused read fs.ErrPermission, so errors.Is still
+// tells them apart.
+func readSecretFile(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", fmt.Errorf("cannot read the file: %w (the path is not shown)", fs.ErrNotExist)
+	case errors.Is(err, fs.ErrPermission):
+		return "", fmt.Errorf("cannot read the file: %w (the path is not shown)", fs.ErrPermission)
+	case err != nil:
+		return "", errors.New("cannot read the file: it is not a readable file (the path is not shown)")
 	}
 	secret := strings.TrimSpace(string(raw))
 	if secret == "" {
-		l.fail(key, "%s is empty", path)
+		return "", errors.New("the file is empty (the path is not shown)")
 	}
-	return secret
+	return secret, nil
 }
 
 // secretOrFile is the twin contract shared by SecretOrFile and
@@ -205,13 +230,9 @@ func (l *Loader) secretOrFile(key string) (string, error) {
 		return "", fmt.Errorf("and %s are both set, set only one", key+"_FILE")
 	}
 	if filePath != "" {
-		raw, err := os.ReadFile(filePath)
+		secret, err := readSecretFile(filePath)
 		if err != nil {
-			return "", fmt.Errorf("cannot read %s: %w", filePath, err)
-		}
-		secret := strings.TrimSpace(string(raw))
-		if secret == "" {
-			return "", fmt.Errorf("%s is empty", filePath)
+			return "", fmt.Errorf("%s: %w", key+"_FILE", err)
 		}
 		return secret, nil
 	}

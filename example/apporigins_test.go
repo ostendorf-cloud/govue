@@ -367,26 +367,34 @@ func TestWebOriginsNeverReachTheAppList(t *testing.T) {
 func TestAppOriginsStartupErrors(t *testing.T) {
 	t.Parallel()
 
+	const label = "APP_ORIGINS and APP_SCHEMES: middleware: "
 	for _, tc := range []struct {
 		name  string
 		env   map[string]string
 		named string
+		// accepted is true when the error names an accepted value on
+		// purpose: an overlap or a duplicate. Every other case refuses the
+		// value, and it must not appear.
+		accepted bool
 	}{
-		{"an overlap with the web list", map[string]string{"APP_ORIGINS": webOrigin}, webOrigin},
+		{"an overlap with the web list", map[string]string{"APP_ORIGINS": webOrigin}, webOrigin, true},
 		{
 			"an overlap in another spelling",
 			map[string]string{"APP_ORIGINS": androidOrigin, "ALLOWED_ORIGINS": "HTTPS://Localhost/"},
-			androidOrigin,
+			androidOrigin, true,
 		},
-		{"a wildcard", map[string]string{"APP_ORIGINS": "https://*.example.test"}, "https://*.example.test"},
-		{"null", map[string]string{"APP_ORIGINS": "null"}, "null"},
-		{"a path", map[string]string{"APP_ORIGINS": "https://app2.example.test/x"}, "https://app2.example.test/x"},
-		{"a custom scheme not opted in", map[string]string{"APP_ORIGINS": iosOrigin}, iosOrigin},
-		{"http", map[string]string{"APP_ORIGINS": "http://localhost"}, "http://localhost"},
-		{"a duplicate", map[string]string{"APP_ORIGINS": androidOrigin + "," + androidOrigin}, androidOrigin},
-		{"the default https port", map[string]string{"APP_ORIGINS": "https://app2.example.test:443"}, "https://app2.example.test:443"},
-		{"a Unicode host", map[string]string{"APP_ORIGINS": "https://аpple.com"}, "not ASCII"},
-		{"a scheme without an origin", map[string]string{"APP_SCHEMES": "capacitor"}, "APP_SCHEMES"},
+		{"a duplicate", map[string]string{"APP_ORIGINS": androidOrigin + "," + androidOrigin}, androidOrigin, true},
+		// A refused value is never shown: the error names the variable, the
+		// position and the rule.
+		{"a wildcard", map[string]string{"APP_ORIGINS": "https://*.example.test"}, label + "app origin 1 holds a wildcard", false},
+		{"null", map[string]string{"APP_ORIGINS": "null"}, label + "app origin 1 is the null origin", false},
+		{"a path", map[string]string{"APP_ORIGINS": "https://app2.example.test/x"}, label + "app origin 1 must be lower case", false},
+		{"a custom scheme not opted in", map[string]string{"APP_ORIGINS": iosOrigin}, label + "app origin 1 has a scheme that is neither https", false},
+		{"http", map[string]string{"APP_ORIGINS": "http://localhost"}, label + "app origin 1 has a scheme that is neither https", false},
+		{"the default https port", map[string]string{"APP_ORIGINS": "https://app2.example.test:443"}, label + "app origin 1 names the default port 443", false},
+		{"a Unicode host", map[string]string{"APP_ORIGINS": "https://аpple.com"}, label + "app origin 1 has a host that is not ASCII", false},
+		{"a token as a scheme", map[string]string{"APP_ORIGINS": androidOrigin, "APP_SCHEMES": "S3cr3tTOKEN"}, label + "app scheme 1 must be", false},
+		{"a scheme without an origin", map[string]string{"APP_SCHEMES": "capacitor"}, "APP_SCHEMES", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -404,6 +412,21 @@ func TestAppOriginsStartupErrors(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.named) {
 				t.Errorf("error %q does not name %q", err, tc.named)
+			}
+			if tc.accepted {
+				return
+			}
+			// Every refused value, raw and quoted, stays out of the error,
+			// unless it is a word of the rule itself, such as null.
+			for _, key := range []string{"APP_ORIGINS", "APP_SCHEMES"} {
+				for _, value := range strings.Split(tc.env[key], ",") {
+					if value == "" || strings.Contains(tc.named, value) {
+						continue
+					}
+					if strings.Contains(err.Error(), value) {
+						t.Errorf("error %q shows the refused value %q", err, value)
+					}
+				}
 			}
 		})
 	}

@@ -99,7 +99,7 @@ func NewCORS(cfg CORSConfig) (*CORS, error) {
 		return nil, errors.New("middleware: at least one origin is required")
 	}
 	origins := make([]string, 0, len(cfg.Origins))
-	for _, raw := range cfg.Origins {
+	for i, raw := range cfg.Origins {
 		origin := strings.TrimRight(strings.TrimSpace(raw), "/")
 		if origin == "*" {
 			return nil, errors.New("middleware: a wildcard origin is never allowed, list the origins")
@@ -107,7 +107,9 @@ func NewCORS(cfg CORSConfig) (*CORS, error) {
 		parsed, err := url.Parse(origin)
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") ||
 			parsed.Path != "" || parsed.RawQuery != "" || parsed.User != nil {
-			return nil, fmt.Errorf("middleware: origin %q must be scheme://host: %w", raw, errInvalidOrigin)
+			// The refused value is not shown: it may hold a credential.
+			return nil, fmt.Errorf("middleware: origin %d must be http or https scheme://host without a path, "+
+				"a query or userinfo (the value is not shown): %w", i+1, errInvalidOrigin)
 		}
 		// Stored and compared case-insensitively: browsers normalize the
 		// scheme and host of an Origin header to lowercase before sending

@@ -112,7 +112,9 @@ func load(fsys fs.FS, dir, themeColor string) (Icons, error) {
 		}
 	}
 	if !colorPattern.MatchString(themeColor) {
-		errs = append(errs, fmt.Errorf("favicon: %w, got %q", ErrThemeColor, themeColor))
+		// A refused value is never shown: a startup error reaches CI and
+		// startup logs. ErrThemeColor names the expected form.
+		errs = append(errs, fmt.Errorf("favicon: %w (the value is not shown)", ErrThemeColor))
 	}
 	if len(errs) > 0 {
 		return Icons{}, errors.Join(errs...)

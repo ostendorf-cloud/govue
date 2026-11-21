@@ -271,8 +271,23 @@ func invalid(format string, args ...any) error {
 	return fmt.Errorf("appassoc: %w: %s", ErrInvalid, fmt.Sprintf(format, args...))
 }
 
-// show quotes a value for an error message and cuts it, so a hostile value
-// cannot flood a log line.
+// notShown ends an error about a refused value. A refused value is never
+// shown: a startup error reaches CI and startup logs, and a value pasted into
+// the wrong variable can be a secret.
+const notShown = " (the value is not shown)"
+
+// listedTwice is the error of an entry that repeats an earlier one. The value
+// is named only when it passed its own checks, because then it is an accepted
+// value. what is the kind of entry, such as "app" or "package".
+func listedTwice(where, what, value string, accepted bool) error {
+	if !accepted {
+		return invalid("%s: %s is listed twice%s", where, what, notShown)
+	}
+	return invalid("%s: %s %s is listed twice", where, what, show(value))
+}
+
+// show quotes an accepted value for an error message and cuts it, so a
+// hostile value cannot flood a log line.
 func show(s string) string {
 	const limit = 40
 	if len(s) > limit {

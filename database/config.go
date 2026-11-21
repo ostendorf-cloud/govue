@@ -262,25 +262,32 @@ func (c Config) Validate() error {
 // the pool is built, a comma makes a list of fallback hosts, and a colon
 // outside an IPv6 address, whitespace or an @ would be looked up as a name
 // that cannot exist.
+//
+// No message quotes the host. The spellings refused here are the ones a
+// connection URL pasted into DB_HOST has, user:password@host among them, and
+// a startup error reaches CI and startup logs.
 func (c Config) hostProblems() []error {
 	var problems []error
+	add := func(rule string, args ...any) {
+		problems = append(problems, fmt.Errorf("host (%s) "+rule+" (the value is not shown)", append([]any{EnvHost}, args...)...))
+	}
 	if strings.HasPrefix(c.Host, "/") {
-		problems = append(problems, fmt.Errorf("host (%s) %q is a unix socket path, which is not supported: TLS would be off", EnvHost, c.Host))
+		add("is a unix socket path, which is not supported: TLS would be off")
 	}
 	if strings.ContainsAny(c.Host, "[]") {
-		problems = append(problems, fmt.Errorf("host (%s) %q: write an IPv6 address without brackets", EnvHost, c.Host))
+		add("must be an IPv6 address without brackets")
 	}
 	if strings.Contains(c.Host, ",") {
-		problems = append(problems, fmt.Errorf("host (%s) %q is a list of hosts, which is not supported", EnvHost, c.Host))
+		add("is a list of hosts, which is not supported")
 	}
 	if strings.Contains(c.Host, ":") && !strings.ContainsAny(c.Host, "[]") && net.ParseIP(c.Host) == nil {
-		problems = append(problems, fmt.Errorf("host (%s) %q holds a colon outside an IPv6 address: put the port into %s", EnvHost, c.Host, EnvPort))
+		add("holds a colon outside an IPv6 address: put the port into %s", EnvPort)
 	}
 	if strings.ContainsFunc(c.Host, unicode.IsSpace) {
-		problems = append(problems, fmt.Errorf("host (%s) %q holds whitespace", EnvHost, c.Host))
+		add("holds whitespace")
 	}
 	if strings.Contains(c.Host, "@") {
-		problems = append(problems, fmt.Errorf("host (%s) %q holds an @: the user goes into %s", EnvHost, c.Host, EnvUser))
+		add("holds an @: the user goes into %s and the password into %s or %s_FILE", EnvUser, EnvPassword, EnvPassword)
 	}
 	return problems
 }

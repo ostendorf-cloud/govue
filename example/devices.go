@@ -76,7 +76,9 @@ func (a *app) buildAppOrigins() error {
 
 	origins, err := middleware.NewAppOrigins(a.cfg.appOrigins, a.cfg.appSchemes...)
 	if err != nil {
-		return fmt.Errorf("example: APP_ORIGINS: %w", err)
+		// The error says "app origin N" for an entry of APP_ORIGINS and "app
+		// scheme N" for one of APP_SCHEMES.
+		return fmt.Errorf("example: APP_ORIGINS and APP_SCHEMES: %w", err)
 	}
 	if err := origins.RejectOverlap(nil, a.cfg.allowedOrigins); err != nil {
 		return fmt.Errorf("example: APP_ORIGINS: %w", err)

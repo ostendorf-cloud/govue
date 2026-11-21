@@ -128,18 +128,27 @@ func normalize(addr netip.Addr) netip.Addr {
 //
 // ParseCIDRs is what an application parses the proxy list from, typically
 // read from the environment once at startup.
+//
+// An error names the position of the wrong entry, counted from 1 over the
+// entries that are not empty, and the expected form. It carries neither the
+// entry nor the error of net/netip, which quotes it: a startup error reaches
+// CI and startup logs, and a value pasted into the wrong variable may be a
+// secret. The caller adds the name of the variable.
 func ParseCIDRs(raw string) ([]netip.Prefix, error) {
 	var prefixes []netip.Prefix
+	position := 0
 	for _, entry := range strings.Split(raw, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
 		}
+		position++
 
 		if strings.Contains(entry, "/") {
 			prefix, err := netip.ParsePrefix(entry)
 			if err != nil {
-				return nil, fmt.Errorf("clientip: trusted proxy %q: %w", entry, err)
+				return nil, fmt.Errorf("clientip: trusted proxy entry %d is not a CIDR prefix such as 10.0.0.0/8 "+
+					"(the value is not shown)", position)
 			}
 			prefixes = append(prefixes, prefix.Masked())
 			continue
@@ -147,7 +156,8 @@ func ParseCIDRs(raw string) ([]netip.Prefix, error) {
 
 		addr, err := netip.ParseAddr(entry)
 		if err != nil {
-			return nil, fmt.Errorf("clientip: trusted proxy %q: %w", entry, err)
+			return nil, fmt.Errorf("clientip: trusted proxy entry %d is not an IP address such as 10.0.0.1 "+
+				"(the value is not shown)", position)
 		}
 		addr = normalize(addr)
 		prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))

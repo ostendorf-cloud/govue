@@ -6,16 +6,22 @@ package oidc
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 	"github.com/ostendorf-cloud/govue/logging"
 	"github.com/ostendorf-cloud/govue/middleware"
 )
@@ -84,6 +90,210 @@ func TestNewRefusesABrokenConfig(t *testing.T) {
 		})
 	}
 }
+
+// A configured URL can hold credentials or a token, so a refused one never
+// reaches the error, and neither does the error of url.Parse, which quotes
+// it.
+func TestNewKeepsTheURLOutOfTheError(t *testing.T) {
+	base := Config{
+		Issuer:       testIssuer,
+		ClientID:     testClientID,
+		ClientSecret: "a client secret",
+		RedirectURL:  testRedirect,
+	}
+	for _, tc := range []struct {
+		name   string
+		adjust func(*Config)
+		want   string
+	}{
+		{"http issuer with userinfo", func(c *Config) {
+			c.Issuer = "http://user:s3cr3tTOKEN@accounts.example.test/realms/apps"
+		}, "issuer"},
+		{"issuer without a host", func(c *Config) { c.Issuer = "https:///realms/apps?token=s3cr3tTOKEN" }, "issuer"},
+		{"issuer that is not a url", func(c *Config) {
+			c.Issuer = "https://user:s3cr3tTOKEN@accounts.example.test/realms/\x7f"
+		}, "issuer"},
+		{"http redirect with a token", func(c *Config) {
+			c.RedirectURL = "http://catalogue.example.test/auth/callback?token=s3cr3tTOKEN"
+		}, "redirect url"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := base
+			tc.adjust(&cfg)
+			_, err := New(cfg)
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", tc.want)
+		})
+	}
+}
+
+// probeIssuers are issuers New accepts although they carry a credential: in
+// the userinfo, in the query or in the path.
+var probeIssuers = []string{
+	"http://user:s3cr3tTOKEN@127.0.0.1:8080/realms/apps",
+	"https://idp.example.test/realms/apps?token=s3cr3tTOKEN",
+	"https://idp.example.test/s3cr3tTOKEN",
+}
+
+// failingTransport fails every request with err.
+type failingTransport struct{ err error }
+
+func (t failingTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, t.err }
+
+// documentTransport answers every request with a discovery document that
+// names issuer.
+type documentTransport struct{ issuer string }
+
+func (t documentTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	rec := httptest.NewRecorder()
+	rec.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(rec).Encode(metadata{Issuer: t.issuer})
+	resp := rec.Result()
+	resp.Request = r
+	return resp, nil
+}
+
+// causeOf is the cause inside a *problem, which does not unwrap.
+func causeOf(t *testing.T, err error) error {
+	t.Helper()
+	var prob *problem
+	if !errors.As(err, &prob) {
+		t.Fatalf("error %v is not a *problem", err)
+	}
+	return prob.cause
+}
+
+func probeProvider(t *testing.T, issuer string, transport http.RoundTripper) *Provider {
+	t.Helper()
+	p, err := New(Config{
+		Issuer: issuer, ClientID: testClientID, ClientSecret: "a client secret", RedirectURL: testRedirect,
+		HTTPClient: &http.Client{Transport: transport},
+	})
+	if err != nil {
+		t.Fatalf("New refused the probe issuer: %v", err)
+	}
+	return p
+}
+
+// The configured issuer reaches the log on every login that fails, so no
+// discovery error carries it, neither in its text nor in a wrapped
+// *url.Error, and neither does the issuer a document names.
+func TestDiscoverKeepsTheIssuerOutOfTheError(t *testing.T) {
+	for _, issuer := range probeIssuers {
+		t.Run(issuer, func(t *testing.T) {
+			t.Run("another issuer in the document", func(t *testing.T) {
+				p := probeProvider(t, issuer, documentTransport{issuer: "https://other.example.test/s3cr3tTOKEN"})
+				_, err := p.discover(t.Context())
+				configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "Config.Issuer")
+			})
+			t.Run("unreachable", func(t *testing.T) {
+				p := probeProvider(t, issuer, failingTransport{err: errors.New("dial tcp s3cr3tTOKEN: connection refused")})
+				_, err := p.discover(t.Context())
+				configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "discovery")
+				if !errors.Is(causeOf(t, err), errRequest) {
+					t.Errorf("error %v is not errRequest", err)
+				}
+			})
+			t.Run("deadline", func(t *testing.T) {
+				p := probeProvider(t, issuer, failingTransport{err: context.DeadlineExceeded})
+				_, err := p.discover(t.Context())
+				configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "discovery")
+				if !errors.Is(causeOf(t, err), context.DeadlineExceeded) {
+					t.Errorf("error %v lost the deadline", err)
+				}
+			})
+			t.Run("id token of another issuer", func(t *testing.T) {
+				p := probeProvider(t, issuer, documentTransport{issuer: issuer})
+				_, err := p.checkClaims(idClaims{Issuer: "https://other.example.test/s3cr3tTOKEN"}, nil, "", "")
+				configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "Config.Issuer")
+			})
+		})
+	}
+}
+
+// tokenTransport answers the discovery request with a document for issuer,
+// whose token endpoint lies under the issuer, and fails the token request
+// with err.
+type tokenTransport struct {
+	issuer string
+	err    error
+}
+
+func (t tokenTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodPost {
+		return nil, t.err
+	}
+	rec := httptest.NewRecorder()
+	rec.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(rec).Encode(metadata{
+		Issuer:   t.issuer,
+		AuthURL:  t.issuer + "/auth",
+		TokenURL: t.issuer + "/token",
+		JWKSURL:  t.issuer + "/certs",
+	})
+	resp := rec.Result()
+	resp.Request = r
+	return resp, nil
+}
+
+// The token endpoint lies under the configured issuer, so its failure never
+// carries the *url.Error of the client either, which quotes the URL with its
+// query.
+func TestExchangeKeepsTheIssuerOutOfTheError(t *testing.T) {
+	login, err := NewLogin("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, issuer := range probeIssuers {
+		t.Run(issuer, func(t *testing.T) {
+			p := probeProvider(t, issuer, tokenTransport{issuer: issuer, err: errors.New("dial tcp s3cr3tTOKEN: refused")})
+			_, err := p.exchange(t.Context(), "the-code", login)
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "token endpoint: request")
+			if !errors.Is(causeOf(t, err), errRequest) {
+				t.Errorf("error %v is not errRequest", err)
+			}
+		})
+	}
+}
+
+// Each kind of a failed request is named without the URL, the host name or
+// the names of a certificate, and the ones a caller can act on stay
+// matchable.
+func TestRequestFailureKinds(t *testing.T) {
+	const issuer = "https://idp.example.test/realms/apps?token=s3cr3tTOKEN"
+	for _, tc := range []struct {
+		name string
+		err  error
+		is   error
+	}{
+		{"connection refused", &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}, syscall.ECONNREFUSED},
+		{"host does not resolve", &net.DNSError{Name: "s3cr3tTOKEN.example.test", Err: "no such host", IsNotFound: true}, errDNS},
+		{"resolver timeout", &net.DNSError{Name: "s3cr3tTOKEN.example.test", Err: "i/o timeout", IsTimeout: true}, errTimeout},
+		{"certificate does not verify", &tls.CertificateVerificationError{Err: x509.HostnameError{
+			Host: "s3cr3tTOKEN.example.test", Certificate: &x509.Certificate{DNSNames: []string{"s3cr3tTOKEN.other.test"}},
+		}}, errTLS},
+		{"unknown authority", x509.UnknownAuthorityError{}, errTLS},
+		{"invalid certificate", x509.CertificateInvalidError{Reason: x509.Expired, Detail: "s3cr3tTOKEN"}, errTLS},
+		{"timeout", timeoutError{}, errTimeout},
+		{"canceled", context.Canceled, context.Canceled},
+		{"other", errors.New("s3cr3tTOKEN"), errRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := probeProvider(t, issuer, failingTransport{err: tc.err})
+			_, err := p.discover(t.Context())
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "discovery: request")
+			if !errors.Is(causeOf(t, err), tc.is) {
+				t.Errorf("error %v is not %v", err, tc.is)
+			}
+		})
+	}
+}
+
+// timeoutError is a net.Error that timed out, without a URL in it.
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "i/o timeout s3cr3tTOKEN" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
 
 func TestNewNamesEveryBrokenFieldAtOnce(t *testing.T) {
 	_, err := New(Config{Issuer: "", ClientID: "", ClientSecret: "", RedirectURL: ""})
