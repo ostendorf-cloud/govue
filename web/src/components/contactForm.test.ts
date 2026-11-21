@@ -2,7 +2,7 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
@@ -17,7 +17,9 @@ import {
   CONTACT_LIMITS,
   CONTACT_REFUSAL_CODES,
   CONTACT_SOLVER_KEYS,
+  CONTACT_WAIT_CODES,
   codePoints,
+  formatWait,
   localizeContactError,
 } from './contactForm'
 
@@ -68,18 +70,16 @@ describe('the codes of the contact form', () => {
   // read, so a new code there fails this test until it has a text.
   const handler = fileURLToPath(new URL('../../../contact/handler.go', import.meta.url))
   const contact = fileURLToPath(new URL('../../../contact/contact.go', import.meta.url))
-  it.skipIf(!existsSync(handler))(
-    'has a text for every code constant of contact/handler.go',
-    () => {
-      const source = readFileSync(handler, 'utf8')
-      const codes = [...source.matchAll(/^\s*Code\w+\s*=\s*"([a-z_]+)"/gm)].map((m) => m[1])
-      expect(codes.length).toBeGreaterThan(5)
-      for (const code of codes) {
-        expect(Object.keys(CONTACT_REFUSAL_CODES), code).toContain(code)
-      }
-    },
-  )
-  it.skipIf(!existsSync(contact))('has a text for every field code of contact/contact.go', () => {
+  // The Go sources are in this repository: a missing file fails, it never skips.
+  it('has a text for every code constant of contact/handler.go', () => {
+    const source = readFileSync(handler, 'utf8')
+    const codes = [...source.matchAll(/^\s*Code\w+\s*=\s*"([a-z_]+)"/gm)].map((m) => m[1])
+    expect(codes.length).toBeGreaterThan(5)
+    for (const code of codes) {
+      expect(Object.keys(CONTACT_REFUSAL_CODES), code).toContain(code)
+    }
+  })
+  it('has a text for every field code of contact/contact.go', () => {
     const source = readFileSync(contact, 'utf8')
     const codes = [...source.matchAll(/^\s*Code\w+\s*=\s*"([a-z_]+)"/gm)].map((m) => m[1])
     expect(codes.length).toBeGreaterThan(3)
@@ -95,6 +95,11 @@ describe('the codes of the contact form', () => {
         ...Object.values(CONTACT_FIELD_CODES),
         ...Object.values(CONTACT_REFUSAL_CODES),
         ...Object.values(CONTACT_SOLVER_KEYS),
+        ...Object.values(CONTACT_WAIT_CODES),
+        'govue.contact.wait.minute',
+        'govue.contact.wait.minutes',
+        'govue.contact.wait.hour',
+        'govue.contact.wait.hours',
         CONTACT_GENERIC_KEY,
       ]
       for (const key of keys) {
@@ -107,6 +112,16 @@ describe('the codes of the contact form', () => {
       const pow = Object.entries(CONTACT_REFUSAL_CODES).filter(([code]) => code.startsWith('pow_'))
       const texts = pow.map(([, key]) => text(messages, key))
       expect(new Set(texts).size).toBe(pow.length)
+    })
+
+    it(`ships no consent text in ${locale}: the site writes it`, () => {
+      expect(text(messages, 'govue.contact.consent')).toBeUndefined()
+    })
+
+    it(`has the {wait} slot in every wait text in ${locale}`, () => {
+      for (const key of Object.values(CONTACT_WAIT_CODES)) {
+        expect(text(messages, key), key).toContain('{wait}')
+      }
     })
 
     it(`names the limit and the special characters in ${locale}`, () => {
@@ -182,6 +197,32 @@ describe('localizeContactError with the real codes', () => {
     })
   }
 
+  it('names the wait of a refusal that carries a Retry-After', () => {
+    for (const [code, key] of Object.entries(CONTACT_WAIT_CODES)) {
+      const error = localizeContactError(
+        new ApiError({ code, message: 'English', retryAfter: 300 }),
+        t,
+        fields,
+      )
+      expect(error.message).toBe(`[${key}{"wait":"[govue.contact.wait.minutes{\\"n\\":5}]"}]`)
+      expect(error.retryAfter).toBe(300)
+    }
+  })
+
+  it('keeps the plain text without a Retry-After, and for a code with no wait text', () => {
+    expect(
+      localizeContactError(new ApiError({ code: 'too_many_requests', message: 'x' }), t, fields)
+        .message,
+    ).toBe('[govue.contact.error.rateLimited]')
+    expect(
+      localizeContactError(
+        new ApiError({ code: 'send_failed', message: 'x', retryAfter: 300 }),
+        t,
+        fields,
+      ).message,
+    ).toBe('[govue.contact.error.sendFailed]')
+  })
+
   it('maps a 403 with a code it does not know to the refused text', () => {
     const error = localizeContactError(
       new ApiError({ code: 'forbidden_by_proxy', message: 'x', status: 403 }),
@@ -215,6 +256,24 @@ describe('localizeContactError with the real codes', () => {
       '[govue.contact.error.generic]',
     )
   })
+})
+
+describe('formatWait', () => {
+  const rows: Array<[number, string]> = [
+    [1, '[govue.contact.wait.minute]'],
+    [60, '[govue.contact.wait.minute]'],
+    [61, '[govue.contact.wait.minutes{"n":2}]'],
+    [300, '[govue.contact.wait.minutes{"n":5}]'],
+    [3540, '[govue.contact.wait.minutes{"n":59}]'],
+    [3600, '[govue.contact.wait.hour]'],
+    [7200, '[govue.contact.wait.hours{"n":2}]'],
+    [86_400, '[govue.contact.wait.hours{"n":24}]'],
+  ]
+  for (const [seconds, expected] of rows) {
+    it(`rounds ${seconds} s up to ${expected}`, () => {
+      expect(formatWait(seconds, t)).toBe(expected)
+    })
+  }
 })
 
 describe('the limits', () => {

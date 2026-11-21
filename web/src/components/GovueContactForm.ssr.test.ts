@@ -39,6 +39,7 @@ describe('GovueContactForm on the server', () => {
           client: createClient({ fetch: () => trap('fetch') }),
           privacyHref: '/en/privacy',
           requireConsent: true,
+          consentLabel: 'I agree to the test terms.',
         }),
     })
     const html = await render(Page, {

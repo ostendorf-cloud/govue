@@ -26,7 +26,8 @@ Two halves, one repository, one version:
   Every package is importable on its own.
 - A Vue package with components and a design token contract, so an application themes itself by
   filling that contract instead of inventing a palette. It carries the account forms
-  (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`), the passkey button
+  (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`), the contact form
+  (`GovueContactForm`, with a proof of work solver in a worker), the passkey button
   (`GovuePasskeyButton`, `usePasskey`, `isBearerClient`) and the bearer client of a native
   app (`createClient({ auth: { mode: 'bearer' } })`).
 

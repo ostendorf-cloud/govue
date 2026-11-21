@@ -253,6 +253,79 @@ describe('createChallengeSolver', () => {
     await expect(solver.solved()).rejects.toThrow(/salt/)
   })
 
+  it('keeps a challenge of 60 seconds usable: the headroom is half of its lifetime', async () => {
+    const { solver, get, solveFn, advance } = setup({ lifetime: 60 })
+    solver.prepare()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    advance(10_000)
+    for (let i = 0; i < 20; i++) {
+      solver.prepare()
+    }
+    await solver.solved()
+    expect(get).toHaveBeenCalledTimes(1)
+    expect(solveFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('starts one fetch for a storm of prepares', async () => {
+    const { solver, get } = setup({ lifetime: 600 })
+    for (let i = 0; i < 50; i++) {
+      solver.prepare()
+    }
+    expect(get).toHaveBeenCalledTimes(1)
+    await solver.solved()
+    expect(get).toHaveBeenCalledTimes(1)
+  })
+
+  it('never runs two searches at once, and aborts the one it replaces', async () => {
+    let clock = 1_000_000
+    const get = vi.fn(() => Promise.resolve(challengeOf(Math.floor(clock / 1000), 60)))
+    let running = 0
+    let peak = 0
+    const signals: AbortSignal[] = []
+    const solveFn = vi.fn<SolveFunction>(
+      (_challenge, signal) =>
+        new Promise<number | null>((_resolve, reject) => {
+          running++
+          peak = Math.max(peak, running)
+          signals.push(signal as AbortSignal)
+          signal?.addEventListener('abort', () => {
+            running--
+            reject(new Error('aborted'))
+          })
+        }),
+    )
+    const solver = createChallengeSolver({ get } as unknown as ApiClient, {
+      solve: solveFn,
+      now: () => clock,
+      sleep: () => Promise.resolve(),
+    })
+    solver.prepare()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    // Past half of the lifetime: the next prepare replaces the attempt.
+    clock += 40_000
+    solver.prepare()
+    solver.prepare()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(signals).toHaveLength(2)
+    expect(signals[0].aborted).toBe(true)
+    expect(signals[1].aborted).toBe(false)
+    expect(peak).toBe(1)
+    solver.dispose()
+    expect(signals[1].aborted).toBe(true)
+  })
+
+  it('gives every attempt its own signal', async () => {
+    const { solver, get } = setup({ lifetime: 600 })
+    solver.prepare()
+    await solver.solved()
+    solver.prepare()
+    await solver.solved()
+    const signals = get.mock.calls.map((call) => (call[1] as { signal: AbortSignal }).signal)
+    expect(signals).toHaveLength(2)
+    expect(signals[0]).not.toBe(signals[1])
+  })
+
   it('takes the challenge route from the options', async () => {
     const get = vi.fn(() => Promise.resolve(challengeOf(1000)))
     const solver = createChallengeSolver({ get } as unknown as ApiClient, {

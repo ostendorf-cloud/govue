@@ -140,15 +140,19 @@ const de: MessageTree = {
         message: 'Nachricht',
         honeypot: 'Dieses Feld bitte leer lassen',
       },
-      consent:
-        'Ich stimme zu, dass meine Angaben zur Beantwortung meiner Nachricht verwendet werden.',
+      wait: {
+        minute: 'in etwa einer Minute',
+        minutes: 'in etwa {n} Minuten',
+        hour: 'in etwa einer Stunde',
+        hours: 'in etwa {n} Stunden',
+      },
       privacy: 'Datenschutzerklärung',
       privacyIntro: 'So gehen wir mit deinen Angaben um:',
       submit: 'Nachricht senden',
       sending: 'Deine Nachricht wird gesendet',
       success: 'Danke. Deine Nachricht wurde gesendet.',
       another: 'Weitere Nachricht schreiben',
-      failure: 'Deine Nachricht wurde nicht gesendet.',
+      failure: 'Das Senden ist fehlgeschlagen.',
       error: {
         required: 'Bitte fülle dieses Feld aus.',
         tooLong: 'Das ist zu lang. Erlaubt sind höchstens {max} Zeichen.',
@@ -173,11 +177,16 @@ const de: MessageTree = {
           'Die Spam-Prüfung wurde schon verwendet. Es wurde nichts gesendet. Bitte sende das Formular erneut.',
         powBusy:
           'Der Server ist gerade ausgelastet. Es wurde nichts gesendet. Bitte versuche es gleich erneut.',
+        powBusyWait:
+          'Der Server ist gerade ausgelastet. Es wurde nichts gesendet. Bitte versuche es {wait} erneut.',
         mailLimit:
           'Das Formular hat sein Limit an Nachrichten vorerst erreicht. Es wurde nichts gesendet. Bitte versuche es später erneut.',
+        mailLimitWait:
+          'Das Formular hat sein Limit an Nachrichten vorerst erreicht. Es wurde nichts gesendet. Bitte versuche es {wait} erneut.',
         sendFailed:
-          'Deine Nachricht konnte nicht zugestellt werden. Es wurde nichts gesendet. Bitte versuche es später erneut.',
+          'Deine Nachricht wurde möglicherweise nicht gesendet. Bitte prüfe das, bevor du sie erneut sendest, oder schreibe auf einem anderen Weg.',
         rateLimited: 'Zu viele Nachrichten. Bitte warte ein paar Minuten und versuche es erneut.',
+        rateLimitedWait: 'Zu viele Nachrichten. Bitte versuche es {wait} erneut.',
         tooLarge: 'Die Nachricht ist zu groß zum Senden.',
         refused: 'Die Anfrage wurde abgelehnt. Bitte lade die Seite neu und versuche es erneut.',
         solver:

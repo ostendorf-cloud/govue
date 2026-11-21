@@ -4,6 +4,7 @@
 import userEvent from '@testing-library/user-event'
 import { render, screen } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 
 import { createClient } from '../api/client'
 import { FakeContactServer, refusal } from '../../example/contactServerFake'
@@ -80,6 +81,8 @@ async function settle(until: () => boolean, steps = 80) {
     await new Promise((resolve) => realSetTimeout(resolve, 5))
   }
 }
+
+const CONSENT = 'I agree to the test terms.'
 
 const send = () => screen.getByRole('button', { name: 'Send message' })
 const thanks = () => screen.queryByText('Thank you. Your message was sent.')
@@ -184,6 +187,39 @@ describe('GovueContactForm structure', () => {
     expect(screen.getByRole('checkbox', { name: 'I accept the terms' })).toBeVisible()
   })
 
+  it('takes the consent text from the consentLabel prop', () => {
+    setup({ requireConsent: true, consentLabel: CONSENT })
+    expect(screen.getByRole('checkbox', { name: CONSENT })).toBeVisible()
+  })
+
+  it('has no consent text of its own: without one from the site it renders nothing', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { container } = setup({ requireConsent: true })
+
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(screen.queryByRole('form')).toBeNull()
+    expect(container.querySelector('input')).toBeNull()
+    expect(warnSpy.mock.calls.flat().join(' ')).toContain('requireConsent needs a consent text')
+  })
+
+  it('renders no checkbox when consent is not required, even with a text', () => {
+    setup({ requireConsent: false, consentLabel: CONSENT })
+    expect(screen.queryByRole('checkbox')).toBeNull()
+  })
+
+  it('refuses a bearer client: nothing is rendered and nothing is sent', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const fetchMock = vi.fn<typeof globalThis.fetch>()
+    const client = createClient({ fetch: fetchMock, auth: { mode: 'bearer' } })
+    const { container } = render(GovueContactForm, { props: { client } })
+    await nextTick()
+
+    expect(container.querySelector('form')).toBeNull()
+    expect(container.querySelector('input')).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(warnSpy.mock.calls.flat().join(' ')).toContain('bearer client')
+  })
+
   it('speaks German in a German page', () => {
     setup({}, { locale: 'de' })
     expect(screen.getByRole('button', { name: 'Nachricht senden' })).toBeVisible()
@@ -219,7 +255,7 @@ describe('GovueContactForm checks before sending', () => {
   })
 
   it('needs the consent when it is required, and associates the error with the box', async () => {
-    const { user, server } = setup({ requireConsent: true })
+    const { user, server } = setup({ requireConsent: true, consentLabel: CONSENT })
     await fill(user)
 
     await user.click(send())
@@ -245,7 +281,7 @@ describe('GovueContactForm sending', () => {
   })
 
   it('sends exactly the fields the server knows, and the server accepts them', async () => {
-    const { user, server } = setup({ requireConsent: true })
+    const { user, server } = setup({ requireConsent: true, consentLabel: CONSENT })
     await fill(user)
     await user.click(screen.getByRole('checkbox'))
 
@@ -329,7 +365,7 @@ describe('GovueContactForm sending', () => {
 
     expect(server.submits).toHaveLength(1)
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Your message was not sent. Your message could not be delivered.',
+      'Sending failed. Your message may not have been sent. Please check before you send it again or write by another way.',
     )
     expect(thanks()).toBeNull()
     expect(screen.getByRole('status')).not.toHaveTextContent('Thank you')
@@ -367,7 +403,7 @@ describe('GovueContactForm sending', () => {
     [400, 'pow_replay', 'already used'],
     [503, 'pow_busy', 'The server is busy'],
     [503, 'mail_limit', 'reached its limit'],
-    [503, 'send_failed', 'could not be delivered'],
+    [503, 'send_failed', 'may not have been sent'],
     [429, 'too_many_requests', 'Too many messages.'],
     [413, 'request_too_large', 'too large'],
     [415, 'unsupported_media_type', 'could not be accepted'],
@@ -388,6 +424,64 @@ describe('GovueContactForm sending', () => {
       expect(thanks()).toBeNull()
     })
   }
+
+  describe('with a Retry-After', () => {
+    const waits: Array<[string, number, string, string]> = [
+      ['too_many_requests', 429, '300', 'Too many messages. Please try again in about 5 minutes.'],
+      ['too_many_requests', 429, '30', 'Please try again in about a minute.'],
+      ['mail_limit', 503, '1800', 'Nothing was sent. Please try again in about 30 minutes.'],
+      ['pow_busy', 503, '7200', 'Nothing was sent. Please try again in about 2 hours.'],
+    ]
+    for (const [code, status, header, text] of waits) {
+      it(`names the wait of ${code} (${header} s)`, async () => {
+        const server = new FakeContactServer()
+        server.refuseNext(() =>
+          refusal(status, code, undefined, undefined, { 'Retry-After': header }),
+        )
+        const { user } = setup({}, { server })
+        await fill(user)
+
+        await user.click(send())
+        await settle(() => screen.queryByRole('alert') !== null)
+
+        expect(screen.getByRole('alert')).toHaveTextContent(text)
+      })
+    }
+
+    it('says it in German too', async () => {
+      const server = new FakeContactServer()
+      server.refuseNext(() =>
+        refusal(429, 'too_many_requests', undefined, undefined, { 'Retry-After': '300' }),
+      )
+      const { user } = setup({}, { server, locale: 'de' })
+      await user.type(screen.getByLabelText(/^Name/), 'Alice')
+      await user.type(screen.getByLabelText(/^E-Mail-Adresse/), 'alice@example.com')
+      await user.type(screen.getByLabelText(/^Nachricht/), 'Hallo')
+
+      await user.click(screen.getByRole('button', { name: 'Nachricht senden' }))
+      await settle(() => screen.queryByRole('alert') !== null)
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Zu viele Nachrichten. Bitte versuche es in etwa 5 Minuten erneut.',
+      )
+    })
+
+    it('keeps the plain text when the header is not a number of seconds', async () => {
+      const server = new FakeContactServer()
+      server.refuseNext(() =>
+        refusal(429, 'too_many_requests', undefined, undefined, { 'Retry-After': 'tomorrow' }),
+      )
+      const { user } = setup({}, { server })
+      await fill(user)
+
+      await user.click(send())
+      await settle(() => screen.queryByRole('alert') !== null)
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Too many messages. Please wait a few minutes and try again.',
+      )
+    })
+  })
 
   it('puts a field code on its field, associated, announced and focused', async () => {
     const server = new FakeContactServer()
@@ -493,6 +587,31 @@ describe('GovueContactForm solver failures', () => {
     expect(screen.getByRole('status')).toHaveTextContent('')
     expect(server.submits).toHaveLength(0)
     expect(FakeWorker.terminated).toBeGreaterThan(0)
+  })
+
+  it('cancels a send that is on its way when the form is removed, and emits no sent', async () => {
+    const { user, unmount, emitted, fetchSpy, server } = setup()
+    let submitSignal: AbortSignal | null | undefined
+    let answer: (response: Response) => void = () => undefined
+    fetchSpy.mockImplementation((input, init) => {
+      const url = typeof input === 'string' ? input : ''
+      if (url.endsWith('/challenge')) return server.fetch(input, init)
+      submitSignal = init?.signal
+      return new Promise<Response>((resolve) => {
+        answer = resolve
+      })
+    })
+    await fill(user)
+    await user.click(send())
+    await settle(() => submitSignal !== undefined)
+    expect(submitSignal?.aborted).toBe(false)
+
+    unmount()
+    answer(new Response('{"ok":true}', { status: 200 }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(submitSignal?.aborted).toBe(true)
+    expect(emitted().sent).toBeUndefined()
   })
 
   it('terminates a running worker when the form is removed', async () => {

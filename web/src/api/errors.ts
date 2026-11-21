@@ -44,6 +44,13 @@ export class ApiError extends Error {
   readonly details: Record<string, string>
   /** The id the log line of this failure carries, for a bug report. */
   readonly requestId: string
+  /**
+   * The wait the server asked for, in whole seconds, from a `Retry-After`
+   * header. Undefined when there was none, when it was not a plain number of
+   * seconds, or when it was out of range. A page on another origin cannot read
+   * the header unless the server exposes it, and then this stays undefined.
+   */
+  readonly retryAfter: number | undefined
 
   constructor(init: {
     code: string
@@ -51,6 +58,7 @@ export class ApiError extends Error {
     status?: number
     details?: Record<string, unknown>
     requestId?: string
+    retryAfter?: number
     cause?: unknown
   }) {
     super(init.message, { cause: init.cause })
@@ -59,6 +67,7 @@ export class ApiError extends Error {
     this.status = init.status ?? 0
     this.details = stringValues(init.details)
     this.requestId = init.requestId ?? ''
+    this.retryAfter = validRetryAfter(init.retryAfter)
   }
 
   /** The login is missing or expired. */
@@ -75,6 +84,28 @@ export class ApiError extends Error {
   get isClientFault(): boolean {
     return this.status >= 400 && this.status < 500
   }
+}
+
+/** The longest wait a Retry-After may name and still be believed: one day. */
+export const MAX_RETRY_AFTER_SECONDS = 86_400
+
+function validRetryAfter(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isInteger(value)) {
+    return undefined
+  }
+  return value >= 1 && value <= MAX_RETRY_AFTER_SECONDS ? value : undefined
+}
+
+/**
+ * parseRetryAfter reads the delta-seconds form of a Retry-After header: digits
+ * only. The HTTP date form, a sign, a fraction, an empty value and anything
+ * longer than a day are ignored, so a wrong header never shows a wrong wait.
+ */
+export function parseRetryAfter(header: string | null): number | undefined {
+  if (header === null || !/^\d{1,7}$/.test(header.trim())) {
+    return undefined
+  }
+  return validRetryAfter(Number(header.trim()))
 }
 
 /** stringValues keeps only what can be shown next to an input. */

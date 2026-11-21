@@ -2,10 +2,11 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { computed, nextTick, onBeforeUnmount, ref, useId } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useId, warn } from 'vue'
 
 import type { ApiClient } from '../api/client'
 import { useForm, type FieldErrors } from '../composables/useForm'
+import { isBearerClient } from '../composables/usePasskey'
 import { useGovueText } from '../i18n/plugin'
 import { createChallengeSolver } from '../lib/pow'
 import { CONTACT_LIMITS, codePoints, localizeContactError } from './contactForm'
@@ -25,13 +26,22 @@ const props = withDefaults(
      * caller's duty: create the client with `credentials: 'omit'` and without
      * `csrfToken`, so the browser attaches no cookie of the site either. A
      * client with the default `credentials: 'same-origin'` sends the site's
-     * cookies to the contact routes.
+     * cookies to the contact routes. A bearer client (a native app's device
+     * token) is refused: the form renders nothing for it, as it would send the
+     * token to a public route.
      */
     client: ApiClient
     /** The site's privacy page. Linked under the fields when set. */
     privacyHref?: string
-    /** Show a consent checkbox that has to be ticked before the form is sent. */
+    /**
+     * Show a consent checkbox that has to be ticked before the form is sent.
+     * govue ships no consent text: the site supplies it through `consentLabel`
+     * or the `consent` slot. Without one the form refuses to render, with a
+     * warning in development.
+     */
     requireConsent?: boolean
+    /** The consent text, plain. The `consent` slot wins when both are set. */
+    consentLabel?: string
     /** The challenge route, relative to the client's base URL. */
     challengePath?: string
     /** The submit route, relative to the client's base URL. */
@@ -50,6 +60,7 @@ const props = withDefaults(
   {
     privacyHref: undefined,
     requireConsent: false,
+    consentLabel: undefined,
     challengePath: '/contact/challenge',
     submitPath: '/contact',
     minAgeMs: 3500,
@@ -63,14 +74,31 @@ const emit = defineEmits<{
   sent: []
 }>()
 
-defineSlots<{
+const slots = defineSlots<{
   /** The heading. Default: the catalogue's title. */
   title?: () => unknown
-  /** The consent label, for markup such as a link. Default: the catalogue's text. */
+  /** The consent label, for markup such as a link. There is no default text. */
   consent?: () => unknown
 }>()
 
 const { t } = useGovueText()
+
+// A bearer client would send the device token to the contact routes. A
+// required consent without a text would be a checkbox with no label, or a
+// consent the visitor cannot give. Both fail closed: nothing is rendered.
+const bearer = isBearerClient(props.client)
+const consentMissing = props.requireConsent && !props.consentLabel && !slots.consent
+const blocked = bearer || consentMissing
+if (bearer) {
+  warn(
+    'GovueContactForm refuses a bearer client: it would send the device token to a public route.',
+  )
+}
+if (consentMissing) {
+  warn(
+    'GovueContactForm: requireConsent needs a consent text from the site. Set the consentLabel prop or fill the consent slot.',
+  )
+}
 
 const FIELDS = ['name', 'email', 'message', 'consent'] as const
 const headingId = useId()
@@ -82,8 +110,15 @@ const solver = createChallengeSolver(props.client, {
   path: props.challengePath,
   minAgeMs: props.minAgeMs,
 })
-// A visitor who leaves while the worker searches does not leave it running.
-onBeforeUnmount(() => solver.dispose())
+// A visitor who leaves while the worker searches does not leave it running,
+// and a send that is still on its way is cancelled: no `sent` after unmount.
+const submitAbort = new AbortController()
+let unmounted = false
+onBeforeUnmount(() => {
+  unmounted = true
+  submitAbort.abort()
+  solver.dispose()
+})
 
 const sent = ref(false)
 const formEl = ref<HTMLFormElement | null>(null)
@@ -133,13 +168,16 @@ const form = useForm({
           website: '',
           pow,
         },
-        { skipUnauthenticatedHook: true },
+        { skipUnauthenticatedHook: true, signal: submitAbort.signal },
       )
     } catch (caught) {
       // The solution is spent whatever the answer was. A fresh challenge is
       // ready by the time the visitor sends again.
       solver.prepare()
       throw localizeContactError(caught, t, FIELDS)
+    }
+    if (unmounted) {
+      return
     }
     // Success is set here and nowhere else: after the server said yes.
     sent.value = true
@@ -186,7 +224,7 @@ async function again(): Promise<void> {
 </script>
 
 <template>
-  <section class="flex flex-col gap-4" :aria-labelledby="headingId">
+  <section v-if="!blocked" class="flex flex-col gap-4" :aria-labelledby="headingId">
     <component :is="titleTag" :id="headingId" class="text-xl font-semibold text-text">
       <slot name="title">{{ t('govue.contact.title') }}</slot>
     </component>
@@ -280,13 +318,13 @@ async function again(): Promise<void> {
       <div v-if="requireConsent" class="flex flex-col gap-1.5">
         <GovueCheckbox
           v-model="values.consent"
-          :label="t('govue.contact.consent')"
+          :label="consentLabel ?? ''"
           :disabled="locked"
           :aria-invalid="form.errorOf('consent') ? 'true' : undefined"
           :aria-describedby="form.errorOf('consent') ? `${headingId}-consent-error` : undefined"
           @change="form.blur('consent')"
         >
-          <slot name="consent">{{ t('govue.contact.consent') }}</slot>
+          <slot name="consent">{{ consentLabel }}</slot>
         </GovueCheckbox>
         <p
           v-if="form.errorOf('consent')"

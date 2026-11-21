@@ -11,7 +11,12 @@ import { createGovueI18n } from '../../src/i18n/plugin'
 // Whatever answers /api/v1/contact is up to the spec.
 const client = createClient({ credentials: 'omit' })
 
-createApp(GovueContactForm, { client, privacyHref: '/privacy', requireConsent: true })
+createApp(GovueContactForm, {
+  client,
+  privacyHref: '/privacy',
+  requireConsent: true,
+  consentLabel: 'I agree that my details are used to answer my message.',
+})
   .use(
     createGovueI18n({
       locale: 'en',

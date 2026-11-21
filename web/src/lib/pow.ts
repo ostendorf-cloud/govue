@@ -68,7 +68,9 @@ export interface ChallengeSolverOptions {
   minAgeMs?: number
   /**
    * A solution this close to its expiry is not sent: a slow connection could
-   * land it past the server's deadline, so a fresh challenge is prepared.
+   * land it past the server's deadline, so a fresh challenge is prepared. It
+   * never exceeds half of the challenge's own lifetime, which the server's
+   * expiry and issue times give, so a short lived challenge stays usable.
    * Default 60000.
    */
   headroomMs?: number
@@ -103,12 +105,17 @@ interface Attempt {
   promise: Promise<Ready>
   /** Set when the challenge arrived; zero before. */
   expiresAt: number
+  /** The headroom of this challenge: see createChallengeSolver. Set with expiresAt. */
+  headroomMs: number
+  /** Its own controller: a replaced attempt is aborted, the others are not touched. */
+  controller: AbortController
 }
 
 interface Ready {
   solution: PowSolution
   receivedAt: number
   expiresAt: number
+  headroomMs: number
 }
 
 /**
@@ -188,35 +195,42 @@ export function createChallengeSolver(
 ): ChallengeSolver {
   const path = options.path ?? '/contact/challenge'
   const minAgeMs = options.minAgeMs ?? 3500
-  const headroomMs = options.headroomMs ?? 60_000
+  const maxHeadroomMs = options.headroomMs ?? 60_000
   const solveTimeoutMs = options.solveTimeoutMs ?? 60_000
   const solve: SolveFunction =
     options.solve ?? ((challenge, signal) => solveInWorker(challenge, signal, solveTimeoutMs))
   const now = options.now ?? Date.now
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
-  const controller = new AbortController()
-
   let current: Attempt | null = null
+  let disposed = false
 
   async function run(attempt: Attempt): Promise<Ready> {
+    const { signal } = attempt.controller
     const challenge = await client.get<PowChallenge>(path, {
       cache: 'no-store',
-      signal: controller.signal,
+      signal,
     })
     const { expires, issued } = parseSalt(challenge.salt)
     const receivedAt = now()
     // The lifetime is the difference of two server timestamps, applied to the
     // visitor's clock from the moment of arrival. A visitor clock that is
     // hours off cannot make a challenge look valid or expired.
-    const expiresAt = receivedAt + (expires - issued) * 1000
+    const lifetimeMs = (expires - issued) * 1000
+    const expiresAt = receivedAt + lifetimeMs
+    // The headroom is at most half of the lifetime. With a longer one a
+    // challenge of a short lived server would never count as usable, and every
+    // focus would fetch and solve a new one.
+    const headroomMs = Math.min(maxHeadroomMs, lifetimeMs / 2)
     attempt.expiresAt = expiresAt
-    const number = await solve(challenge, controller.signal)
+    attempt.headroomMs = headroomMs
+    const number = await solve(challenge, signal)
     if (number === null || !Number.isInteger(number)) {
       throw new ChallengeError('no_number', 'govue pow: no number solves the challenge')
     }
     return {
       receivedAt,
       expiresAt,
+      headroomMs,
       solution: {
         algorithm: challenge.algorithm,
         challenge: challenge.challenge,
@@ -228,8 +242,16 @@ export function createChallengeSolver(
   }
 
   function start(): Attempt {
-    const attempt: Attempt = { promise: undefined as unknown as Promise<Ready>, expiresAt: 0 }
-    attempt.promise = controller.signal.aborted
+    // At most one attempt is alive: the one it replaces is aborted, which
+    // ends its request and terminates its worker.
+    current?.controller.abort()
+    const attempt: Attempt = {
+      promise: undefined as unknown as Promise<Ready>,
+      expiresAt: 0,
+      headroomMs: maxHeadroomMs,
+      controller: new AbortController(),
+    }
+    attempt.promise = disposed
       ? Promise.reject(new ChallengeError('aborted', 'govue pow: aborted'))
       : run(attempt)
     // solved() surfaces the failure. This only keeps a prepare that nobody
@@ -240,7 +262,10 @@ export function createChallengeSolver(
   }
 
   function usable(attempt: Attempt | null): attempt is Attempt {
-    return attempt !== null && (attempt.expiresAt === 0 || attempt.expiresAt - now() >= headroomMs)
+    return (
+      attempt !== null &&
+      (attempt.expiresAt === 0 || attempt.expiresAt - now() >= attempt.headroomMs)
+    )
   }
 
   return {
@@ -255,15 +280,16 @@ export function createChallengeSolver(
       try {
         ready = await attempt.promise
       } catch (caught) {
-        if (caught instanceof ChallengeError && caught.kind === 'aborted') {
+        if (disposed && caught instanceof ChallengeError && caught.kind === 'aborted') {
           throw caught
         }
         // A failed attempt is retried once, so one lost request does not fail
-        // a submission. A second failure reaches the caller.
-        attempt = start()
+        // a submission. A second failure reaches the caller. An attempt that a
+        // later prepare replaced was aborted: the current one is taken then.
+        attempt = usable(current) && current !== attempt ? current : start()
         ready = await attempt.promise
       }
-      if (ready.expiresAt - now() < headroomMs) {
+      if (ready.expiresAt - now() < ready.headroomMs) {
         attempt = start()
         ready = await attempt.promise
       }
@@ -278,8 +304,9 @@ export function createChallengeSolver(
       return ready.solution
     },
     dispose: () => {
+      disposed = true
+      current?.controller.abort()
       current = null
-      controller.abort()
     },
   }
 }

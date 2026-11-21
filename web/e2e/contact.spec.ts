@@ -110,7 +110,7 @@ test('a send that never reaches the server is a failure, and the next send works
 
   await page.getByRole('button', { name: 'Send message' }).click()
 
-  await expect(page.getByRole('alert')).toContainText('Your message was not sent.', {
+  await expect(page.getByRole('alert')).toContainText('Sending failed.', {
     timeout: 60_000,
   })
   await expect(page.getByRole('status')).not.toContainText('Thank you')

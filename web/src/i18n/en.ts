@@ -136,14 +136,19 @@ const en: MessageTree = {
         message: 'Message',
         honeypot: 'Leave this field empty',
       },
-      consent: 'I agree that my details are used to answer my message.',
+      wait: {
+        minute: 'in about a minute',
+        minutes: 'in about {n} minutes',
+        hour: 'in about an hour',
+        hours: 'in about {n} hours',
+      },
       privacy: 'Privacy policy',
       privacyIntro: 'How your details are handled:',
       submit: 'Send message',
       sending: 'Sending your message',
       success: 'Thank you. Your message was sent.',
       another: 'Write another message',
-      failure: 'Your message was not sent.',
+      failure: 'Sending failed.',
       error: {
         required: 'Please fill in this field.',
         tooLong: 'This is too long. At most {max} characters are allowed.',
@@ -160,11 +165,15 @@ const en: MessageTree = {
         powTooFast: 'The form was sent too fast. Please wait a moment and send it again.',
         powReplay: 'The spam check was already used. Nothing was sent. Please send the form again.',
         powBusy: 'The server is busy right now. Nothing was sent. Please try again in a moment.',
+        powBusyWait: 'The server is busy right now. Nothing was sent. Please try again {wait}.',
         mailLimit:
           'The form has reached its limit of messages for now. Nothing was sent. Please try again later.',
+        mailLimitWait:
+          'The form has reached its limit of messages for now. Nothing was sent. Please try again {wait}.',
         sendFailed:
-          'Your message could not be delivered. Nothing was sent. Please try again later.',
+          'Your message may not have been sent. Please check before you send it again or write by another way.',
         rateLimited: 'Too many messages. Please wait a few minutes and try again.',
+        rateLimitedWait: 'Too many messages. Please try again {wait}.',
         tooLarge: 'The message is too large to send.',
         refused: 'The request was refused. Please reload the page and try again.',
         solver:

@@ -55,6 +55,33 @@ export const CONTACT_REFUSAL_CODES = {
   timeout: 'govue.contact.error.network',
 } as const
 
+/**
+ * The refusals that carry a wait, each with the catalogue key of the text that
+ * names it. The text has a `{wait}` slot, filled by formatWait. Without a
+ * usable Retry-After the plain text of CONTACT_REFUSAL_CODES stays.
+ */
+export const CONTACT_WAIT_CODES = {
+  too_many_requests: 'govue.contact.error.rateLimitedWait',
+  mail_limit: 'govue.contact.error.mailLimitWait',
+  pow_busy: 'govue.contact.error.powBusyWait',
+} as const
+
+/**
+ * formatWait rounds a wait in seconds up to whole minutes, and to whole hours
+ * from an hour on, and names it in the visitor's language: "in about 5
+ * minutes". A wait is never rounded down to nothing.
+ */
+export function formatWait(seconds: number, t: Translate): string {
+  const minutes = Math.max(1, Math.ceil(seconds / 60))
+  if (minutes < 60) {
+    return minutes === 1
+      ? t('govue.contact.wait.minute')
+      : t('govue.contact.wait.minutes', { n: minutes })
+  }
+  const hours = Math.round(minutes / 60)
+  return hours === 1 ? t('govue.contact.wait.hour') : t('govue.contact.wait.hours', { n: hours })
+}
+
 /** The text of a failure of the browser's own proof of work, by kind. */
 export const CONTACT_SOLVER_KEYS: Record<ChallengeErrorKind, string> = {
   salt: 'govue.contact.error.solver',
@@ -97,7 +124,12 @@ export function localizeContactError(
       cause: caught,
     })
   }
-  const base = { code: caught.code, status: caught.status, requestId: caught.requestId }
+  const base = {
+    code: caught.code,
+    status: caught.status,
+    requestId: caught.requestId,
+    retryAfter: caught.retryAfter,
+  }
 
   const details: Record<string, string> = {}
   for (const [field, code] of Object.entries(caught.details)) {
@@ -112,6 +144,13 @@ export function localizeContactError(
     return new ApiError({ ...base, message: t(CONTACT_GENERIC_KEY), details })
   }
 
+  const waitKey = (CONTACT_WAIT_CODES as Record<string, string>)[caught.code]
+  if (waitKey && caught.retryAfter !== undefined) {
+    return new ApiError({
+      ...base,
+      message: t(waitKey, { wait: formatWait(caught.retryAfter, t) }),
+    })
+  }
   const key = (CONTACT_REFUSAL_CODES as Record<string, string>)[caught.code]
   if (key) {
     return new ApiError({ ...base, message: t(key) })

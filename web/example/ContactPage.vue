@@ -19,7 +19,14 @@ const { locale } = useLanguage()
 <template>
   <GovueSkipLink />
   <GovuePage title="govue example">
-    <GovueContactForm :client="client" :privacy-href="`/${locale}/privacy`" require-consent />
+    <!-- govue ships no consent text: a site writes its own. This one is a
+         placeholder of the example, like its legal pages. -->
+    <GovueContactForm
+      :client="client"
+      :privacy-href="`/${locale}/privacy`"
+      require-consent
+      consent-label="Placeholder: replace this with the site's own consent text."
+    />
   </GovuePage>
   <GovueFooter :legal="['imprint', 'privacy', 'terms']" />
 </template>

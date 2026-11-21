@@ -74,8 +74,9 @@ export function refusal(
   code: string,
   message = 'An English server text.',
   details?: Record<string, string>,
+  headers?: Record<string, string>,
 ): Response {
-  return json(status, { error: { code, message, ...(details ? { details } : {}) } })
+  return json(status, { error: { code, message, ...(details ? { details } : {}) } }, headers)
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
