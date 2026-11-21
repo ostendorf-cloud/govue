@@ -272,6 +272,16 @@ func TestHostShapes(t *testing.T) {
 		{"10.0.0.5:5432", "colon outside an IPv6 address"},
 		{"db example", "holds whitespace"},
 		{"user@db.example.invalid", "holds an @"},
+		{"db.example.invalid?x", "a character a host name or an IP address does not have"},
+		{"db.example.invalid?", "a character a host name or an IP address does not have"},
+		{"db.example.invalid#x", "a character a host name or an IP address does not have"},
+		{"db.example.invalid#", "a character a host name or an IP address does not have"},
+		{"db.example.invalid%41", "a character a host name or an IP address does not have"},
+		{"db.example.invalid/x", "a character a host name or an IP address does not have"},
+		{"db.example.invalid\x7f", "a character a host name or an IP address does not have"},
+		{"db.example.invalid\x00", "a character a host name or an IP address does not have"},
+		{"db.example.invalid\x1b", "a character a host name or an IP address does not have"},
+		{"fe80::1%eth0", "colon outside an IPv6 address"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.host, func(t *testing.T) {
@@ -309,6 +319,11 @@ func TestHostErrorKeepsTheValueOut(t *testing.T) {
 		"[s3cr3tTOKEN]",
 		"s3cr3tTOKEN,db.example.invalid",
 		"s3cr3tTOKEN db.example.invalid",
+		"db.example.invalid?password=s3cr3tTOKEN",
+		"db.example.invalid#s3cr3tTOKEN",
+		"db.example.invalid/s3cr3tTOKEN",
+		"db.example.invalid%s3cr3tTOKEN",
+		"s3cr3tTOKEN\x7f.example.invalid",
 	} {
 		t.Run(host, func(t *testing.T) {
 			t.Parallel()

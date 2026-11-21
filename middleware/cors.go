@@ -40,7 +40,7 @@ type CORS struct {
 // CORSConfig is what NewCORS validates into a CORS.
 type CORSConfig struct {
 	// Origins is the exact allow-list: scheme and host, no path, no query,
-	// no userinfo, and never a wildcard. The scheme and host are compared
+	// no fragment, no userinfo, and never a wildcard. The scheme and host are compared
 	// case-insensitively, matching how browsers themselves normalize an
 	// origin, but the value this middleware echoes back is always the
 	// incoming Origin header, byte for byte, so a real browser's own
@@ -88,8 +88,8 @@ var defaultCORSMethods = []string{
 // credentials a wildcard still hands every site on the internet a read of
 // whatever this API answers, and a codebase that accepts it once tends to
 // keep it once a cookie is added later. An origin that does not parse as a
-// bare scheme://host, including one carrying a path, a query, userinfo, or
-// the literal string "null" that a sandboxed or file: context sends, is
+// bare scheme://host, including one carrying a path, a query, a fragment,
+// userinfo, or the literal string "null" that a sandboxed or file: context sends, is
 // refused for the same reason: it can never be a value this middleware
 // would also produce when echoing a match, and a config entry that could
 // never match is a mistake worth catching at startup rather than silently
@@ -106,10 +106,10 @@ func NewCORS(cfg CORSConfig) (*CORS, error) {
 		}
 		parsed, err := url.Parse(origin)
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") ||
-			parsed.Path != "" || parsed.RawQuery != "" || parsed.User != nil {
+			parsed.Path != "" || parsed.RawQuery != "" || parsed.User != nil || strings.ContainsAny(origin, "?#") {
 			// The refused value is not shown: it may hold a credential.
 			return nil, fmt.Errorf("middleware: origin %d must be http or https scheme://host without a path, "+
-				"a query or userinfo (the value is not shown): %w", i+1, errInvalidOrigin)
+				"a query, a fragment or userinfo (the value is not shown): %w", i+1, errInvalidOrigin)
 		}
 		// Stored and compared case-insensitively: browsers normalize the
 		// scheme and host of an Origin header to lowercase before sending

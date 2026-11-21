@@ -130,6 +130,8 @@ var DefaultScopes = []string{"openid", "profile", "email"}
 type Config struct {
 	// Issuer is the URL the discovery document lives under, without the
 	// /.well-known/openid-configuration suffix. A trailing slash is trimmed.
+	// It is a scheme, a host and a path: userinfo, a query and a fragment
+	// are refused.
 	Issuer string
 
 	// ClientID is this application's client at the provider.
@@ -304,7 +306,7 @@ func New(cfg Config) (*Provider, error) {
 	issuer := strings.TrimRight(cfg.Issuer, "/")
 
 	var problems []error
-	if err := checkEndpoint("issuer", issuer); err != nil {
+	if err := checkIssuer(issuer); err != nil {
 		problems = append(problems, err)
 	}
 	if cfg.ClientID == "" {
@@ -378,6 +380,28 @@ func checkEndpoint(name, raw string) error {
 		return nil
 	}
 	return fmt.Errorf("%s is not an https URL, plain http is allowed on a loopback host only (the value is not shown)", name)
+}
+
+// checkIssuer is checkEndpoint plus the shape of an issuer: an issuer is a
+// scheme, a host and a path. Userinfo, a query and a fragment are refused,
+// because the issuer is appended to, compared and logged, and a credential
+// in it would reach every one of those. The value is never shown.
+func checkIssuer(raw string) error {
+	if err := checkEndpoint("issuer", raw); err != nil {
+		return err
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		// checkEndpoint parsed it already.
+		return errors.New("issuer is not a URL (the value is not shown)")
+	}
+	switch {
+	case u.User != nil:
+		return errors.New("issuer has userinfo, want a URL with no user name or password (the value is not shown)")
+	case strings.ContainsAny(raw, "?#"):
+		return errors.New("issuer has a query or a fragment, want scheme, host and path only (the value is not shown)")
+	}
+	return nil
 }
 
 func isLoopback(host string) bool {

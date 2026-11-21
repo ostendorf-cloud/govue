@@ -115,7 +115,8 @@ const (
 // last one holds because the password is a Secret, see there.
 type Config struct {
 	// Host is a host name or an IP address, an IPv6 address without
-	// brackets. A unix socket path and a list of hosts are refused.
+	// brackets and without a zone. A unix socket path, a list of hosts and
+	// any of ? # % / and the control characters are refused.
 	Host string
 	// Port is 1 to 65535. Zero means DefaultPort.
 	Port     int
@@ -289,6 +290,14 @@ func (c Config) hostProblems() []error {
 	if strings.Contains(c.Host, "@") {
 		add("holds an @: the user goes into %s and the password into %s or %s_FILE", EnvUser, EnvPassword, EnvPassword)
 	}
+	// A host name or an IP address never holds these. They are what a URL
+	// or a path pasted into the variable has, and the host is printed by
+	// String, by the connect error of pgx and by a dump of the Config.
+	if strings.ContainsAny(c.Host, "?#%") ||
+		(!strings.HasPrefix(c.Host, "/") && strings.Contains(c.Host, "/")) ||
+		strings.ContainsFunc(c.Host, func(r rune) bool { return unicode.IsControl(r) && !unicode.IsSpace(r) }) {
+		add("holds a character a host name or an IP address does not have: ? # %% / or a control character")
+	}
 	return problems
 }
 
@@ -374,10 +383,11 @@ func (c Config) MarshalText() ([]byte, error) {
 	return []byte(c.String()), nil
 }
 
-// LogValue keeps the password out of structured logs.
+// LogValue keeps the password out of structured logs, and the host too: a
+// host is an environment value and can carry one. It is left out, not
+// replaced by a marker.
 func (c Config) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.String("host", c.Host),
 		slog.Int("port", c.Port),
 		slog.String("name", c.Name),
 		slog.String("user", c.User),

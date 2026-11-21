@@ -111,7 +111,9 @@ func (db *DB) Close() {
 // versions above the last file are ignored: code older than the schema stays
 // ready, which a rolling deploy and a rollback need. It reads the small
 // schema_migrations table on each call. Its error goes to the log, never to
-// the client: health names the check and nothing else.
+// the client: health names the check and nothing else. A failed ping names
+// the kind of failure only, never the host, the address or pgx' own text.
+// A context error and an errno stay matchable with errors.Is.
 //
 // The ping needs a connection from the pool. When every connection is busy,
 // it waits for one until health's timeout for the check ends, and readiness
@@ -121,7 +123,7 @@ func (db *DB) Close() {
 // concurrency a pod serves, and give the check a timeout in health.
 func (db *DB) Check(ctx context.Context) error {
 	if err := db.pinger.Ping(ctx); err != nil {
-		return fmt.Errorf("database: ping: %w", err)
+		return pingFailure(err)
 	}
 	if !db.migrated.Load() {
 		return ErrNotMigrated
@@ -177,9 +179,10 @@ func poolConfig(cfg Config) (*pgxpool.Config, error) {
 	cfg = cfg.withDefaults()
 	pc, err := pgxpool.ParseConfig(dsn(cfg))
 	if err != nil {
-		// pgx' parse error quotes the connection string, which holds no
-		// password: the password is set below.
-		return nil, fmt.Errorf("database: parse config: %w", err)
+		// pgx' parse error quotes the connection string, host included, so
+		// it is not wrapped. Validate has refused what pgx cannot read, so
+		// this is a version difference of pgx and not an input.
+		return nil, errors.New("database: parse config: pgx did not accept the connection settings (the value is not shown)")
 	}
 	pc.ConnConfig.Password = cfg.Password.Reveal()
 	pc.ConnConfig.ConnectTimeout = cfg.ConnectTimeout

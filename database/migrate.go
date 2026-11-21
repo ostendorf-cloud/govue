@@ -184,7 +184,7 @@ func (l queryLedger) records(ctx context.Context) ([]record, error) { return rea
 func readRecords(ctx context.Context, q querier) ([]record, error) {
 	rows, err := q.Query(ctx, "select version, name, checksum from schema_migrations order by version")
 	if err != nil {
-		return nil, fmt.Errorf("read schema_migrations: %w", err)
+		return nil, fmt.Errorf("read schema_migrations: %w", redactConnect(err))
 	}
 	defer rows.Close()
 	var out []record
@@ -375,7 +375,7 @@ func (db *DB) applyOne(ctx context.Context, m migration) error {
 func (db *DB) tx(ctx context.Context, fn func(pgx.Tx) error) error {
 	tx, err := db.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+		return fmt.Errorf("begin: %w", redactConnect(err))
 	}
 	defer func() {
 		// The rollback of a committed transaction is a no-op, so this needs
