@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ostendorf-cloud/govue/internal/configtext"
 )
 
 // CORS answers cross-origin requests for an API whose frontend is served
@@ -107,7 +109,7 @@ func NewCORS(cfg CORSConfig) (*CORS, error) {
 		parsed, err := url.Parse(origin)
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") ||
 			parsed.Path != "" || parsed.RawQuery != "" || parsed.User != nil {
-			return nil, fmt.Errorf("middleware: origin %q must be scheme://host: %w", raw, errInvalidOrigin)
+			return nil, fmt.Errorf("middleware: origin %s must be scheme://host: %w", configtext.Quote(raw), errInvalidOrigin)
 		}
 		// Stored and compared case-insensitively: browsers normalize the
 		// scheme and host of an Origin header to lowercase before sending

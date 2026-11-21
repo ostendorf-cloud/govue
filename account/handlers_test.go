@@ -22,6 +22,7 @@ import (
 	"github.com/ostendorf-cloud/govue/account"
 	"github.com/ostendorf-cloud/govue/account/accounttest"
 	"github.com/ostendorf-cloud/govue/api"
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 	"github.com/ostendorf-cloud/govue/logging"
 )
 
@@ -369,6 +370,29 @@ func (f *hFixture) register() string {
 
 func withHeader(key, value string) func(*http.Request) {
 	return func(r *http.Request) { r.Header.Set(key, value) }
+}
+
+// A trusted origin that may carry a credential stays out of the error, and
+// so does the error of the standard library, which quotes it.
+func TestNewHandlersKeepsACredentialOutOfTheError(t *testing.T) {
+	t.Parallel()
+
+	for _, origin := range []string{
+		"https://user:s3cr3tTOKEN@app.example.test/",
+		"https://app.example.test/?token=s3cr3tTOKEN",
+		"https://user:s3cr3tTOKEN@app example.test\x7f",
+	} {
+		t.Run(origin, func(t *testing.T) {
+			t.Parallel()
+
+			var cfg account.HandlerConfig
+			newHFixture(t, func(c *account.HandlerConfig) { cfg = *c })
+			cfg.TrustedOrigins = []string{origin}
+
+			_, err := account.NewHandlers(cfg)
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "trusted origin")
+		})
+	}
 }
 
 func TestNewHandlersValidates(t *testing.T) {

@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/ostendorf-cloud/govue/internal/configtext"
 )
 
 // AppOrigins is the list of origins a native app sends its requests from,
@@ -49,7 +51,8 @@ var reservedAppSchemes = []string{
 // scheme is https, or one of customSchemes. A wildcard, the
 // literal "null", http, an empty list and a duplicate are errors, and so is a
 // custom scheme that is not a lower case URL scheme or that is one of the
-// schemes a browser handles itself. Every error names the offending value.
+// schemes a browser handles itself. Every error names the offending value,
+// unless it holds an @, a ? or a #, where a URL carries a credential.
 //
 // A custom scheme is an opt in of one scheme with exact origins, never a
 // scheme wide rule: "capacitor" with "capacitor://localhost" lists that one
@@ -63,8 +66,8 @@ func NewAppOrigins(origins []string, customSchemes ...string) (AppOrigins, error
 	}
 	for _, scheme := range customSchemes {
 		if !validCustomScheme(scheme) {
-			return AppOrigins{}, fmt.Errorf("middleware: app scheme %q must be a lower case URL scheme "+
-				"that a browser does not handle itself: %w", scheme, errInvalidOrigin)
+			return AppOrigins{}, fmt.Errorf("middleware: app scheme %s must be a lower case URL scheme "+
+				"that a browser does not handle itself: %w", configtext.Quote(scheme), errInvalidOrigin)
 		}
 	}
 
@@ -85,7 +88,7 @@ func NewAppOrigins(origins []string, customSchemes ...string) (AppOrigins, error
 // checkAppOrigin applies the rules of NewAppOrigins to one entry.
 func checkAppOrigin(origin string, customSchemes []string) error {
 	bad := func(why string) error {
-		return fmt.Errorf("middleware: app origin %q %s: %w", origin, why, errInvalidOrigin)
+		return fmt.Errorf("middleware: app origin %s %s: %w", configtext.Quote(origin), why, errInvalidOrigin)
 	}
 	if strings.Contains(origin, "*") {
 		return bad("holds a wildcard, list exact origins")

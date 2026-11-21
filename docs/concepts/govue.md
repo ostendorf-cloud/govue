@@ -623,7 +623,10 @@ The design of the library and the reasoning behind it.
   `safari-web-extension`, `view-source`, `vbscript`, `intent`, `content` and a few more). Nothing
   is normalised: a spelling that differs
   from what a browser sends is an error, so the list an operator reads is the list that matches.
-  Every error names the offending value.
+  Every error names the offending value, unless it holds an @, a ? or a #: that is where a URL
+  carries userinfo or a token, and a startup error reaches CI and startup logs. The same rule
+  holds for the origins of `CORS`, `csrf`, `account`, `passkey` and `devicehttp`, whose errors
+  no longer wrap the standard library error that quotes the origin again.
 - The web CORS list is checked structurally. `NewAppCORS(origins, web)` takes the web `CORS` and
   fails construction when an app origin is on its list, naming the origin. The comparison is
   trimmed, without a trailing slash, lower case, as the web policy reads its own list.

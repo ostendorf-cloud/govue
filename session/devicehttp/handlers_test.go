@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 	"github.com/ostendorf-cloud/govue/logging"
 	"github.com/ostendorf-cloud/govue/session"
 	"github.com/ostendorf-cloud/govue/session/devicehttp"
@@ -1228,6 +1229,25 @@ func TestEveryAnswerIsNoStoreJSON(t *testing.T) {
 		if len(rec.header.Values("Set-Cookie")) != 0 {
 			t.Errorf("%s %s (%d): sets a cookie", rec.method, rec.path, rec.status)
 		}
+	}
+}
+
+// A trusted origin that may carry a credential stays out of the error, and
+// so does the error of the standard library, which quotes it.
+func TestNewHandlersKeepsACredentialOutOfTheError(t *testing.T) {
+	t.Parallel()
+
+	for _, origin := range []string{
+		"https://user:s3cr3tTOKEN@app.example.test/",
+		"https://app.example.test/?token=s3cr3tTOKEN",
+		"https://user:s3cr3tTOKEN@app example.test\x7f",
+	} {
+		t.Run(origin, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := devicehttp.NewHandlers(devicehttp.HandlerConfig{IssueTrustedOrigins: []string{origin}})
+			configtexttest.AssertHidden(t, err, "s3cr3tTOKEN", "trusted origin")
+		})
 	}
 }
 

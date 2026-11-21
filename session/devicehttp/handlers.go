@@ -16,6 +16,7 @@ import (
 
 	"github.com/ostendorf-cloud/govue/api"
 	"github.com/ostendorf-cloud/govue/internal/bearer"
+	"github.com/ostendorf-cloud/govue/internal/configtext"
 	"github.com/ostendorf-cloud/govue/logging"
 	"github.com/ostendorf-cloud/govue/session"
 )
@@ -214,8 +215,11 @@ func NewHandlers(cfg HandlerConfig) (*Handlers, error) {
 	}
 	issueCross := http.NewCrossOriginProtection()
 	for _, origin := range cfg.IssueTrustedOrigins {
-		if err := issueCross.AddTrustedOrigin(origin); err != nil {
-			problems = append(problems, fmt.Errorf("trusted origin %q: %w", origin, err))
+		// The error of AddTrustedOrigin quotes the origin, and the one of
+		// url.Parse inside it quotes it again, so neither is wrapped.
+		if issueCross.AddTrustedOrigin(origin) != nil {
+			problems = append(problems, fmt.Errorf("trusted origin %s must be scheme://host[:port] "+
+				"without a path, a query or a fragment", configtext.Quote(origin)))
 		}
 	}
 	// A manager without a device store would fail every issue after the

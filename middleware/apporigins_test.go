@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/ostendorf-cloud/govue/internal/configtext"
 )
 
 func TestNewAppOriginsAccepts(t *testing.T) {
@@ -48,10 +50,12 @@ func TestNewAppOriginsRefuses(t *testing.T) {
 		{"null", []string{"null"}, nil, "null"},
 		{"a path", []string{"https://app.example.test/app"}, nil, "https://app.example.test/app"},
 		{"a trailing slash", []string{"https://app.example.test/"}, nil, "https://app.example.test/"},
-		{"a query", []string{"https://app.example.test?x=1"}, nil, "https://app.example.test?x=1"},
-		{"an empty query", []string{"https://app.example.test?"}, nil, "https://app.example.test?"},
-		{"a fragment", []string{"https://app.example.test#x"}, nil, "https://app.example.test#x"},
-		{"userinfo", []string{"https://user:pw@app.example.test"}, nil, "https://user:pw@app.example.test"},
+		// A query, a fragment and userinfo can carry a credential, so the
+		// value is not named.
+		{"a query", []string{"https://app.example.test?x=1"}, nil, configtext.Hidden},
+		{"an empty query", []string{"https://app.example.test?"}, nil, configtext.Hidden},
+		{"a fragment", []string{"https://app.example.test#x"}, nil, configtext.Hidden},
+		{"userinfo", []string{"https://user:pw@app.example.test"}, nil, configtext.Hidden},
 		{"an upper case host", []string{"https://App.Example.test"}, nil, "https://App.Example.test"},
 		{"an upper case scheme", []string{"HTTPS://app.example.test"}, nil, "HTTPS://app.example.test"},
 		{"an upper case custom scheme", []string{"Capacitor://localhost"}, []string{"capacitor"}, "Capacitor://localhost"},

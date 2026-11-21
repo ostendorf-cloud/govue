@@ -36,6 +36,7 @@ import (
 	"strings"
 
 	"github.com/ostendorf-cloud/govue/internal/bearer"
+	"github.com/ostendorf-cloud/govue/internal/configtext"
 )
 
 // HeaderName is where a fetch sends the token; FieldName is where a form does.
@@ -157,12 +158,19 @@ func New(expected Expected) (*Protector, error) {
 // host. An API reached from its own origin only needs none. It returns an
 // error for anything that is not a scheme and host without a trailing slash,
 // so a typo cannot silently widen what is trusted.
+//
+// The error names the origin, unless it holds an @, a ? or a #, where a URL
+// carries a credential. It does not wrap the error of the standard library,
+// which quotes the origin again.
 func (p *Protector) TrustOrigin(origin string) error {
-	if err := p.cross.AddTrustedOrigin(origin); err != nil {
-		return fmt.Errorf("csrf: trusted origin %q: %w", origin, err)
+	if p.cross.AddTrustedOrigin(origin) != nil {
+		return fmt.Errorf("csrf: trusted origin %s %s", configtext.Quote(origin), originForm)
 	}
 	return nil
 }
+
+// originForm is the expected form of a trusted origin, for an error.
+const originForm = "must be scheme://host[:port] without a path, a query or a fragment"
 
 // TrustOriginOnRoute trusts the given origins for requests with exactly this
 // method and exactly this path, and for no other route. It is for the one
@@ -214,8 +222,8 @@ func (p *Protector) TrustOriginOnRoute(method, path string, origins []string) er
 	}
 	cross := http.NewCrossOriginProtection()
 	for _, origin := range origins {
-		if err := cross.AddTrustedOrigin(origin); err != nil {
-			return fmt.Errorf("csrf: trust origin on route: %s: origin %q: %w", key, origin, err)
+		if cross.AddTrustedOrigin(origin) != nil {
+			return fmt.Errorf("csrf: trust origin on route: %s: origin %s %s", key, configtext.Quote(origin), originForm)
 		}
 	}
 	if p.routes == nil {
