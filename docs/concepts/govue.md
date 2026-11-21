@@ -430,9 +430,10 @@ The design of the library and the reasoning behind it.
   2026-11-18. See "The bearer client of a native app".
 - The Capacitor defaults were verified on 2026-11-18 against the Capacitor and Ionic pages. The
   exact `Origin` header, `Sec-Fetch-Site` and the native HTTP plugin were not. See "App origins".
-- No `Access-Control-Expose-Headers`, so a page cannot read `Retry-After`. No
+- `AppCORS` sends `Access-Control-Expose-Headers` only when `AppCORSConfig.ExposeHeaders` names a
+  header, so by default a page of an app origin cannot read `Retry-After`. No
   `Access-Control-Allow-Private-Network`, so Chrome can fail the request on a private network.
-  Both are undecided, see "App origins".
+  That one is undecided, see "App origins".
 - Any device token lists and revokes every device of its account. See "Token handlers".
 - The memory stores sign every app out on a restart. See "Device sessions for native apps".
 - The association files were not tried on an iOS or Android device. See "App association files".
@@ -662,12 +663,17 @@ The design of the library and the reasoning behind it.
   Access-Control-Request-Headers`. A response to a real request from an app origin carries the
   matched origin and `Vary: Origin`. No response carries `Access-Control-Allow-Credentials`: a
   bearer token is not a cookie, so credentials mode stays off. An origin that is not listed gets
-  `Vary: Origin` and no `Access-Control-` header, and is never echoed. No `Expose-Headers` is
-  sent, so a page reads the CORS safelisted response headers only. `CORSConfig.ExposeHeaders`
-  belongs to the web policy and does not reach an app origin, and `AppCORS` has no configuration
-  of its own, so exposing a header waits for an app that needs it. An app that needs `Retry-After`
-  of a 429 or the request id has to ask for it, and that is not decided here.
-  `Access-Control-Allow-Private-Network` is not sent either: a preflight with
+  `Vary: Origin` and no `Access-Control-` header, and is never echoed. `NewAppCORS` sends no
+  `Expose-Headers`, so a page reads the CORS safelisted response headers only.
+  `CORSConfig.ExposeHeaders` belongs to the web policy and does not reach an app origin. An app
+  that needs `Retry-After` of a 429 or the request id builds the handler with
+  `NewAppCORSWithConfig(origins, web, AppCORSConfig{ExposeHeaders: ...})`. The names follow the
+  rules of `CORSConfig.ExposeHeaders`: canonical form, deduplicated, in the given order, and an
+  empty name, a name that is not an HTTP token and `*` are refused at construction with a fixed
+  error text that never carries the value. The real response of a listed app origin carries
+  `Access-Control-Expose-Headers`. A preflight and an origin that is not listed get none, and
+  `Vary` is unchanged. The default is empty and sends nothing.
+  `Access-Control-Allow-Private-Network` is not sent: a preflight with
   `Access-Control-Request-Private-Network` gets the answer without it, and a browser that
   enforces Private Network Access, such as Chrome, fails the request when the API is on a private
   network. That is not decided here either.
@@ -693,9 +699,11 @@ The design of the library and the reasoning behind it.
 - `example/` turns the mode on with `APP_ORIGINS` and `APP_SCHEMES`, both empty by default. A
   custom scheme is an opt in, one scheme at a time: `APP_ORIGINS=capacitor://localhost` needs
   `APP_SCHEMES=capacitor`. The list goes to `Issue` as `IssueTrustedOrigins`, to the issue route
-  of the protector and to `NewAppCORS`, and to nothing else. `ALLOWED_ORIGINS` stays the web
-  list. `newApp` passes it to `RejectOverlap` as the trusted origins, because the example feeds
-  the same list to `TrustOrigin`, and `NewAppCORS` checks it against the web CORS policy.
+  of the protector and to `NewAppCORSWithConfig`, and to nothing else. `ALLOWED_ORIGINS` stays
+  the web list. `newApp` passes it to `RejectOverlap` as the trusted origins, because the example
+  feeds the same list to `TrustOrigin`, and `NewAppCORSWithConfig` checks it against the web CORS
+  policy. The example exposes `Retry-After` through `AppCORSConfig.ExposeHeaders`, so a page of an
+  app origin reads the wait of a 429.
   Startup fails for an overlap, a wildcard, `null`, a path, a duplicate, `http`, a bad port, a
   Unicode host, a custom scheme that is not opted in, and `APP_SCHEMES` without `APP_ORIGINS`.
 - A cookie request from an app origin stays a cross site request. The protector refuses it on
@@ -2735,9 +2743,9 @@ try {
   own and reports what the interface made awkward.
 - Whether a device token may list and revoke only its own device. Today it can list every device
   of the account and revoke any of them. The owner decides.
-- Whether `AppCORS` sends `Access-Control-Expose-Headers`, for `Retry-After` and the request id,
-  and `Access-Control-Allow-Private-Network`. Neither is sent. The owner decides when a product
-  needs one.
+- Whether `AppCORS` sends `Access-Control-Allow-Private-Network`. It is not sent. The owner
+  decides when a product needs it. `Access-Control-Expose-Headers` is a setting, see "App
+  origins".
 - What a Capacitor webview sends: the exact `Origin`, `Sec-Fetch-Site`, and whether the native
   HTTP plugin bypasses CORS. A product checks its own build and reports, see "App origins".
 - Whether the app origin belongs in the passkey relying party's allowed origins, and whether

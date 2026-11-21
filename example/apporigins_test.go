@@ -432,6 +432,37 @@ func TestAppOriginsStartupErrors(t *testing.T) {
 	}
 }
 
+// A page of an app origin reads the wait of a 429 only when Retry-After is
+// exposed. The request goes through the full chain.
+func TestAppRoutesExposeRetryAfterOnA429(t *testing.T) {
+	t.Parallel()
+	a, _ := newAppModeApp(t, 1, appEnv())
+	do := func(origin string) *httptest.ResponseRecorder {
+		return a.serve(t, accountCall{method: http.MethodGet, path: "/notes", site: "cross-site", origin: origin})
+	}
+
+	if w := do(iosOrigin); w.Code == http.StatusTooManyRequests {
+		t.Fatalf("first request = %d, want no 429", w.Code)
+	}
+	w := do(iosOrigin)
+	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" {
+		t.Fatalf("second request = %d, Retry-After %q, want 429 with one", w.Code, w.Header().Get("Retry-After"))
+	}
+	// The snapshot at WriteHeader, not the live map: a header set after the
+	// status went out never reaches a client.
+	if got := w.Result().Header.Get("Access-Control-Expose-Headers"); got != "Retry-After" {
+		t.Errorf("expose headers = %q, want Retry-After", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != iosOrigin {
+		t.Errorf("allow origin = %q, want %q", got, iosOrigin)
+	}
+
+	// A preflight is not rate limited and carries no expose header.
+	if p := preflight(t, a, iosOrigin, http.MethodGet, "/notes", nil); p.Header().Get("Access-Control-Expose-Headers") != "" {
+		t.Errorf("preflight carries expose headers: %v", p.Header())
+	}
+}
+
 // The preflight of an app origin carries nothing a rate limit could count: it
 // stays 204 after the burst is spent by real requests.
 func TestAppOriginPreflightIsNotRateLimited(t *testing.T) {

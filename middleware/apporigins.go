@@ -228,26 +228,48 @@ const (
 // tried. It sends no Access-Control header of its own for an origin that is not
 // listed, and never echoes one.
 //
-// Not sent: Access-Control-Expose-Headers. The app policy is fixed and has no
-// configuration, and [CORSConfig.ExposeHeaders] belongs to the web policy and
-// reaches web origins only, so a page of an app origin reads the CORS
-// safelisted response headers only and cannot read Retry-After. The policy has
-// no configuration of its own, so exposing a header waits for an app that
-// needs it. Access-Control-Allow-
-// Private-Network is not sent either: a preflight with
+// Access-Control-Expose-Headers is sent only when [AppCORSConfig.ExposeHeaders]
+// names a header, through [NewAppCORSWithConfig], and then on the real response
+// of a listed app origin: never on a preflight and never to an origin that is
+// not listed. [NewAppCORS] sets nothing, so a page of an app origin reads the
+// CORS safelisted response headers only and cannot read Retry-After.
+// [CORSConfig.ExposeHeaders] belongs to the web policy and reaches web origins
+// only. Access-Control-Allow-
+// Private-Network is not sent: a preflight with
 // Access-Control-Request-Private-Network gets the answer without it, and a
 // browser that enforces Private Network Access, such as Chrome, then fails the
 // request when the API is on a private network. That is not decided here.
 type AppCORS struct {
 	origins AppOrigins
 	web     *CORS
+	expose  string
+}
+
+// AppCORSConfig holds the optional settings of the app policy. The zero value
+// is the policy [NewAppCORS] builds.
+type AppCORSConfig struct {
+	// ExposeHeaders lists response headers a page of an app origin may read,
+	// sent as Access-Control-Expose-Headers on the real response of a listed
+	// app origin: not on a preflight answer and never to an origin that is not
+	// listed. The rules are those of [CORSConfig.ExposeHeaders]: canonical
+	// names, deduplicated, in the order given, and an empty name, a name that
+	// is not an HTTP token and "*" are refused with a fixed error text that
+	// never carries the value. The default is empty and sends no header.
+	ExposeHeaders []string
 }
 
 // NewAppCORS returns the CORS handler for origins and the web policy web, which
 // may be nil when the deployment has no web origin. It returns an error for the
 // zero AppOrigins and for an app origin that is also an origin of web, naming
-// the origin. The comparison is the one of [AppOrigins.RejectOverlap].
+// the origin. The comparison is the one of [AppOrigins.RejectOverlap]. It
+// exposes no response header, see [NewAppCORSWithConfig].
 func NewAppCORS(origins AppOrigins, web *CORS) (*AppCORS, error) {
+	return NewAppCORSWithConfig(origins, web, AppCORSConfig{})
+}
+
+// NewAppCORSWithConfig is [NewAppCORS] with the settings of cfg. It returns the
+// errors of NewAppCORS and the error of an invalid cfg.ExposeHeaders.
+func NewAppCORSWithConfig(origins AppOrigins, web *CORS, cfg AppCORSConfig) (*AppCORS, error) {
 	if len(origins.origins) == 0 {
 		return nil, errors.New("middleware: the app CORS handler needs at least one app origin")
 	}
@@ -257,7 +279,13 @@ func NewAppCORS(origins AppOrigins, web *CORS) (*AppCORS, error) {
 		}
 	}
 
-	return &AppCORS{origins: origins, web: web}, nil
+	expose, err := exposeHeaderList(cfg.ExposeHeaders)
+	if err != nil {
+		// The prefix tells AppCORSConfig from CORSConfig. The text stays fixed.
+		return nil, fmt.Errorf("middleware: app CORS: %w", err)
+	}
+
+	return &AppCORS{origins: origins, web: web, expose: expose}, nil
 }
 
 // Middleware answers a preflight of an app origin and adds the CORS headers to
@@ -301,6 +329,12 @@ func (c *AppCORS) Middleware(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 
 			return
+		}
+
+		// Only the real response carries the exposed names: the preflight
+		// above is answered without them.
+		if c.expose != "" {
+			h.Set("Access-Control-Expose-Headers", c.expose)
 		}
 
 		next.ServeHTTP(w, r)
