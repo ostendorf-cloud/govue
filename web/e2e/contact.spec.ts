@@ -43,10 +43,16 @@ function watch(page: Page): Seen {
   return seen
 }
 
+// Role locators with an anchored name: a label text match is a substring
+// match, and the consent label contains the word "message".
+const nameField = (page: Page) => page.getByRole('textbox', { name: /^Name\b/ })
+const emailField = (page: Page) => page.getByRole('textbox', { name: /^Email address\b/ })
+const messageField = (page: Page) => page.getByRole('textbox', { name: /^Message\b/ })
+
 async function fill(page: Page, email = 'alice@example.com') {
-  await page.getByLabel('Name').first().fill('Alice')
-  await page.getByLabel('Email address').fill(email)
-  await page.getByLabel('Message').fill('Hello from the browser')
+  await nameField(page).fill('Alice')
+  await emailField(page).fill(email)
+  await messageField(page).fill('Hello from the browser')
   await page.getByRole('checkbox').check()
 }
 
@@ -73,7 +79,7 @@ test('loads the worker file from the same origin as a module worker', async ({ p
   page.on('worker', (worker) => workers.push(worker.url()))
   await page.goto('/contact.html')
 
-  await page.getByLabel('Name').first().focus()
+  await nameField(page).focus()
 
   await expect.poll(() => workers.length, { timeout: 30_000 }).toBeGreaterThan(0)
   expect(new URL(workers[0]).origin).toBe(ORIGIN)
@@ -86,7 +92,7 @@ test('puts a field code of the server on its field and moves focus there', async
 
   await page.getByRole('button', { name: 'Send message' }).click()
 
-  const email = page.getByLabel('Email address')
+  const email = emailField(page)
   await expect(email).toHaveAttribute('aria-invalid', 'true', { timeout: 60_000 })
   await expect(email).toHaveAccessibleDescription('This is not valid.')
   await expect(email).toBeFocused()
@@ -124,7 +130,7 @@ test('keeps the honeypot out of the tab order and out of display none', async ({
   const trap = page.locator('input[name="website"]')
   expect(await trap.evaluate((el) => getComputedStyle(el).display)).not.toBe('none')
   await expect(trap).toHaveAttribute('tabindex', '-1')
-  await page.getByLabel('Name').first().focus()
+  await nameField(page).focus()
   for (let i = 0; i < 6; i++) {
     await page.keyboard.press('Tab')
     await expect(trap).not.toBeFocused()
