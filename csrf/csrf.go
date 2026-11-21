@@ -172,9 +172,11 @@ func (p *Protector) TrustOrigin(origin string) error {
 // trustable adds origin to cross and reports whether it was accepted. An
 // origin with userinfo is refused before the standard library sees it: an at
 // sign is never part of a scheme, a host and a port, and the user and
-// password it introduces are a credential that must not be kept.
+// password it introduces are a credential that must not be kept. An empty
+// query or fragment (a bare ? or #) is refused too: the standard library
+// accepts it, and it can never match an Origin header.
 func trustable(cross *http.CrossOriginProtection, origin string) bool {
-	if strings.Contains(origin, "@") {
+	if strings.ContainsAny(origin, "@?#") {
 		return false
 	}
 	return cross.AddTrustedOrigin(origin) == nil

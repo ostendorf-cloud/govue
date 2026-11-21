@@ -358,7 +358,12 @@ func TestProtectorTrustOrigin(t *testing.T) {
 		}
 	})
 
-	for _, origin := range []string{"not an origin", "https://app.example.test/", "app.example.test", "*", ""} {
+	// A bare ? or # is an empty query or fragment, which the standard library
+	// accepts and which never matches an Origin header.
+	for _, origin := range []string{
+		"not an origin", "https://app.example.test/", "app.example.test", "*", "",
+		"https://app.example.test?", "https://app.example.test#", "https://app.example.test:8443?",
+	} {
 		t.Run("TrustOrigin refuses "+origin, func(t *testing.T) {
 			t.Parallel()
 
@@ -368,6 +373,9 @@ func TestProtectorTrustOrigin(t *testing.T) {
 			}
 			if err := protector.TrustOrigin(origin); err == nil {
 				t.Errorf("TrustOrigin(%q) = nil, want an error", origin)
+			}
+			if err := protector.TrustOriginOnRoute(http.MethodPost, "/device/issue", []string{origin}); err == nil {
+				t.Errorf("TrustOriginOnRoute(%q) = nil, want an error", origin)
 			}
 		})
 	}
