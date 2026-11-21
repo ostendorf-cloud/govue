@@ -113,21 +113,30 @@ func newRedirector(cfg Config) (*redirector, error) {
 		errs = append(errs, fmt.Errorf("%w: at most %d languages", ErrConfig, maxLanguages))
 		langs = langs[:maxLanguages]
 	}
+	// A refused value is never shown: a startup error reaches CI and startup
+	// logs. A code that passed the pattern is an accepted value and may be
+	// named, and so may the default, because the error lists every language
+	// it may be.
 	seen := make(map[string]bool, len(langs))
-	for _, code := range langs {
+	var accepted []string
+	for i, code := range langs {
 		switch {
 		case !codePattern.MatchString(code):
-			errs = append(errs, fmt.Errorf("%w: language code %q must be two or three lowercase letters", ErrConfig, code))
+			errs = append(errs, fmt.Errorf("%w: language code %d must be two or three lowercase letters "+
+				"(the value is not shown)", ErrConfig, i+1))
+			continue
 		case seen[code]:
 			errs = append(errs, fmt.Errorf("%w: language code %q is listed twice", ErrConfig, code))
+		default:
+			accepted = append(accepted, code)
 		}
 		seen[code] = true
 	}
 	if !seen[def] {
-		errs = append(errs, fmt.Errorf("%w: default language %q is not in the language list", ErrConfig, def))
+		errs = append(errs, fmt.Errorf("%w: default language %q is not one of %q", ErrConfig, def, accepted))
 	}
 	if !isToken(cookie) {
-		errs = append(errs, fmt.Errorf("%w: cookie name %q is not an HTTP token", ErrConfig, cookie))
+		errs = append(errs, fmt.Errorf("%w: cookie name is not an HTTP token (the value is not shown)", ErrConfig))
 	}
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
