@@ -172,6 +172,28 @@ func TestInt_accumulatesEveryProblem(t *testing.T) {
 	}
 }
 
+// A number or a duration outside its range is a refused value and is never
+// shown, neither as written nor as Go prints it: a numeric secret pasted into
+// the wrong variable would otherwise reach the log. The bounds are shown.
+func TestRangeErrorsKeepTheValueOut(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Int", func(t *testing.T) {
+		t.Parallel()
+		l := New(env(map[string]string{"PORT": "987654321"}))
+		l.Int("PORT", 4, 1, 65535)
+		configtexttest.AssertHidden(t, l.Err(), "987654321", "PORT: must be between 1 and 65535")
+	})
+	t.Run("Duration", func(t *testing.T) {
+		t.Parallel()
+		l := New(env(map[string]string{"TIMEOUT": "98765h"}))
+		l.Duration("TIMEOUT", time.Minute, time.Second, time.Hour)
+		err := l.Err()
+		configtexttest.AssertHidden(t, err, "98765h", "TIMEOUT: must be between 1s and 1h0m0s")
+		configtexttest.AssertHidden(t, err, "98765h0m0s", "TIMEOUT")
+	})
+}
+
 func TestDuration(t *testing.T) {
 	t.Parallel()
 

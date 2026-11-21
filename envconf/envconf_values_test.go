@@ -84,7 +84,7 @@ func TestParseErrorsKeepTheRawValueOut(t *testing.T) {
 		}
 	})
 
-	t.Run("a range error prints a parsed number, never the text", func(t *testing.T) {
+	t.Run("a range error names the bounds, never the value", func(t *testing.T) {
 		t.Parallel()
 
 		l := New(env(map[string]string{"LIMIT": "500", "TTL": "1ms"}))
@@ -94,9 +94,14 @@ func TestParseErrorsKeepTheRawValueOut(t *testing.T) {
 		if err == nil {
 			t.Fatal("out of range values gave no error")
 		}
-		for _, want := range []string{"LIMIT", "TTL", "500", "1ms"} {
+		for _, want := range []string{"LIMIT: must be between 1 and 100", "TTL: must be between 1s and 1h0m0s"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("Err() = %v, does not mention %s", err, want)
+			}
+		}
+		for _, value := range []string{"500", "1ms"} {
+			if strings.Contains(err.Error(), value) {
+				t.Errorf("Err() = %v, shows the value %s", err, value)
 			}
 		}
 	})

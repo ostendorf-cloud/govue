@@ -104,7 +104,9 @@ func (l *Loader) Int(key string, fallback, minimum, maximum int) int {
 		return fallback
 	}
 	if value < minimum || value > maximum {
-		l.fail(key, "must be between %d and %d, got %d", minimum, maximum, value)
+		// A refused value is never shown: a numeric secret pasted into the
+		// wrong variable would otherwise reach CI and startup logs.
+		l.fail(key, "must be between %d and %d (the value is not shown)", minimum, maximum)
 		return fallback
 	}
 	return value
@@ -125,7 +127,7 @@ func (l *Loader) Duration(key string, fallback, minimum, maximum time.Duration) 
 		return fallback
 	}
 	if value < minimum || value > maximum {
-		l.fail(key, "must be between %s and %s, got %s", minimum, maximum, value)
+		l.fail(key, "must be between %s and %s (the value is not shown)", minimum, maximum)
 		return fallback
 	}
 	return value
