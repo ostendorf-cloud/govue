@@ -2564,11 +2564,8 @@ try {
   3. `Content-Type: application/json` is required. `api.DecodeLimit` alone accepts a missing
      header, so the handler checks first. The body cap is 64 KiB, unknown fields and a second
      JSON value are refused. A decode failure answers one fixed text and never echoes a field.
-  4. The honeypot field `website`. A non empty value answers the same 200 as a success and does
-     nothing else. It comes before the client limit, so it costs a bot nothing. It is not
-     invisible to a bot that tests: a filled `website` answers 200 while the same invalid
-     request without it answers 400, and the honeypot answers faster than a real send. The
-     answer is the same bytes and headers as a success, and the behaviour is not changed.
+  4. The honeypot field `website`: a hidden field that a person never fills. A filled value is
+     treated as a bot and dropped.
   5. The per client limit, 5 per 10 minutes, keyed by `clientip` with trusted proxies only.
      Every attempt counts, a refused one included.
   6. Validation with stable codes. Every failing field is reported as `{field: code}` under
