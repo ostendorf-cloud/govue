@@ -63,6 +63,8 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -72,6 +74,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -433,13 +436,30 @@ var (
 	errTooManyRedirects = errors.New("stopped after 10 redirects")
 	errDowngrade        = errors.New("a redirect left https")
 	errTimeout          = errors.New("the request timed out")
+	errDNS              = errors.New("the host does not resolve (the name is not shown)")
+	errTLS              = errors.New("TLS verification failed (the certificate is not shown)")
 	errRequest          = errors.New("the request failed (the URL and the cause are not shown)")
 )
 
 // requestFailure keeps the kind of a failed request and drops the rest: the
-// context errors, a timeout, a refused redirect or a plain failure.
+// context errors, a refused redirect, a name that does not resolve, a
+// certificate that does not verify, the errno of a failed connect, a timeout
+// or a plain failure.
+//
+// A *net.DNSError names the host and a certificate error names the hosts of
+// the certificate, so neither is wrapped. An *os.SyscallError carries the
+// system call and the errno only, so it stays wrapped and
+// errors.Is(err, syscall.ECONNREFUSED) holds.
 func requestFailure(err error) error {
-	var netErr net.Error
+	var (
+		netErr     net.Error
+		dnsErr     *net.DNSError
+		sysErr     *os.SyscallError
+		verifyErr  *tls.CertificateVerificationError
+		unknownCA  x509.UnknownAuthorityError
+		hostErr    x509.HostnameError
+		invalidErr x509.CertificateInvalidError
+	)
 	switch {
 	case errors.Is(err, context.Canceled):
 		return fmt.Errorf("request: %w", context.Canceled)
@@ -449,6 +469,12 @@ func requestFailure(err error) error {
 		return fmt.Errorf("request: %w", errTooManyRedirects)
 	case errors.Is(err, errDowngrade):
 		return fmt.Errorf("request: %w", errDowngrade)
+	case errors.As(err, &dnsErr):
+		return fmt.Errorf("request: %w", errDNS)
+	case errors.As(err, &verifyErr), errors.As(err, &unknownCA), errors.As(err, &hostErr), errors.As(err, &invalidErr):
+		return fmt.Errorf("request: %w", errTLS)
+	case errors.As(err, &sysErr):
+		return fmt.Errorf("request (the URL is not shown): %w", sysErr)
 	case errors.As(err, &netErr) && netErr.Timeout():
 		return fmt.Errorf("request: %w", errTimeout)
 	default:
