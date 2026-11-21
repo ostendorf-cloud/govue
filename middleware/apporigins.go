@@ -67,11 +67,11 @@ func NewAppOrigins(origins []string, customSchemes ...string) (AppOrigins, error
 		return AppOrigins{}, errors.New("middleware: at least one app origin is required")
 	}
 	for i, scheme := range customSchemes {
-		// A reserved scheme equals a constant of this package, so naming it
-		// shows nothing the operator wrote beyond a public word.
+		// A refused value is never shown, a reserved scheme included: the
+		// error names the rule, as for every other refused entry.
 		if slices.Contains(reservedAppSchemes, scheme) {
-			return AppOrigins{}, fmt.Errorf("middleware: app scheme %d is %q, which a browser handles itself: %w",
-				i+1, scheme, errInvalidOrigin)
+			return AppOrigins{}, fmt.Errorf("middleware: app scheme %d is one a browser handles itself, "+
+				"such as a web or an extension scheme (the value is not shown): %w", i+1, errInvalidOrigin)
 		}
 		if !validCustomScheme(scheme) {
 			return AppOrigins{}, fmt.Errorf("middleware: app scheme %d must be a lower case URL scheme "+
