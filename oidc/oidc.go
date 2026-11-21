@@ -469,6 +469,10 @@ func requestFailure(err error) error {
 		return fmt.Errorf("request: %w", errTooManyRedirects)
 	case errors.Is(err, errDowngrade):
 		return fmt.Errorf("request: %w", errDowngrade)
+	case errors.As(err, &dnsErr) && dnsErr.IsTimeout:
+		// A resolver that did not answer in time is a timeout, not a name
+		// that does not resolve.
+		return fmt.Errorf("request: %w", errTimeout)
 	case errors.As(err, &dnsErr):
 		return fmt.Errorf("request: %w", errDNS)
 	case errors.As(err, &verifyErr), errors.As(err, &unknownCA), errors.As(err, &hostErr), errors.As(err, &invalidErr):

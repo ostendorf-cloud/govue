@@ -267,6 +267,7 @@ func TestRequestFailureKinds(t *testing.T) {
 	}{
 		{"connection refused", &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}, syscall.ECONNREFUSED},
 		{"host does not resolve", &net.DNSError{Name: "s3cr3tTOKEN.example.test", Err: "no such host", IsNotFound: true}, errDNS},
+		{"resolver timeout", &net.DNSError{Name: "s3cr3tTOKEN.example.test", Err: "i/o timeout", IsTimeout: true}, errTimeout},
 		{"certificate does not verify", &tls.CertificateVerificationError{Err: x509.HostnameError{
 			Host: "s3cr3tTOKEN.example.test", Certificate: &x509.Certificate{DNSNames: []string{"s3cr3tTOKEN.other.test"}},
 		}}, errTLS},
