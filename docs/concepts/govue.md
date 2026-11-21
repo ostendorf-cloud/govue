@@ -1606,15 +1606,16 @@ The design of the library and the reasoning behind it.
   succeeded. `health` names the check on `/readyz` and never the cause. Liveness runs no check,
   so a database outage never restarts a pod that would come back to the same outage.
 - A failure to connect is reported by its kind and never by pgx' text, which quotes the host and
-  the address: `database: ping: connection refused`, and the same kinds (timeout, canceled, host
-  lookup failed, tls failed, authentication failed, server refused, failed) for the connection
+  the address: `database: ping: connection refused`, and the same kinds (connection failed,
+  timeout, canceled, host lookup failed, tls failed, authentication failed, server refused,
+  failed) for the connection
   phase of `Migrate`, `MigrateUntilReady` and the check of the applied files. The retry log line
   of `MigrateUntilReady` carries the same text. A context error and an errno stay matchable with
   `errors.Is`. The error names the component and the kind, not `DB_HOST`: the host is what must
   not appear.
 - `DB_HOST` is a host name or an IP address. `?`, `#`, `%`, `/` and the control characters are
   refused, with a rule text that names the variable and never the value, because a URL or a path
-  pasted into it would reach the connect error, `String` and a dump of the `Config`. `String`
+  pasted into it would reach `String` and a dump of the `Config`. `String`
   still prints the host for an operator, and so does `%v`. `LogValue` leaves the host out.
 - Known trade off: the ping needs a connection from the pool. When every connection is busy, it
   waits until `health`'s timeout for the check ends, and readiness fails. An overload that
