@@ -19,6 +19,10 @@ Two halves, one repository, one version:
   (`analytics`, see [Analytics](docs/concepts/govue.md#analytics)).
   Plain text mail goes out over SMTP submission with STARTTLS required and a message builder
   that refuses header injection (`mail`, see [Mail](docs/concepts/govue.md#mail)).
+  A stateless contact form sends one plain text mail per submission, with no cookie and no
+  session (`contact`, see [Contact form](docs/concepts/govue.md#contact-form)).
+  Signed, single use proof of work challenges that slow bots down, with no cookie and nothing
+  stored about a visitor (`pow`).
   Every package is importable on its own.
 - A Vue package with components and a design token contract, so an application themes itself by
   filling that contract instead of inventing a palette. It carries the account forms
