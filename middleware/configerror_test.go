@@ -10,8 +10,9 @@ import (
 	"github.com/ostendorf-cloud/govue/internal/configtext/configtexttest"
 )
 
-// An origin or a scheme that may carry a credential stays out of a startup
-// error. The sentinel stays, so a caller can still match the refusal.
+// A refused origin or scheme stays out of a startup error, whether it holds
+// a credential in a URL or is a token pasted into the wrong place. The
+// sentinel stays, so a caller can still match the refusal.
 func TestOriginErrorsKeepACredentialOut(t *testing.T) {
 	t.Parallel()
 
@@ -20,6 +21,18 @@ func TestOriginErrorsKeepACredentialOut(t *testing.T) {
 		build func() error
 		want  string
 	}{
+		{"cors origin that is a pasted token", func() error {
+			_, err := NewCORS(CORSConfig{Origins: []string{"https://app.example.test", "s3cr3tTOKEN"}})
+			return err
+		}, "middleware: origin 2"},
+		{"app origin that is a pasted token", func() error {
+			_, err := NewAppOrigins([]string{"s3cr3tTOKEN"})
+			return err
+		}, "app origin 1"},
+		{"app scheme that is a pasted token", func() error {
+			_, err := NewAppOrigins([]string{"https://localhost"}, "s3cr3tTOKEN")
+			return err
+		}, "app scheme 1"},
 		{"cors origin with userinfo", func() error {
 			_, err := NewCORS(CORSConfig{Origins: []string{"https://user:s3cr3tTOKEN@app.example.test"}})
 			return err

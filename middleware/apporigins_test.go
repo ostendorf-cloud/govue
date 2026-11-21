@@ -7,10 +7,18 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+)
 
-	"github.com/ostendorf-cloud/govue/internal/configtext"
+// The rules of NewAppOrigins as its errors name them.
+const (
+	lowerCaseRule = "must be lower case scheme://host with no path, query, fragment or userinfo"
+	schemeRule    = "has a scheme that is neither https nor a listed custom scheme"
+	portRule      = "has a port a browser never sends"
+	reservedRule  = "app scheme 1 is"
 )
 
 func TestNewAppOriginsAccepts(t *testing.T) {
@@ -40,53 +48,56 @@ func TestNewAppOriginsRefuses(t *testing.T) {
 		name    string
 		origins []string
 		schemes []string
-		named   string // the offending value the error must name
+		// rule is a part of the error that names the rule that refused the
+		// entry, and its position. A refused value is never shown.
+		rule string
+		// named is a value the error may name: an accepted duplicate, or a
+		// reserved scheme, which equals a constant of the package.
+		named string
 	}{
-		{"none", nil, nil, ""},
-		{"a wildcard", []string{"*"}, nil, "*"},
-		{"a wildcard among real ones", []string{"https://app.example.test", "*"}, nil, "*"},
-		{"a wildcard subdomain", []string{"https://*.example.test"}, nil, "https://*.example.test"},
-		{"a wildcard scheme", []string{"*://localhost"}, []string{"capacitor"}, "*://localhost"},
-		{"null", []string{"null"}, nil, "null"},
-		{"a path", []string{"https://app.example.test/app"}, nil, "https://app.example.test/app"},
-		{"a trailing slash", []string{"https://app.example.test/"}, nil, "https://app.example.test/"},
-		// A query, a fragment and userinfo can carry a credential, so the
-		// value is not named.
-		{"a query", []string{"https://app.example.test?x=1"}, nil, configtext.Hidden},
-		{"an empty query", []string{"https://app.example.test?"}, nil, configtext.Hidden},
-		{"a fragment", []string{"https://app.example.test#x"}, nil, configtext.Hidden},
-		{"userinfo", []string{"https://user:pw@app.example.test"}, nil, configtext.Hidden},
-		{"an upper case host", []string{"https://App.Example.test"}, nil, "https://App.Example.test"},
-		{"an upper case scheme", []string{"HTTPS://app.example.test"}, nil, "HTTPS://app.example.test"},
-		{"an upper case custom scheme", []string{"Capacitor://localhost"}, []string{"capacitor"}, "Capacitor://localhost"},
-		{"surrounding space", []string{" https://app.example.test"}, nil, " https://app.example.test"},
-		{"no scheme", []string{"app.example.test"}, nil, "app.example.test"},
-		{"no host", []string{"https://"}, nil, "https://"},
-		{"a port without a host", []string{"https://:8443"}, nil, "https://:8443"},
-		{"not a URL", []string{"https://%zz"}, nil, "https://%zz"},
-		{"http", []string{"http://localhost"}, nil, "http://localhost"},
-		{"http even when listed as custom", []string{"http://localhost"}, []string{"http"}, "http"},
-		{"a custom scheme that is not allowed", []string{"capacitor://localhost"}, nil, "capacitor://localhost"},
-		{"another custom scheme than the allowed one", []string{"ionic://localhost"}, []string{"capacitor"}, "ionic://localhost"},
-		{"a reserved custom scheme", []string{"file://localhost"}, []string{"file"}, "file"},
-		{"javascript as custom scheme", []string{"javascript://localhost"}, []string{"javascript"}, "javascript"},
-		{"an upper case allowed scheme", []string{"capacitor://localhost"}, []string{"Capacitor"}, "Capacitor"},
-		{"an empty allowed scheme", []string{"https://app.example.test"}, []string{""}, `""`},
-		{"an allowed scheme with a colon", []string{"https://app.example.test"}, []string{"capacitor:"}, "capacitor:"},
-		{"a duplicate", []string{"https://app.example.test", "https://app.example.test"}, nil, "https://app.example.test"},
-		{"a duplicate custom origin", []string{"capacitor://localhost", "capacitor://localhost"}, []string{"capacitor"}, "capacitor://localhost"},
-		{"an empty port", []string{"https://localhost:"}, nil, "https://localhost:"},
-		{"port zero", []string{"https://localhost:0"}, nil, "https://localhost:0"},
-		{"port 65536", []string{"https://localhost:65536"}, nil, "https://localhost:65536"},
-		{"a huge port", []string{"https://localhost:99999999999"}, nil, "https://localhost:99999999999"},
-		{"a port with a leading zero", []string{"https://localhost:08443"}, nil, "https://localhost:08443"},
-		{"the default https port", []string{"https://localhost:443"}, nil, "https://localhost:443"},
-		{"a port that is not a number", []string{"https://localhost:abc"}, nil, "https://localhost:abc"},
-		{"a negative port", []string{"https://localhost:-1"}, nil, "https://localhost:-1"},
-		{"a custom scheme with an empty port", []string{"capacitor://localhost:"}, []string{"capacitor"}, "capacitor://localhost:"},
-		{"a custom scheme with port zero", []string{"capacitor://localhost:0"}, []string{"capacitor"}, "capacitor://localhost:0"},
-		{"a Cyrillic lookalike host", []string{"https://аpple.com"}, nil, "not ASCII"},
-		{"a Unicode host in an allowed scheme", []string{"capacitor://löcalhost"}, []string{"capacitor"}, "not ASCII"},
+		{"none", nil, nil, "at least one app origin", ""},
+		{"a wildcard", []string{"*"}, nil, "app origin 1 holds a wildcard", ""},
+		{"a wildcard among real ones", []string{"https://app.example.test", "*"}, nil, "app origin 2 holds a wildcard", ""},
+		{"a wildcard subdomain", []string{"https://*.example.test"}, nil, "holds a wildcard", ""},
+		{"a wildcard scheme", []string{"*://localhost"}, []string{"capacitor"}, "holds a wildcard", ""},
+		{"null", []string{"null"}, nil, "is the null origin", ""},
+		{"a path", []string{"https://app.example.test/app"}, nil, lowerCaseRule, ""},
+		{"a trailing slash", []string{"https://app.example.test/"}, nil, lowerCaseRule, ""},
+		{"a query", []string{"https://app.example.test?x=1"}, nil, lowerCaseRule, ""},
+		{"an empty query", []string{"https://app.example.test?"}, nil, lowerCaseRule, ""},
+		{"a fragment", []string{"https://app.example.test#x"}, nil, lowerCaseRule, ""},
+		{"userinfo", []string{"https://user:pw@app.example.test"}, nil, lowerCaseRule, ""},
+		{"an upper case host", []string{"https://App.Example.test"}, nil, lowerCaseRule, ""},
+		{"an upper case scheme", []string{"HTTPS://app.example.test"}, nil, lowerCaseRule, ""},
+		{"an upper case custom scheme", []string{"Capacitor://localhost"}, []string{"capacitor"}, lowerCaseRule, ""},
+		{"surrounding space", []string{" https://app.example.test"}, nil, "must be scheme://host", ""},
+		{"no scheme", []string{"app.example.test"}, nil, "must be scheme://host", ""},
+		{"no host", []string{"https://"}, nil, "must be scheme://host", ""},
+		{"a port without a host", []string{"https://:8443"}, nil, "must be scheme://host", ""},
+		{"not a URL", []string{"https://%zz"}, nil, "must be scheme://host", ""},
+		{"http", []string{"http://localhost"}, nil, schemeRule, ""},
+		{"http even when listed as custom", []string{"http://localhost"}, []string{"http"}, reservedRule, "http"},
+		{"a custom scheme that is not allowed", []string{"capacitor://localhost"}, nil, schemeRule, ""},
+		{"another custom scheme than the allowed one", []string{"ionic://localhost"}, []string{"capacitor"}, schemeRule, ""},
+		{"a reserved custom scheme", []string{"file://localhost"}, []string{"file"}, reservedRule, "file"},
+		{"javascript as custom scheme", []string{"javascript://localhost"}, []string{"javascript"}, reservedRule, "javascript"},
+		{"an upper case allowed scheme", []string{"capacitor://localhost"}, []string{"Capacitor"}, "app scheme 1 must be", ""},
+		{"an empty allowed scheme", []string{"https://app.example.test"}, []string{""}, "app scheme 1 must be", ""},
+		{"an allowed scheme with a colon", []string{"https://app.example.test"}, []string{"ionic", "capacitor:"}, "app scheme 2 must be", ""},
+		{"a duplicate", []string{"https://app.example.test", "https://app.example.test"}, nil, "is listed twice", "https://app.example.test"},
+		{"a duplicate custom origin", []string{"capacitor://localhost", "capacitor://localhost"}, []string{"capacitor"}, "is listed twice", "capacitor://localhost"},
+		{"an empty port", []string{"https://localhost:"}, nil, "has an empty port", ""},
+		{"port zero", []string{"https://localhost:0"}, nil, portRule, ""},
+		{"port 65536", []string{"https://localhost:65536"}, nil, portRule, ""},
+		{"a huge port", []string{"https://localhost:99999999999"}, nil, portRule, ""},
+		{"a port with a leading zero", []string{"https://localhost:08443"}, nil, portRule, ""},
+		{"the default https port", []string{"https://localhost:443"}, nil, "default port 443", ""},
+		{"a port that is not a number", []string{"https://localhost:abc"}, nil, "must be scheme://host", ""},
+		{"a negative port", []string{"https://localhost:-1"}, nil, "must be scheme://host", ""},
+		{"a custom scheme with an empty port", []string{"capacitor://localhost:"}, []string{"capacitor"}, "has an empty port", ""},
+		{"a custom scheme with port zero", []string{"capacitor://localhost:0"}, []string{"capacitor"}, portRule, ""},
+		{"a Cyrillic lookalike host", []string{"https://аpple.com"}, nil, "not ASCII", ""},
+		{"a Unicode host in an allowed scheme", []string{"capacitor://löcalhost"}, []string{"capacitor"}, "not ASCII", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -94,18 +105,22 @@ func TestNewAppOriginsRefuses(t *testing.T) {
 			if err == nil {
 				t.Fatalf("NewAppOrigins(%q, %q) was accepted", tc.origins, tc.schemes)
 			}
-			if tc.named != "" && !strings.Contains(err.Error(), tc.named) {
-				t.Errorf("error %q does not name %q", err, tc.named)
+			// The rule pins which check refused the entry, so a removed rule
+			// cannot hide behind another one that catches the same entry.
+			if !strings.Contains(err.Error(), tc.rule) {
+				t.Errorf("error %q does not name the rule %q", err, tc.rule)
 			}
-			// The two names of a refusal that another rule would also catch by
-			// accident, so a removed rule cannot hide behind the other.
-			if strings.Contains(tc.named, "*") && !strings.Contains(err.Error(), "wildcard") {
-				t.Errorf("error %q does not say wildcard", err)
+			if tc.named != "" && !strings.Contains(err.Error(), strconv.Quote(tc.named)) {
+				t.Errorf("error %q does not name the duplicate %q", err, tc.named)
 			}
-			if tc.named == "null" && !strings.Contains(err.Error(), "null origin") {
-				t.Errorf("error %q does not say null origin", err)
+			if tc.named == "" {
+				for _, value := range append(slices.Clone(tc.origins), tc.schemes...) {
+					if strings.Contains(err.Error(), strconv.Quote(value)) {
+						t.Errorf("error %q shows the value %q", err, value)
+					}
+				}
 			}
-			if tc.named != "" && !errors.Is(err, errInvalidOrigin) {
+			if len(tc.origins) > 0 && !errors.Is(err, errInvalidOrigin) {
 				t.Errorf("error %v is not errInvalidOrigin", err)
 			}
 		})

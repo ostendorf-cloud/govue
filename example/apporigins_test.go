@@ -378,13 +378,15 @@ func TestAppOriginsStartupErrors(t *testing.T) {
 			map[string]string{"APP_ORIGINS": androidOrigin, "ALLOWED_ORIGINS": "HTTPS://Localhost/"},
 			androidOrigin,
 		},
-		{"a wildcard", map[string]string{"APP_ORIGINS": "https://*.example.test"}, "https://*.example.test"},
-		{"null", map[string]string{"APP_ORIGINS": "null"}, "null"},
-		{"a path", map[string]string{"APP_ORIGINS": "https://app2.example.test/x"}, "https://app2.example.test/x"},
-		{"a custom scheme not opted in", map[string]string{"APP_ORIGINS": iosOrigin}, iosOrigin},
-		{"http", map[string]string{"APP_ORIGINS": "http://localhost"}, "http://localhost"},
+		// A refused value is never shown: the error names the variable, the
+		// position and the rule.
+		{"a wildcard", map[string]string{"APP_ORIGINS": "https://*.example.test"}, "APP_ORIGINS: middleware: app origin 1 holds a wildcard"},
+		{"null", map[string]string{"APP_ORIGINS": "null"}, "APP_ORIGINS: middleware: app origin 1 is the null origin"},
+		{"a path", map[string]string{"APP_ORIGINS": "https://app2.example.test/x"}, "APP_ORIGINS: middleware: app origin 1 must be lower case"},
+		{"a custom scheme not opted in", map[string]string{"APP_ORIGINS": iosOrigin}, "app origin 1 has a scheme that is neither https"},
+		{"http", map[string]string{"APP_ORIGINS": "http://localhost"}, "app origin 1 has a scheme that is neither https"},
 		{"a duplicate", map[string]string{"APP_ORIGINS": androidOrigin + "," + androidOrigin}, androidOrigin},
-		{"the default https port", map[string]string{"APP_ORIGINS": "https://app2.example.test:443"}, "https://app2.example.test:443"},
+		{"the default https port", map[string]string{"APP_ORIGINS": "https://app2.example.test:443"}, "app origin 1 names the default port 443"},
 		{"a Unicode host", map[string]string{"APP_ORIGINS": "https://аpple.com"}, "not ASCII"},
 		{"a scheme without an origin", map[string]string{"APP_SCHEMES": "capacitor"}, "APP_SCHEMES"},
 	} {

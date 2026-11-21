@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/ostendorf-cloud/govue/internal/configtext"
 )
 
 // AppOrigins is the list of origins a native app sends its requests from,
@@ -51,8 +49,12 @@ var reservedAppSchemes = []string{
 // scheme is https, or one of customSchemes. A wildcard, the
 // literal "null", http, an empty list and a duplicate are errors, and so is a
 // custom scheme that is not a lower case URL scheme or that is one of the
-// schemes a browser handles itself. Every error names the offending value,
-// unless it holds an @, a ? or a #, where a URL carries a credential.
+// schemes a browser handles itself.
+//
+// An error names a refused entry by its position, counted from 1, and the
+// rule, never by its value: a startup error reaches CI and startup logs, and
+// an entry pasted wrongly can hold a credential. A duplicate is an accepted
+// value and is named.
 //
 // A custom scheme is an opt in of one scheme with exact origins, never a
 // scheme wide rule: "capacitor" with "capacitor://localhost" lists that one
@@ -64,16 +66,22 @@ func NewAppOrigins(origins []string, customSchemes ...string) (AppOrigins, error
 	if len(origins) == 0 {
 		return AppOrigins{}, errors.New("middleware: at least one app origin is required")
 	}
-	for _, scheme := range customSchemes {
+	for i, scheme := range customSchemes {
+		// A reserved scheme equals a constant of this package, so naming it
+		// shows nothing the operator wrote beyond a public word.
+		if slices.Contains(reservedAppSchemes, scheme) {
+			return AppOrigins{}, fmt.Errorf("middleware: app scheme %d is %q, which a browser handles itself: %w",
+				i+1, scheme, errInvalidOrigin)
+		}
 		if !validCustomScheme(scheme) {
-			return AppOrigins{}, fmt.Errorf("middleware: app scheme %s must be a lower case URL scheme "+
-				"that a browser does not handle itself: %w", configtext.Quote(scheme), errInvalidOrigin)
+			return AppOrigins{}, fmt.Errorf("middleware: app scheme %d must be a lower case URL scheme "+
+				"that a browser does not handle itself (the value is not shown): %w", i+1, errInvalidOrigin)
 		}
 	}
 
 	out := make([]string, 0, len(origins))
-	for _, origin := range origins {
-		if err := checkAppOrigin(origin, customSchemes); err != nil {
+	for i, origin := range origins {
+		if err := checkAppOrigin(i+1, origin, customSchemes); err != nil {
 			return AppOrigins{}, err
 		}
 		if slices.Contains(out, origin) {
@@ -85,10 +93,11 @@ func NewAppOrigins(origins []string, customSchemes ...string) (AppOrigins, error
 	return AppOrigins{origins: out}, nil
 }
 
-// checkAppOrigin applies the rules of NewAppOrigins to one entry.
-func checkAppOrigin(origin string, customSchemes []string) error {
+// checkAppOrigin applies the rules of NewAppOrigins to one entry, the one at
+// position.
+func checkAppOrigin(position int, origin string, customSchemes []string) error {
 	bad := func(why string) error {
-		return fmt.Errorf("middleware: app origin %s %s: %w", configtext.Quote(origin), why, errInvalidOrigin)
+		return fmt.Errorf("middleware: app origin %d %s (the value is not shown): %w", position, why, errInvalidOrigin)
 	}
 	if strings.Contains(origin, "*") {
 		return bad("holds a wildcard, list exact origins")
