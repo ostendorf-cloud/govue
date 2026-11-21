@@ -25,7 +25,11 @@ const { locale } = useLanguage()
       :client="client"
       :privacy-href="`/${locale}/privacy`"
       require-consent
-      consent-label="Placeholder: replace this with the site's own consent text."
+      :consent-label="
+        locale === 'de'
+          ? 'Platzhalter: Ersetze diesen Text durch den Einwilligungstext deiner Seite.'
+          : 'Placeholder: replace this with the site\'s own consent text.'
+      "
     />
   </GovuePage>
   <GovueFooter :legal="['imprint', 'privacy', 'terms']" />

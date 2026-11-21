@@ -78,7 +78,7 @@ export function formatWait(seconds: number, t: Translate): string {
       ? t('govue.contact.wait.minute')
       : t('govue.contact.wait.minutes', { n: minutes })
   }
-  const hours = Math.round(minutes / 60)
+  const hours = Math.ceil(minutes / 60)
   return hours === 1 ? t('govue.contact.wait.hour') : t('govue.contact.wait.hours', { n: hours })
 }
 

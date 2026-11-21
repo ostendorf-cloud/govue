@@ -56,6 +56,23 @@ describe('GovueContactForm on the server', () => {
     expect(html).toContain('role="status"')
   })
 
+  it('renders an alert and no field when the consent text is missing', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const Page = defineComponent({
+      setup: () => () => h(GovueContactForm, { client: createClient(), requireConsent: true }),
+    })
+    const html = await render(Page, {
+      setup: (app) => {
+        app.use(createGovueI18n({ locale: 'en' }))
+      },
+    })
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('The contact form is not available.')
+    expect(html).not.toContain('<form')
+    expect(html).not.toContain('<input')
+    expect(html).not.toContain('<textarea')
+  })
+
   it('renders in German', async () => {
     const Page = defineComponent({
       setup: () => () => h(GovueContactForm, { client: createClient() }),

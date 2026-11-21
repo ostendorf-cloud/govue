@@ -2,7 +2,7 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { computed, nextTick, onBeforeUnmount, ref, useId, warn } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useId, warn, watchEffect } from 'vue'
 
 import type { ApiClient } from '../api/client'
 import { useForm, type FieldErrors } from '../composables/useForm'
@@ -85,20 +85,25 @@ const { t } = useGovueText()
 
 // A bearer client would send the device token to the contact routes. A
 // required consent without a text would be a checkbox with no label, or a
-// consent the visitor cannot give. Both fail closed: nothing is rendered.
-const bearer = isBearerClient(props.client)
-const consentMissing = props.requireConsent && !props.consentLabel && !slots.consent
-const blocked = bearer || consentMissing
-if (bearer) {
-  warn(
-    'GovueContactForm refuses a bearer client: it would send the device token to a public route.',
-  )
-}
-if (consentMissing) {
-  warn(
-    'GovueContactForm: requireConsent needs a consent text from the site. Set the consentLabel prop or fill the consent slot.',
-  )
-}
+// consent the visitor cannot give. Both fail closed: no field is rendered, a
+// short alert says the form is not available, and the development warning
+// names the reason. They follow the props, so a consent text that arrives
+// late unblocks the form. The slot is read in the render, which tracks it.
+const bearer = computed(() => isBearerClient(props.client))
+const consentMissing = () => props.requireConsent && !props.consentLabel && !slots.consent
+const blocked = () => bearer.value || consentMissing()
+watchEffect(() => {
+  if (bearer.value) {
+    warn(
+      'GovueContactForm refuses a bearer client: it would send the device token to a public route.',
+    )
+  }
+  if (consentMissing()) {
+    warn(
+      'GovueContactForm: requireConsent needs a consent text from the site. Set the consentLabel prop or fill the consent slot.',
+    )
+  }
+})
 
 const FIELDS = ['name', 'email', 'message', 'consent'] as const
 const headingId = useId()
@@ -224,7 +229,10 @@ async function again(): Promise<void> {
 </script>
 
 <template>
-  <section v-if="!blocked" class="flex flex-col gap-4" :aria-labelledby="headingId">
+  <p v-if="blocked()" role="alert" class="text-base text-text">
+    {{ t('govue.contact.unavailable') }}
+  </p>
+  <section v-else class="flex flex-col gap-4" :aria-labelledby="headingId">
     <component :is="titleTag" :id="headingId" class="text-xl font-semibold text-text">
       <slot name="title">{{ t('govue.contact.title') }}</slot>
     </component>

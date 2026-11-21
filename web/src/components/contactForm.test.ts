@@ -96,6 +96,7 @@ describe('the codes of the contact form', () => {
         ...Object.values(CONTACT_REFUSAL_CODES),
         ...Object.values(CONTACT_SOLVER_KEYS),
         ...Object.values(CONTACT_WAIT_CODES),
+        'govue.contact.unavailable',
         'govue.contact.wait.minute',
         'govue.contact.wait.minutes',
         'govue.contact.wait.hour',
@@ -266,6 +267,8 @@ describe('formatWait', () => {
     [300, '[govue.contact.wait.minutes{"n":5}]'],
     [3540, '[govue.contact.wait.minutes{"n":59}]'],
     [3600, '[govue.contact.wait.hour]'],
+    [3601, '[govue.contact.wait.hours{"n":2}]'],
+    [5340, '[govue.contact.wait.hours{"n":2}]'],
     [7200, '[govue.contact.wait.hours{"n":2}]'],
     [86_400, '[govue.contact.wait.hours{"n":24}]'],
   ]

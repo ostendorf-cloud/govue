@@ -153,6 +153,7 @@ const de: MessageTree = {
       success: 'Danke. Deine Nachricht wurde gesendet.',
       another: 'Weitere Nachricht schreiben',
       failure: 'Das Senden ist fehlgeschlagen.',
+      unavailable: 'Das Kontaktformular ist nicht verfügbar.',
       error: {
         required: 'Bitte fülle dieses Feld aus.',
         tooLong: 'Das ist zu lang. Erlaubt sind höchstens {max} Zeichen.',

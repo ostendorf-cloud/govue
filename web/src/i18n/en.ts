@@ -149,6 +149,7 @@ const en: MessageTree = {
       success: 'Thank you. Your message was sent.',
       another: 'Write another message',
       failure: 'Sending failed.',
+      unavailable: 'The contact form is not available.',
       error: {
         required: 'Please fill in this field.',
         tooLong: 'This is too long. At most {max} characters are allowed.',

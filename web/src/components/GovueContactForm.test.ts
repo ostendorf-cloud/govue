@@ -199,7 +199,26 @@ describe('GovueContactForm structure', () => {
     expect(screen.queryByRole('checkbox')).toBeNull()
     expect(screen.queryByRole('form')).toBeNull()
     expect(container.querySelector('input')).toBeNull()
+    expect(screen.getByRole('alert')).toHaveTextContent('The contact form is not available.')
     expect(warnSpy.mock.calls.flat().join(' ')).toContain('requireConsent needs a consent text')
+  })
+
+  it('says in German that the form is not available', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    setup({ requireConsent: true }, { locale: 'de' })
+    expect(screen.getByRole('alert')).toHaveTextContent('Das Kontaktformular ist nicht verfügbar.')
+  })
+
+  it('shows the form when the consent text arrives late', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { rerender } = setup({ requireConsent: true })
+    expect(screen.queryByRole('form')).toBeNull()
+
+    await rerender({ consentLabel: CONSENT })
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('form', { name: 'Contact' })).toBeVisible()
+    expect(screen.getByRole('checkbox', { name: CONSENT })).toBeVisible()
   })
 
   it('renders no checkbox when consent is not required, even with a text', () => {
@@ -216,6 +235,7 @@ describe('GovueContactForm structure', () => {
 
     expect(container.querySelector('form')).toBeNull()
     expect(container.querySelector('input')).toBeNull()
+    expect(screen.getByRole('alert')).toHaveTextContent('The contact form is not available.')
     expect(fetchMock).not.toHaveBeenCalled()
     expect(warnSpy.mock.calls.flat().join(' ')).toContain('bearer client')
   })
