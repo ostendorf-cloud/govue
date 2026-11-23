@@ -2279,6 +2279,7 @@ try {
   | `/<code>` and `/<code>/<page>/` | 301 to the canonical path | none | no |
   | `/assets/<hashed name>` | `assets/` | `public, max-age=31536000, immutable` | yes |
   | `/assets/<other name>` | `assets/` | `no-cache` | yes |
+  | `/assets/<name>.map` | only with `ServeSourceMaps`, else 404 | as above | yes |
   | `/favicon.svg`, the two PNG icons, `PublicFiles` | root of the build | `public, max-age=86400` | yes |
   | `/sitemap.xml` | as built | `public, max-age=3600` | yes |
   | `/robots.txt` | generated, names the sitemap | `public, max-age=3600` | yes |
@@ -2292,6 +2293,10 @@ try {
   A name that fails the rule is revalidated, which costs a request and never serves a stale
   file. The content type comes from a closed table of extensions, and a file with another
   extension, HTML included, fails startup.
+- A source map under `assets/` is skipped by default and answers 404. It publishes the original
+  sources, and Vite's `build.sourcemap: 'hidden'` writes maps a site means to keep for its error
+  tracker only. `Config.ServeSourceMaps` serves them as `application/json`, for a site that
+  wants its sources public. A map is never a `PublicFiles` entry.
 - The security headers are those of `middleware.DefaultSecurity` on every response, the 404,
   the redirects and the 405 included. `Config.Security` replaces them for a site with a reason,
   such as `HSTS = 0` over plain HTTP. A page is the same bytes on every response, so it cannot
@@ -2336,7 +2341,9 @@ try {
   - no `/<code>/imprint` or `/<code>/privacy` in the sitemap for a configured language, or a
     `/<code>/terms` in some languages only. A terms page in every language mounts `/terms` and
     `/agb`, so a site needs no flag for it.
-  - no `sitemap.xml`, or one of the shapes `example/site.go` refuses, see "Language routes".
+  - no `sitemap.xml`, one that is a symbolic link or not a regular file, or one of the shapes
+    `example/site.go` refuses, see "Language routes". A favicon file that is a link is refused
+    the same way.
   - a page or a 404 page without a head element, or one that carries icon links already.
   - a missing favicon file or `PublicFiles` entry, an invalid theme colour, an invalid language
     configuration. A refused configuration value is never quoted.
@@ -2344,8 +2351,11 @@ try {
     `.`, `_` and `-`, or an extension outside the table. A file or directory under `assets/`
     whose name starts with a dot is skipped and never served.
 - No session, no cookie, no API route, no CORS. Every method but `GET` and `HEAD` answers 405
-  with `Allow: GET, HEAD`. `/api/` answers 404 from the frontend, which is right only when the
-  Ingress sends it to the API image first.
+  with `Allow: GET, HEAD`. A bare `OPTIONS *` reaches the handler under `Run`, because
+  `httpserver` sets `DisableGeneralOptionsHandler`, and answers the 404 page with every header.
+  A site that serves `Handler` on its own `http.Server` without that field gets the empty 200
+  `net/http` writes itself, with none of the headers above. `/api/` answers 404 from the
+  frontend, which is right only when the Ingress sends it to the API image first.
 - Health and readiness live on the admin listener with the metrics, behind `Recover` and
   `RequestID` only, as in "A second listener for what the Ingress must never route". The public
   chain is the outer chain of `example/`: `Recover`, `RequestID`, the security headers, the
