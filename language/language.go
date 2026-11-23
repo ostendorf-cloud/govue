@@ -39,6 +39,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -90,6 +91,18 @@ func Redirect(cfg Config) (http.Handler, error) {
 		return nil, err
 	}
 	return rd, nil
+}
+
+// Resolve returns the language codes of c with the default first, and the
+// default, the way Redirect and HandleLegal use them: the zero value
+// resolves to de and en with de as the default. It returns an error wrapping
+// ErrConfig when c is invalid, the same error Redirect returns.
+func (c Config) Resolve() (codes []string, def string, err error) {
+	rd, err := newRedirector(c)
+	if err != nil {
+		return nil, "", err
+	}
+	return slices.Clone(rd.languages), rd.fallback, nil
 }
 
 // newRedirector validates cfg and returns the redirector both Redirect and
