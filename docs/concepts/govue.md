@@ -1971,6 +1971,18 @@ try {
 - The choice is kept in `localStorage` by default. A cookie or an account callback serves
   signed in areas that need no path prefix. A test compares the key sets and the named
   placeholders of all catalogues, so a missing key fails the build.
+- German has two registers. `de.ts` says "du", `deFormal.ts` says "Sie" with exactly the same
+  keys, and a text that addresses nobody is the same in both. `createGovueI18n({ formality:
+  'formal' })` loads the formal one under the locale `de`. The register is a site's tone, not a
+  language: a code such as `de-formal` would have shown a second German in the switch, set
+  `lang` to a tag no browser reads, needed its own routes under `/de-formal/`, its own legal
+  pages and its own stored choice. The option changes none of these. The default stays
+  informal, so no existing site changes. English has one register and is the same either way.
+  `formalCatalogues` lists the variants and is not part of `catalogues`. A test fails when a key
+  is missing in either German catalogue, when a placeholder differs, when a formal text says
+  "du" or an informal imperative, and when a text that says "du" was not changed. A site
+  installs the option in the browser and in the prerender, so both say the same. Before it a
+  site overrode each contact text that says "du" by hand.
 - The redirect at `/` and prerendering are routing and are not part of this layer.
   Prerendering is the render entry described below. The route helper is described in the next
   section.
@@ -2949,7 +2961,8 @@ try {
   5. The per client limit, 5 per 10 minutes, keyed by `clientip` with trusted proxies only.
      Every attempt counts, a refused one included.
   6. Validation with stable codes. Every failing field is reported as `{field: code}` under
-     `details`, and a value is never echoed.
+     `details`, and a value is never echoed. With `RequireConsent` a missing or false consent
+     box is `consent: required` here.
   7. Proof of work through `pow`. It runs after validation, so a typo does not burn the solution.
      The challenge is signed, bound to the site name, expires and is used once. The codes are
      `pow_required`, `pow_invalid`, `pow_expired`, `pow_too_fast`, `pow_replay` and `pow_busy`.
@@ -2966,6 +2979,21 @@ try {
   only in Reply-To, as a bare address. The name goes into the body, not into a header. The mail
   carries `Auto-Submitted: auto-generated`, no client address and no user agent. The subject and
   body are functions of the site. The defaults use a fixed subject without the name.
+- Consent. `Request.Consent` is the state of the form's consent box as the client sent it, a
+  missing key is false. `Request.Received` is the server's clock when `Submit` decoded the
+  request, without a monotonic reading. It has no JSON name, so a body that carries it is
+  refused as an unknown field. `Config.RequireConsent` refuses a missing or false box with the
+  field error `consent: required`, next to the other field errors and before the proof of work,
+  so the solution is not spent. It is off by default, and then a submission passes with or
+  without the box. `GovueContactForm` sends `consent` only with `requireConsent`, so a site sets
+  both together.
+- The consent field records a claim, never a proof. A modified client sends `true` without
+  showing a box, and nothing on the server can tell. The owner wants the record for a clean
+  trail of what the form sent, not as evidence against a tampering client. govue writes no
+  consent text and no legal wording into the mail: the default body is unchanged, and
+  `DefaultBody` is exported so a site's `Body` adds one line of its own wording from
+  `Consent` and `Received`. The example does that with a placeholder line. The consent text the
+  visitor sees is the site's as well, see the component.
 - Header injection: a CR, LF or other control character in the name or the address is a
   validation error with `invalid_chars`, never repaired. The address is checked by the mail
   builder itself, so a value that passes cannot be refused at send time. Whatever a site puts in
@@ -3016,10 +3044,12 @@ try {
 - Stays per site: the recipient and sender addresses, the subject and body text, the privacy
   text, the frontend and its worker (#198) and the translation of the codes.
 - `example/` wires the handlers outside the session and CSRF chain with a fake sender that keeps
-  the last message in memory and opens no socket. `CONTACT_POW_KEY` or `CONTACT_POW_KEY_FILE`,
-  `CONTACT_FROM` and `CONTACT_TO` configure it. The routes have a CORS handler of their own,
-  because `TrustedOrigins` comes from `ALLOWED_ORIGINS`: a cross origin page that may send mail
-  can also read the answer and does not retry into a duplicate mail. It lists the web origins
+  the last message in memory and opens no socket. It sets `RequireConsent`, because its contact
+  page shows the box, and a `Body` that adds a placeholder consent line with the receive time.
+  `CONTACT_POW_KEY` or `CONTACT_POW_KEY_FILE`, `CONTACT_FROM` and `CONTACT_TO` configure it.
+  The routes have a CORS handler of their own, because `TrustedOrigins` comes from
+  `ALLOWED_ORIGINS`: a cross origin page that may send mail can also read the answer and does
+  not retry into a duplicate mail. It lists the web origins
   only, serves GET and POST, sends no `Access-Control-Allow-Credentials`, exposes `Retry-After`
   through `ExposeHeaders` so a page reads the wait of a 429, and has explicit
   OPTIONS routes, so a preflight is answered by it and not by the catch-all. A page of another
@@ -3032,9 +3062,11 @@ try {
   timeout. The example sets 10 seconds as well, and a test pins the value and the sums.
 - Privacy facts, for the privacy text of a site. The package persists nothing. In process memory
   it holds the limiter keys, which are the IPv4 address or the IPv6 /64 of a client, up to 100000
-  keys, kept until the bucket refills, and the replay set of the proof of work. The visitor's
-  name, address and message leave the process only through the mail. A site's privacy text needs
-  to say so. This is a statement of fact, not legal advice.
+  keys, kept until the bucket refills, and the replay set of the proof of work, one hash per
+  solved challenge, dropped by the first solution checked after it expired or with the process.
+  The visitor's name, address and message, and with a site's `Body` the consent state and the
+  receive time, leave the process only through the mail. A site's privacy text needs to say so.
+  This is a statement of fact, not legal advice.
 - Deploy: behind a reverse proxy, `TRUSTED_PROXIES` (or the site's own `clientip.Resolver` in
   `Config.ClientIP`) must name the proxy. Without it every visitor shares the proxy's address and
   one bucket, which fails closed: 5 submissions per 10 minutes for the whole site.

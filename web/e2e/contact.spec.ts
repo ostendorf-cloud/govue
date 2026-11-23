@@ -68,8 +68,16 @@ test('solves the challenge in a worker, sends it and shows success', async ({ pa
   })
   await expect(page.getByRole('status')).toBeFocused()
   expect(seen.bodies).toHaveLength(1)
-  // consent stays in the browser: the server refuses an unknown field.
-  expect(Object.keys(seen.bodies[0]).sort()).toEqual(['email', 'message', 'name', 'pow', 'website'])
+  // The state of the box goes along, and the example server requires it.
+  expect(Object.keys(seen.bodies[0]).sort()).toEqual([
+    'consent',
+    'email',
+    'message',
+    'name',
+    'pow',
+    'website',
+  ])
+  expect(seen.bodies[0].consent).toBe(true)
   expect(seen.foreign).toEqual([])
   expect(await page.evaluate(() => document.cookie)).toBe('')
 })

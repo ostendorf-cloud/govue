@@ -550,6 +550,20 @@ Messages use vue-i18n syntax. A bare `|` is a plural separator, `@` starts a lin
 `{'{'}` and `{'}'}`, for example `"mail{'@'}host"`. Without it, `A | B` renders only `A`, and
 `a@b.de` fails to compile.
 
+### Formal German
+
+The German catalogue says "du". A site that addresses visitors as "Sie" passes `formality`:
+
+```ts
+createGovueI18n({ formality: 'formal' }) // default: 'informal'
+```
+
+It loads the formal German catalogue, which has the same keys, under the locale `de`. The switch
+still lists one German, `lang` stays `de` and the routes stay `/de/`. English has one register
+and does not change. Pass the option in the browser entry and in the prerender `render`
+callback, so both say the same. Your own `messages` still override single keys.
+`formalCatalogues` and `catalogueFor(code, formality)` give a script the texts of a register.
+
 ### An app that already uses vue-i18n
 
 Pass the instance, created with `legacy: false`. govue merges its catalogue into it and shares
