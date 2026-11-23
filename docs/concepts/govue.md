@@ -1916,7 +1916,13 @@ try {
   ahead of the script in the head, both still ahead of every stylesheet. The colours live in the
   tags and not in the script, so `themeboot.Hash` does not change with them and one hash covers
   every site. A site with one colour keeps one tag without a media query, which the script
-  leaves alone. Switching the mode at run time does not touch the tags, the next page load does.
+  leaves alone.
+- A change of the mode after load re-pins the tags too. Before it pins anything, the boot script
+  stores each tag's own colour in `data-govue-color`. `useTheme` calls `pinThemeColor` from
+  `web/src/composables/themeColor.ts` whenever the mode changes: light and dark give every tag
+  that mode's colour, system gives each tag its own colour back, so the browser follows the
+  system again. The boot script is inline and imports nothing, so it holds a small copy of the
+  same step, and a Vitest test runs both on the same page and compares the tags.
 
 ### The language layer
 
@@ -2357,7 +2363,8 @@ try {
   expressions. `New` refuses, by position and kind and never by value:
   - a target that is not a page of the sitemap, an alias, an asset or a file included.
   - a source that fails the path rules above, `/` itself, or holds `{`, `}` or white space, the
-    syntax of a `ServeMux` pattern.
+    syntax of a `ServeMux` pattern, or `?` or `#`, which a request carries outside its path, so
+    such a source would never match.
   - a source under `/assets/`, which would shadow a file of the build.
   - a source that is a route already: a page, its slash form, a language root, an alias, the
     sitemap, `robots.txt` or a public file. `ServeMux` finds the conflict: its panic, which
@@ -2477,8 +2484,9 @@ try {
   the one `example/` uses on the one server.
 - Shutdown. `Run` closes the client once both listeners stopped, within
   `frontend.AnalyticsCloseTimeout` (five seconds), so the queued views are sent, and joins its
-  error to the server's. A site that serves `Handler` on its own listener calls `Server.Close`
-  after that listener stopped.
+  error to the server's, on every way out, a listen that fails included. A test runs `Run` with
+  an address without a port, which fails while it is parsed, before any socket. A site that
+  serves `Handler` on its own listener calls `Server.Close` after that listener stopped.
 - Development, one origin without nginx. In production the Ingress puts the frontend and the API
   on one origin. A compose stack on a developer's machine needs the same, so the browser keeps
   its same origin rules: no CORS, `connect-src 'self'`, the session cookie host-only, the CSRF
@@ -2491,14 +2499,17 @@ try {
   - `Config.DevAPIProxy` is `http` or `https` on a loopback address, `localhost` or one label
     such as the compose service name `api`, with an optional port and path prefix, and no
     userinfo, query or fragment. A public or private network address, a dotted name and `0.0.0.0`
-    are refused, by field and kind, never by value.
+    are refused, by field and kind, never by value. So is a label a resolver may read as an IPv4
+    address: all digits, octal with a leading `0` included, or `0x` and hex digits. The macOS
+    resolver turns `167772161` and `0x0a000001` into `10.0.0.1`.
   - Only the prefix `/api/` is forwarded, after the path rules. `/api` without the slash stays a
     404, the shape of the Ingress rule. The path and the query go to the target unchanged, under
     its prefix.
   - `httputil.ReverseProxy` with `Rewrite`: the hop by hop headers and every inbound `Forwarded`,
-    `X-Forwarded-For`, `-Host`, `-Proto` and `X-Real-Ip` are dropped, and `X-Forwarded-For` is
-    set from `Config.ClientIP` alone, so a client cannot claim an address. The browser's cookies
-    and `Authorization` go along: they are the API's own, the frontend sets none.
+    `X-Forwarded-For`, `-Host`, `-Proto`, `X-Real-Ip` and `Via` are dropped, and
+    `X-Forwarded-For` is set from `Config.ClientIP` alone, so a client cannot claim an address.
+    The browser's cookies and `Authorization` go along: they are the API's own, the frontend sets
+    none.
   - A request body over one MiB (`DevAPIProxyMaxBody`) answers 413. The dial has five seconds
     and the response header thirty, and the environment's proxy settings are ignored. A failure
     answers one opaque 502 and logs the error type only.
