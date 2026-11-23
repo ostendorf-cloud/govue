@@ -251,6 +251,15 @@ func loadHTML(build fs.FS, name string, opts []themeboot.Option) (*file, error) 
 // loadSitemap reads the sitemap and every page it lists, and returns the
 // raw sitemap and the origin of its locs.
 func (s *site) loadSitemap(build fs.FS, opts []themeboot.Option) (raw []byte, origin string, err error) {
+	// The same regular file check as every other file of the build: a
+	// symbolic link named sitemap.xml is refused, not followed.
+	info, err := fs.Lstat(build, sitemapFile)
+	if err != nil {
+		return nil, "", fmt.Errorf("frontend: the build has no %s: %w", sitemapFile, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, "", fmt.Errorf("frontend: the build has no %s: not a regular file", sitemapFile)
+	}
 	f, err := build.Open(sitemapFile)
 	if err != nil {
 		return nil, "", fmt.Errorf("frontend: the build has no %s: %w", sitemapFile, err)

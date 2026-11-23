@@ -96,6 +96,18 @@ func TestNewRefusesAnIncompleteBuild(t *testing.T) {
 		{"page is a symbolic link", func(b fstest.MapFS) {
 			b["de/index.html"] = &fstest.MapFile{Data: []byte("../de/secret/index.html"), Mode: fs.ModeSymlink}
 		}, "page de/index.html: not a regular file"},
+		{"sitemap is a symbolic link", func(b fstest.MapFS) {
+			b["real-sitemap.xml"] = b["sitemap.xml"]
+			b["sitemap.xml"] = &fstest.MapFile{Data: []byte("real-sitemap.xml"), Mode: fs.ModeSymlink}
+		}, "no sitemap.xml: not a regular file"},
+		{"favicon is a symbolic link", func(b fstest.MapFS) {
+			b["icons/favicon.svg"] = b[favicon.SVGFile]
+			b[favicon.SVGFile] = &fstest.MapFile{Data: []byte("icons/favicon.svg"), Mode: fs.ModeSymlink}
+		}, "public file favicon.svg: not a regular file"},
+		{"touch icon is a symbolic link", func(b fstest.MapFS) {
+			b["icons/apple-touch-icon.png"] = b[favicon.TouchFile]
+			b[favicon.TouchFile] = &fstest.MapFile{Data: []byte("icons/apple-touch-icon.png"), Mode: fs.ModeSymlink}
+		}, "public file apple-touch-icon.png: not a regular file"},
 		{"assets is a file", func(b fstest.MapFS) {
 			for name := range b {
 				if strings.HasPrefix(name, "assets/") {
