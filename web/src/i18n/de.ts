@@ -45,6 +45,11 @@ const de: MessageTree = {
       system: 'System',
       light: 'Hell',
       dark: 'Dunkel',
+      compact: {
+        system: 'Dem System folgen',
+        light: 'Heller Modus',
+        dark: 'Dunkler Modus',
+      },
     },
     language: {
       label: 'Sprache',

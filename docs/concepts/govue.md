@@ -1892,6 +1892,22 @@ try {
   which is the keyboard model a screen reader user expects of a radio group. Its strings are
   props that override the catalogue of the language layer. `GovueHeader` shows it through a
   `themeSwitch` prop, off by default.
+- The `compact` prop turns the three text buttons into three icons: a device for the system
+  setting, a sun and a moon. They are inline SVG with `currentColor` and `aria-hidden`, so the
+  role tokens colour them, no icon library is involved and no hex value appears. The group, the
+  roving tabindex and the keys are the same as in the default layout, and each target stays at
+  least 44px. An icon says nothing to a screen reader, so each option is named by its mode
+  ("Light mode"). The group name stays static ("Theme"), because the checked option already
+  announces the current mode and a group name that changes while focus is inside is not
+  re-announced by every screen reader. The texts are in both catalogues under `govue.theme` and
+  the `systemLabel`, `lightLabel` and `darkLabel` props override them. The three targets take
+  about 142px (3 x 44px, two 4px gaps, the border, computed from the classes, not measured),
+  where the text layout needs about 200 to 220px (an estimate), and a header on a 360px phone
+  has about 328px for the brand and every action. The default layout is unchanged. The
+  transition is dropped by the global reduced motion rule, and focus is the global ring.
+- The header recipe for a phone: `<GovueHeader>` with `<GovueThemeSwitch compact />` in its
+  `#theme` slot. The slot is the supported way and needs no header prop. A compatible
+  `themeSwitch?: boolean | 'compact'` stays possible later.
 - A choice kept in `localStorage` is only readable once script runs, so a page that waits for
   the bundle flashes the wrong theme. The Go package `themeboot` injects a small inline script
   into the head that sets `data-theme` and `data-mode` before the first paint.

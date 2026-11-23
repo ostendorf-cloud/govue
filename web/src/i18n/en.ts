@@ -45,6 +45,11 @@ const en: MessageTree = {
       system: 'System',
       light: 'Light',
       dark: 'Dark',
+      compact: {
+        system: 'Follow the system',
+        light: 'Light mode',
+        dark: 'Dark mode',
+      },
     },
     language: {
       label: 'Language',
