@@ -1898,6 +1898,10 @@ try {
 - Under the default policy an inline script runs only with the response's nonce, so injection
   happens at serve time and takes the nonce from `middleware.Nonce`. A static `index.html`
   cannot carry one. The response is `no-store`, since a cached nonce is a reused nonce.
+- A page served as the same bytes on every response, with an ETag, takes the script without a
+  nonce from `themeboot.InjectStatic`, and `script-src` carries `themeboot.Hash` with the same
+  options. The hash allows that exact text and nothing else. The `frontend` package does both,
+  see "Frontend server".
 - The script is a plain file embedded in the Go package, not generated from the TypeScript. The
   key and the attribute names live in `themeStorage.ts` and in `themeboot` as constants, and a
   Vitest test runs the shipped file in a DOM and checks it against both, so a drift fails a
@@ -2241,6 +2245,162 @@ try {
   routing, page discovery beyond the route table, incremental rebuilds and hydration beyond what
   a normal client mount does once the static HTML has loaded. A site that needs those is better
   served by a real meta-framework.
+
+### Frontend server
+
+- A site may run its frontend and its API as two images. The frontend image serves the build
+  and nothing else, the API image serves the API and nothing else. Every site used to wire the
+  same pieces by hand for the frontend half: the embedded build, the redirect at `/`, the
+  trailing slash rules, the 404 page per language, the cache headers, the legal aliases and the
+  hash of the theme boot script in the policy. The package `frontend` is that half, so a site
+  builds none of it.
+- One call builds the server and one call runs it:
+
+  ```go
+  s, err := frontend.New(frontend.Config{
+      Build:      dist,      // fs.Sub of an embed.FS, or os.OpenRoot(dir).FS()
+      ThemeColor: "#0f766e", // the favicon set at the root of the build
+      Logger:     logger,
+  })
+  if err != nil { return err } // an incomplete build never starts
+  return s.Run(ctx, ":8080", ":8081")
+  ```
+
+  `Handler` and `AdminHandler` are there for a site that runs the listeners itself and for tests.
+- The build is Vite's `dist` with the output of `govue-prerender --out-dir` written into it.
+  `New` reads all of it into memory at startup. Every path that answers 200 is a key of a table
+  built then, so no request path is ever joined to a file name and no directory is ever listed.
+  The site directory can be closed right after `New`.
+- What is served, and with which cache header:
+
+  | Path | Source | `Cache-Control` | ETag |
+  | --- | --- | --- | --- |
+  | each `loc` of `sitemap.xml` | `<path>/index.html` | `no-cache` | yes |
+  | `/<code>` and `/<code>/<page>/` | 301 to the canonical path | none | no |
+  | `/assets/<hashed name>` | `assets/` | `public, max-age=31536000, immutable` | yes |
+  | `/assets/<other name>` | `assets/` | `no-cache` | yes |
+  | `/favicon.svg`, the two PNG icons, `PublicFiles` | root of the build | `public, max-age=86400` | yes |
+  | `/sitemap.xml` | as built | `public, max-age=3600` | yes |
+  | `/robots.txt` | generated, names the sitemap | `public, max-age=3600` | yes |
+  | `/` | `language.Redirect`, 302 | `no-store`, `Vary: Accept-Language, Cookie` | no |
+  | legal aliases | `language.HandleLegal`, 302 | `no-store` | no |
+  | anything else | `<code>/404.html`, 404 | `no-cache` | no |
+
+- An ETag is the quoted SHA-256 of the body. `http.ServeContent` answers a matching
+  `If-None-Match` with 304. A hashed asset name ends in `-` or `.` and the eight characters of
+  a Vite hash, at least one of them a digit or a capital letter, such as `index-BXa3k2_9.js`.
+  A name that fails the rule is revalidated, which costs a request and never serves a stale
+  file. The content type comes from a closed table of extensions, and a file with another
+  extension, HTML included, fails startup.
+- The security headers are those of `middleware.DefaultSecurity` on every response, the 404,
+  the redirects and the 405 included. `Config.Security` replaces them for a site with a reason,
+  such as `HSTS = 0` over plain HTTP. A page is the same bytes on every response, so it cannot
+  carry a nonce. `New` writes the boot script with `themeboot.InjectStatic`, without a nonce,
+  and adds `themeboot.Hash` to `script-src` of a copy of the policy (`middleware.Policy.Clone`).
+  The hash allows that one script text and nothing else. The policy still carries a nonce per
+  response, which no static page uses. A policy without `script-src` is refused, because adding
+  the directive would take the `default-src` fallback away from every other script.
+- Header table of a page under the default:
+
+  | Header | Value |
+  | --- | --- |
+  | `Content-Security-Policy` | `default-src 'none'; script-src 'self' '<themeboot.Hash>' 'nonce-…'; …` |
+  | `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` |
+  | `X-Content-Type-Options` | `nosniff` |
+  | `X-Frame-Options` | `DENY` |
+  | `Referrer-Policy` | `strict-origin-when-cross-origin` |
+  | `Permissions-Policy` | `middleware.DefaultPermissionsPolicy` |
+  | `Cross-Origin-Opener-Policy` | `same-origin` |
+  | `Cross-Origin-Resource-Policy` | `same-origin` |
+  | `X-Request-Id` | per request |
+
+- The path rules, checked before routing. A path that fails answers the 404 page of the default
+  language, so the mux never cleans or redirects a path itself:
+  - an encoded slash, backslash, dot, percent or NUL (`%2f`, `%5c`, `%2e`, `%25`, `%00`, either
+    case) in the written path.
+  - a decoded backslash, percent or control character, and invalid UTF-8.
+  - an empty segment other than the last one, so `//` anywhere.
+  - a segment that starts with a dot. That covers `.`, `..`, dotfiles, `.vite` and
+    `.well-known`.
+- The table refuses most of these paths a second time. A test checks each rule against the
+  check alone and against the whole handler, and a mutation of each rule fails it.
+- One canonical form per page: the path of its `loc`, `/de/` for a language root and
+  `/de/imprint` for a page. `/de` and `/de/imprint/` answer a 301 to it, with the query kept and
+  its unsafe bytes escaped. The example's own site handler answers the slash form with 404
+  instead. The frontend redirects it, because sites linked it before. `/index.html`, a page file
+  path and a page the sitemap does not list answer 404. A browser's percent encoding of a page,
+  such as `/de/%C3%BCber`, and the raw form reach the same page, the canonical link in the page
+  names one.
+- The build is refused at startup, every problem at once, naming the file:
+  - no `<code>/404.html` for a configured language, or one without a head element.
+  - no `/<code>/imprint` or `/<code>/privacy` in the sitemap for a configured language, or a
+    `/<code>/terms` in some languages only. A terms page in every language mounts `/terms` and
+    `/agb`, so a site needs no flag for it.
+  - no `sitemap.xml`, or one of the shapes `example/site.go` refuses, see "Language routes".
+  - a page or a 404 page without a head element, or one that carries icon links already.
+  - a missing favicon file or `PublicFiles` entry, an invalid theme colour, an invalid language
+    configuration. A refused configuration value is never quoted.
+  - an asset that is a symbolic link, not a regular file, has a name outside letters, digits,
+    `.`, `_` and `-`, or an extension outside the table. A file or directory under `assets/`
+    whose name starts with a dot is skipped and never served.
+- No session, no cookie, no API route, no CORS. Every method but `GET` and `HEAD` answers 405
+  with `Allow: GET, HEAD`. `/api/` answers 404 from the frontend, which is right only when the
+  Ingress sends it to the API image first.
+- Health and readiness live on the admin listener with the metrics, behind `Recover` and
+  `RequestID` only, as in "A second listener for what the Ingress must never route". The public
+  chain is the outer chain of `example/`: `Recover`, `RequestID`, the security headers, the
+  metrics middleware and the access log with `Config.ClientIP`. The path check sits between the
+  access log and the mux and passes the request on unchanged, so `r.Pattern` still reaches both.
+  `Config.RateLimit` wraps every route when set. `Run` drains readiness before the drain delay
+  and refuses an empty admin address.
+- Splitting the images:
+  - The frontend image holds the static build and a small Go binary that embeds it and calls
+    `frontend.New` and `Run`. No Node process and no nginx run in it.
+  - The API image holds the second binary of the same site: the API routes, sessions, the
+    contact form and whatever the site has, built from `example/` as before but with no page
+    handler.
+  - Both run with an admin listener. The Service of each exposes both ports, the Ingress routes
+    the public port only.
+- Same origin, the default. One host, the Ingress routes by path:
+
+  ```yaml
+  rules:
+    - host: example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend: { service: { name: site-api, port: { name: http } } }
+          - path: /.well-known
+            pathType: Prefix
+            backend: { service: { name: site-api, port: { name: http } } }
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: site-frontend, port: { name: http } } }
+  ```
+
+  `pathType: Prefix` matches by segment, so `/api` takes `/api/v1/...` and not `/apidocs`. The
+  longest path wins in the Ingress specification. The frontend refuses `/.well-known/`, so the
+  app association files and a `security.txt` are served by the API image. Nothing changes for
+  the browser: the policy's `connect-src 'self'` covers the API, the session cookie stays
+  host-only, the CSRF origin check sees the same origin and the Vue client keeps its default
+  `baseUrl`.
+- Another origin, such as `api.example.com`, has consequences on both sides:
+  - the API needs `middleware.CORS` with the frontend origin in `Origins`, `Credentials: true`
+    for the session cookie, `Headers` with `csrf.HeaderName`, and
+    `ExposeHeaders: []string{"Retry-After"}`, so the contact form reads its wait. The CSRF
+    protector needs `TrustOrigin` with the frontend origin.
+  - the frontend policy needs the API origin in `connect-src`, through
+    `Config.Security.Policy.Add("connect-src", "https://api.example.com")`.
+  - the Vue client needs `createClient({ baseUrl: 'https://api.example.com/api/v1',
+    credentials: 'include' })`.
+  - a sibling host is the same site, so a `SameSite=Lax` cookie still goes along. A host on
+    another site is a third party cookie, which several browsers block by default. Keep the API
+    on the same site.
+  - every preflight is a round trip more. Same origin needs none of this, so it is the default.
+- What it does not do: the API server of a site and per request rendering. Page view counting
+  through `analytics` is not wired into it yet, so a site that counts views server side keeps
+  its pages in the API image until it is.
 
 ### Favicons are a build requirement
 

@@ -57,10 +57,17 @@ repeated here.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
-- Twenty-three Go packages live at the module root: `account`, `analytics`, `api`, `appassoc`,
-  `clientip`, `contact`, `csrf`, `database`, `envconf`, `favicon`, `health`, `httpserver`,
-  `language`, `logging`, `mail`, `metrics`, `middleware`, `oidc`, `passkey`, `pow`, `ratelimit`,
-  `session`, `themeboot`.
+- Twenty-four Go packages live at the module root: `account`, `analytics`, `api`, `appassoc`,
+  `clientip`, `contact`, `csrf`, `database`, `envconf`, `favicon`, `frontend`, `health`,
+  `httpserver`, `language`, `logging`, `mail`, `metrics`, `middleware`, `oidc`, `passkey`, `pow`,
+  `ratelimit`, `session`, `themeboot`.
+- `frontend` is the frontend image of a site that splits frontend and API: `New` reads the
+  Vite build with the prerender output into memory and refuses a build without a 404 page or a
+  legal page per language, `Run` serves it with the admin listener. Every path that answers 200
+  is a key of that table. A non canonical path (encoded slash, backslash, dot, percent or NUL,
+  `//`, a dot segment or dotfile) answers 404 before routing. Pages carry the theme boot script
+  through `themeboot.InjectStatic`, and `script-src` carries `themeboot.Hash`. It has no
+  session, no cookie and no API route. "Frontend server" in the concept doc is the spec.
 - `pow` issues and verifies stateless proof of work challenges, the ALTCHA shape, signed with
   HMAC-SHA-256 over a domain separator and the site name. Keys are at least 32 bytes, the first
   signs and all verify. Replay is limited by the expiry plus a single use `Seen`, by default a
