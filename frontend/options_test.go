@@ -8,8 +8,10 @@ import (
 	"testing"
 )
 
-// TestOptionsStarAnswers404WithTheHeaders covers OPTIONS *, which reaches
-// the handler because httpserver disables the general options handler.
+// TestOptionsStarAnswers404WithTheHeaders covers what the handler answers
+// to OPTIONS *: the 404 page with the security headers. That the request
+// reaches the handler under Run at all is pinned in httpserver, by
+// TestServeHandsOptionsStarToTheHandler, which goes through http.Server.
 func TestOptionsStarAnswers404WithTheHeaders(t *testing.T) {
 	res := do(t, newServer(t).Handler(), http.MethodOptions, "*", nil)
 	_ = body(t, res)
