@@ -94,6 +94,9 @@ func TestFrontendServesTheBuildThroughTheRealChain(t *testing.T) {
 			if !strings.Contains(csp, "script-src 'self' "+themeboot.Hash()) {
 				t.Errorf("%s: CSP lacks the boot script hash: %s", target, csp)
 			}
+			if !strings.Contains(csp, "; worker-src 'self'; ") {
+				t.Errorf("%s: CSP lacks worker-src 'self' for the contact form's solver: %s", target, csp)
+			}
 			if !strings.Contains(got, "<script>"+themeboot.Script()+"</script>") {
 				t.Errorf("%s: no boot script", target)
 			}

@@ -44,6 +44,24 @@ func TestDefaultPolicy(t *testing.T) {
 	}
 }
 
+// TestDefaultPolicyWorkerSrc pins the whole default policy, so a widened
+// directive shows here too. worker-src allows same origin worker scripts
+// only: no blob:, no data:, no nonce.
+func TestDefaultPolicyWorkerSrc(t *testing.T) {
+	want := "default-src 'none'; script-src 'self' 'nonce-n'; style-src 'self' 'nonce-n'; " +
+		"img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; " +
+		"form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+	if got := DefaultPolicy().Header("n"); got != want {
+		t.Errorf("DefaultPolicy:\n got %s\nwant %s", got, want)
+	}
+	rec := httptest.NewRecorder()
+	DefaultSecurity().Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).
+		ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "; worker-src 'self'; ") {
+		t.Errorf("DefaultSecurity sends %q, want worker-src 'self'", csp)
+	}
+}
+
 func TestPolicySetAddAndOrder(t *testing.T) {
 	policy := NewPolicy().
 		Set("default-src", "'none'").

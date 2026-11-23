@@ -130,6 +130,14 @@ The design of the library and the reasoning behind it.
 - The nonce, not a hash or an allow-listed `'unsafe-inline'`, is what lets this library's own
   inline script and style run under the default policy: a tag an attacker injects carries no
   nonce, so it does not run even once it is in the page.
+- `DefaultPolicy` sets `worker-src 'self'`, because the proof of work solver of
+  `GovueContactForm` runs in a module worker loaded from a script file of the page's own origin.
+  A missing `worker-src` falls back to `script-src` in CSP 3, but to `child-src` and then
+  `default-src 'none'` in CSP 2, so the directive is explicit and does not depend on which level
+  a browser follows. It allows no `blob:` or `data:` worker and carries no nonce. Every
+  `DefaultSecurity` response carries it, so do the pages of `frontend`, which clones the policy.
+  A site that builds its own policy with `NewPolicy` and runs the contact form adds the
+  directive itself.
 - Weakening one header is the consuming application's decision, made through a field on
   `Security`, never a change to the default here. A zero-value `Security`, unlike
   `session.Config` or `oidc.Config`, applies no defaults of its own: an application has to call
@@ -2344,7 +2352,7 @@ try {
 
   | Header | Value |
   | --- | --- |
-  | `Content-Security-Policy` | `default-src 'none'; script-src 'self' '<themeboot.Hash>' 'nonce-…'; …` |
+  | `Content-Security-Policy` | `default-src 'none'; script-src 'self' '<themeboot.Hash>' 'nonce-…'; …; worker-src 'self'; …` |
   | `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` |
   | `X-Content-Type-Options` | `nosniff` |
   | `X-Frame-Options` | `DENY` |

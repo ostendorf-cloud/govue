@@ -668,7 +668,7 @@ not a struct field.
 
 | Field                   | Default                                                                                                                                 |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `Policy`                | `DefaultPolicy()`: default-deny CSP with a per-response nonce for inline script and style                                               |
+| `Policy`                | `DefaultPolicy()`: default-deny CSP, a per-response nonce for inline script and style, `worker-src 'self'` for same origin workers      |
 | `HSTS`                  | 1 year                                                                                                                                  |
 | `HSTSIncludeSubDomains` | `true`                                                                                                                                  |
 | `HSTSPreload`           | `true`                                                                                                                                  |
