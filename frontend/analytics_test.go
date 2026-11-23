@@ -237,6 +237,35 @@ func TestRunClosesTheClientSoQueuedViewsAreSent(t *testing.T) {
 	}
 }
 
+// TestRunClosesTheClientWhenItReturns runs Run itself without a socket: an
+// address without a port fails in net.ListenConfig.Listen while it is
+// parsed, in resolveAddrList, before any socket is created. Run must close
+// the client on that way out too, so the queued view is sent and a later
+// one is dropped.
+func TestRunClosesTheClientWhenItReturns(t *testing.T) {
+	fake := &fakeUmami{}
+	views := newViews(t, fake, 64)
+	cfg := testConfig(buildOf(routes), io.Discard)
+	cfg.Analytics = views
+	s, err := frontend.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = body(t, visit(t, s.Handler(), "/de/", nil))
+
+	err = s.Run(t.Context(), "no-port-here", "no-port-either")
+	if err == nil || !strings.Contains(err.Error(), "listen on Config.Addr") {
+		t.Fatalf("Run = %v, want the refused address", err)
+	}
+	if got := fake.urls(t); len(got) != 1 {
+		t.Errorf("posts after Run = %v, want the queued view sent", got)
+	}
+	_ = body(t, visit(t, s.Handler(), "/de/", nil))
+	if views.Stats().Dropped != 1 {
+		t.Errorf("dropped = %d, want 1: Run did not close the client", views.Stats().Dropped)
+	}
+}
+
 func TestWithoutAnalyticsNoDropCounter(t *testing.T) {
 	scrape := body(t, do(t, newServer(t).AdminHandler(), http.MethodGet, "/metrics", nil))
 	if strings.Contains(scrape, "analytics_views_dropped_total") {
