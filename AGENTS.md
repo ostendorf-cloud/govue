@@ -23,7 +23,8 @@ repeated here.
   with `useToasts`, the form input components (`GovueField`, `GovueInput`, `GovueSelect`,
   `GovueCheckbox`, `GovueSwitch`, `GovueTextarea`, `GovueButton`) with `useForm`, and the layout
   components (`GovuePage`, `GovueHeader`, `GovueFooter`, `GovueNav`, `GovueSkipLink`,
-  `GovueCard`, `GovueBadge`, `GovueSkeleton`), `GovueThemeSwitch`, and the account forms
+  `GovueCard`, `GovueBadge`, `GovueSkeleton`), `GovueThemeSwitch` (with a `compact` icon
+  variant of about 142px, named by mode, same radio group), and the account forms
   (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`), `GovueContactForm` with its proof
   of work solver (`lib/pow.ts`, `lib/pow.worker.ts`), which take a `client` from
   `createClient`, and `GovuePasskeyButton` with the `usePasskey` composable and `isBearerClient`,
@@ -51,7 +52,8 @@ repeated here.
   of `GovueContactForm`: there is no catalogue default. With `requireConsent` the site sets
   `consentLabel` or fills the `consent` slot, and without one the form renders nothing and warns
   in development. The consent state is never part of the request body.
-- `web/example/` is the example site: the placeholder legal pages and the contact page,
+- `web/example/` is the example site: the placeholder legal pages, the contact page, the start
+  page with the compact theme switch in its header,
   prerendered and checked by its own tests, the consumer build test of the worker bundle and the
   fake of the contact handlers that the component tests use. It is not shipped.
 - `web/` also holds a theme generator (`web/src/theme/`, run through

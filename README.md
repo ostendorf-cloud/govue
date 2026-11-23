@@ -151,6 +151,15 @@ catalogue:
 <GovueThemeSwitch label="Design" system-label="Auto" light-label="Hell" dark-label="Dunkel" />
 ```
 
+For a narrow header, `compact` shows one icon per mode (system, light, dark) in 44px targets,
+about 142px in all. It is the same radio group with the same keys. Each option is named by its
+mode and the group name ends in the current mode, for example "Theme: Light mode". The three
+name props override those names:
+
+```vue
+<GovueThemeSwitch compact />
+```
+
 The switch uses the shared `useTheme` state, and the first `useTheme` call decides its defaults
 and storage key. An app with its own default theme or `storageKey` calls `useTheme({ ... })` in
 its setup before any switch renders.
