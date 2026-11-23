@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/ostendorf-cloud/govue/clientip"
@@ -428,6 +429,61 @@ func TestAccessLogCarriesThePatternAndTheClient(t *testing.T) {
 	}
 	if line["client"] == nil {
 		t.Errorf("the access log has no client: %v", line)
+	}
+}
+
+// sourceMap is a hidden source map of the kind Vite's build.sourcemap
+// 'hidden' writes: the original sources, no reference from the bundle.
+const sourceMap = `{"version":3,"sources":["src/secret.ts"],"sourcesContent":["const apiKey = 'original source'"]}`
+
+func buildWithSourceMap() fstest.MapFS {
+	build := buildOf(routes)
+	build[hashedJS+".map"] = &fstest.MapFile{Data: []byte(sourceMap)}
+	build["assets/fonts/inter-Ab12cd34.woff2.map"] = &fstest.MapFile{Data: []byte(sourceMap)}
+	return build
+}
+
+func TestSourceMapsAreNotServedByDefault(t *testing.T) {
+	s, err := frontend.New(testConfig(buildWithSourceMap(), io.Discard))
+	if err != nil {
+		t.Fatalf("New refused a build with source maps: %v", err)
+	}
+	for _, target := range []string{"/" + hashedJS + ".map", "/assets/fonts/inter-Ab12cd34.woff2.map"} {
+		res := do(t, s.Handler(), http.MethodGet, target, nil)
+		got := body(t, res)
+		if res.StatusCode != http.StatusNotFound || strings.Contains(got, "original source") {
+			t.Errorf("%s: status %d, body %q, want 404 without the sources", target, res.StatusCode, got)
+		}
+	}
+}
+
+func TestSourceMapsAreServedWithTheOptIn(t *testing.T) {
+	cfg := testConfig(buildWithSourceMap(), io.Discard)
+	cfg.ServeSourceMaps = true
+	s, err := frontend.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := do(t, s.Handler(), http.MethodGet, "/"+hashedJS+".map", nil)
+	if got := body(t, res); res.StatusCode != http.StatusOK || got != sourceMap {
+		t.Fatalf("status %d, body %q, want the map", res.StatusCode, got)
+	}
+	if ct := res.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	if cc := res.Header.Get("Cache-Control"); cc != "no-cache" {
+		// index-BXa3k2_9.js.map has no hash right before its extension.
+		t.Errorf("Cache-Control = %q, want no-cache", cc)
+	}
+}
+
+func TestSourceMapIsNoPublicFile(t *testing.T) {
+	cfg := testConfig(buildWithSourceMap(), io.Discard)
+	cfg.PublicFiles = []string{"app.js.map"}
+	cfg.ServeSourceMaps = true
+	_, err := frontend.New(cfg)
+	if err == nil || !strings.Contains(err.Error(), "Config.PublicFiles entry 1") {
+		t.Errorf("error = %v, want the refused PublicFiles entry", err)
 	}
 }
 

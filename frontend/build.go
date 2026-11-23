@@ -64,7 +64,6 @@ var contentTypes = map[string]string{
 	".mjs":         "text/javascript; charset=utf-8",
 	".css":         "text/css; charset=utf-8",
 	".json":        "application/json",
-	".map":         "application/json",
 	".webmanifest": "application/manifest+json",
 	".txt":         "text/plain; charset=utf-8",
 	".xml":         "application/xml; charset=utf-8",
@@ -86,6 +85,14 @@ var contentTypes = map[string]string{
 	".webm":        "video/webm",
 	".mp3":         "audio/mpeg",
 }
+
+// sourceMapExt is the extension of a source map. A map holds the original
+// sources, so it is not in contentTypes: loadAssets skips it unless
+// Config.ServeSourceMaps is set, and then serves it as sourceMapType.
+const (
+	sourceMapExt  = ".map"
+	sourceMapType = "application/json"
+)
 
 // fileSegment is one segment of a served file name: letters, digits, '.',
 // '_' and '-', not starting with a dot. It is the shape Vite writes.
@@ -168,7 +175,9 @@ func checkPublicFiles(names []string) ([]string, error) {
 
 // loadSite reads the build. opts are the theme boot options with the
 // favicon links. languages has the default first.
-func loadSite(build fs.FS, languages []string, fallback string, opts []themeboot.Option, publicFiles []string) (*site, error) {
+func loadSite(build fs.FS, languages []string, fallback string, opts []themeboot.Option, publicFiles []string,
+	sourceMaps bool,
+) (*site, error) {
 	s := &site{
 		languages: languages,
 		fallback:  fallback,
@@ -201,7 +210,7 @@ func loadSite(build fs.FS, languages []string, fallback string, opts []themeboot
 		f.cacheControl = cacheNoCache
 		s.notFound[code] = f
 	}
-	fail(s.loadAssets(build))
+	fail(s.loadAssets(build, sourceMaps))
 	for _, name := range append([]string{favicon.SVGFile, favicon.PNGFile, favicon.TouchFile}, publicFiles...) {
 		body, err := readRegular(build, name)
 		if err != nil {
@@ -418,10 +427,11 @@ func (s *site) checkLegal() error {
 }
 
 // loadAssets reads every file under assets/. A directory or file whose name
-// starts with a dot is skipped and never served. A name of another shape, a
-// symbolic link, anything but a regular file and an extension outside
-// contentTypes fail. A build without assets/ serves none.
-func (s *site) loadAssets(build fs.FS) error {
+// starts with a dot is skipped and never served, and so is a source map
+// unless sourceMaps is set. A name of another shape, a symbolic link,
+// anything but a regular file and an extension outside contentTypes fail. A
+// build without assets/ serves none.
+func (s *site) loadAssets(build fs.FS, sourceMaps bool) error {
 	info, err := fs.Lstat(build, assetsDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -458,8 +468,17 @@ func (s *site) loadAssets(build fs.FS) error {
 			problems = append(problems, fmt.Errorf("frontend: asset %s is not a regular file", name))
 			return nil
 		}
-		contentType, ok := contentTypes[strings.ToLower(path.Ext(base))]
-		if !ok {
+		ext := strings.ToLower(path.Ext(base))
+		contentType, ok := contentTypes[ext]
+		switch {
+		case ext == sourceMapExt && !sourceMaps:
+			// A source map publishes the original sources, such as the
+			// hidden maps of Vite's build.sourcemap 'hidden'. Off unless the
+			// site opts in.
+			return nil
+		case ext == sourceMapExt:
+			contentType = sourceMapType
+		case !ok:
 			problems = append(problems, fmt.Errorf("frontend: asset %s has an extension that is not served", name))
 			return nil
 		}

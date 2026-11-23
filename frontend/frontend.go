@@ -16,7 +16,8 @@
 //     from its <path>/index.html, with Cache-Control: no-cache and a strong
 //     ETag
 //   - the files under assets/, the hashed bundle of the build, immutable for
-//     a hashed name and no-cache with an ETag otherwise
+//     a hashed name and no-cache with an ETag otherwise, source maps only
+//     with Config.ServeSourceMaps
 //   - the three favicon files and the PublicFiles at the root of the build
 //   - sitemap.xml as built, and a robots.txt that names it
 //   - / as a redirect to the visitor's language (language.Redirect), and the
@@ -86,6 +87,12 @@ type Config struct {
 	// digits, '.', '_' and '-', not starting with a dot, with an extension
 	// of the content type table, and not an HTML file.
 	PublicFiles []string
+	// ServeSourceMaps serves the *.map files under assets/ as
+	// application/json. Off by default, a map is then skipped and answers
+	// 404: it publishes the original sources, and a build with
+	// build.sourcemap 'hidden' writes maps the site means to keep private.
+	// Only a site that wants its sources public sets it.
+	ServeSourceMaps bool
 	// Security is the header middleware. Nil is middleware.DefaultSecurity.
 	// New adds themeboot.Hash to a copy of its policy's script-src, so the
 	// policy must set script-src. A nil Policy sends no CSP at all, which is
@@ -157,7 +164,7 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	opts := append(append([]themeboot.Option(nil), cfg.ThemeBoot...), themeboot.WithFavicon(icons))
-	s, err := loadSite(cfg.Build, codes, def, opts, publicFiles)
+	s, err := loadSite(cfg.Build, codes, def, opts, publicFiles, cfg.ServeSourceMaps)
 	if err != nil {
 		return nil, err
 	}
