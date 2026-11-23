@@ -4,21 +4,48 @@
 
 import { useLanguage, useGovueText } from '../i18n/plugin'
 
-// A native select, not a radio group like GovueThemeSwitch. The list of
-// languages is open ended (a third catalogue adds an option, not a button), a
-// select stays one control at any length, and the platform gives it the
-// keyboard handling, the screen reader announcement and the touch picker for
-// free. Focus never leaves it: changing the value does not re-render the
+// Two modes.
+//
+// The default is a native select, not a radio group like GovueThemeSwitch. The
+// list of languages is open ended (a third catalogue adds an option, not a
+// button), a select stays one control at any length, and the platform gives it
+// the keyboard handling, the screen reader announcement and the touch picker
+// for free. Focus never leaves it: changing the value does not re-render the
 // element. The page is not reloaded and nothing navigates, so the visitor
 // stays where they are.
+//
+// With linkFor each language is a real link to the same page in that
+// language, with hreflang, so a crawler and a visitor without script can
+// follow it. The links sit in a named group, the current one carries
+// aria-current, and a link is announced as a link, never as a radio. A plain
+// click follows the href. When the app's router handles the path, navigate
+// takes the click over: the locale changes and the page does not reload.
 //
 // Each option is written in its own language and carries its own lang
 // attribute, so a screen reader pronounces "Deutsch" in German. The group name
 // follows the active language.
-defineProps<{
-  /** The accessible name. Defaults to the catalogue's, in the active language. */
-  label?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** The accessible name. Defaults to the catalogue's, in the active language. */
+    label?: string
+    /**
+     * Turns the switch into a group of links. It maps a language code to the
+     * path of the same page in that language, for example
+     * `(code) => localizedPath(route.path, code)`. Without it the switch is
+     * a select and nothing else changes.
+     */
+    linkFor?: (code: string) => string
+    /**
+     * Link mode only. Called with the href and the code on a plain click,
+     * after the locale changed. Return true when the router took the
+     * navigation over, for example `(href) => { router.push(href); return true }`:
+     * the click is then cancelled, so the page does not reload. Return
+     * anything else, or leave it out, and the browser follows the link.
+     */
+    navigate?: (href: string, code: string) => boolean | void
+  }>(),
+  { label: undefined, linkFor: undefined, navigate: undefined },
+)
 
 const emit = defineEmits<{ change: [code: string] }>()
 
@@ -30,10 +57,61 @@ function onChange(event: Event): void {
   setLocale(code)
   emit('change', code)
 }
+
+/** isPlainClick is a primary click with no modifier: the ones that navigate in
+ *  this tab. A new tab or window is the browser's, and the locale there is
+ *  decided by the page it opens. */
+function isPlainClick(event: MouseEvent): boolean {
+  return (
+    event.button === 0 &&
+    !event.defaultPrevented &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey
+  )
+}
+
+function onLink(event: MouseEvent, code: string, href: string): void {
+  if (!isPlainClick(event)) {
+    return
+  }
+  setLocale(code)
+  emit('change', code)
+  if (props.navigate?.(href, code) === true) {
+    event.preventDefault()
+  }
+}
 </script>
 
 <template>
+  <div
+    v-if="linkFor"
+    role="group"
+    :aria-label="label ?? t('govue.language.label')"
+    class="inline-flex flex-wrap items-center gap-1"
+  >
+    <a
+      v-for="entry in locales"
+      :key="entry.code"
+      :href="linkFor(entry.code)"
+      :hreflang="entry.code"
+      :lang="entry.code"
+      :aria-current="entry.code === locale ? 'true' : undefined"
+      :class="[
+        'inline-flex min-h-11 min-w-11 items-center justify-center rounded-md px-3 text-base transition-colors',
+        entry.code === locale
+          ? 'bg-accent-subtle font-semibold text-accent-text underline decoration-2 underline-offset-4'
+          : 'text-text hover:bg-surface-hover',
+      ]"
+      @click="onLink($event, entry.code, linkFor(entry.code))"
+    >
+      {{ entry.name }}
+    </a>
+  </div>
+
   <select
+    v-else
     :aria-label="label ?? t('govue.language.label')"
     :value="locale"
     class="min-h-11 min-w-11 rounded-md border border-border-strong bg-surface px-3 text-base text-text transition-colors hover:bg-surface-hover"
