@@ -2354,7 +2354,8 @@ try {
     kind only, and no `*fs.PathError` under the error carries it. A missing one still matches
     `fs.ErrNotExist`. The files of the build itself, the pages, the 404 pages, the sitemap, the
     assets and the favicon files, are named in an error: they are the operator's build output,
-    not configuration values.
+    not configuration values. The 404 page and legal page names also hold a language code,
+    which is an accepted code of `Config.Language`, never a refused value.
   - an asset that is a symbolic link, not a regular file, has a name outside letters, digits,
     `.`, `_` and `-`, or an extension outside the table. A file or directory under `assets/`
     whose name starts with a dot is skipped and never served.
