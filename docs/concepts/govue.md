@@ -2296,7 +2296,10 @@ try {
 - A source map under `assets/` is skipped by default and answers 404. It publishes the original
   sources, and Vite's `build.sourcemap: 'hidden'` writes maps a site means to keep for its error
   tracker only. `Config.ServeSourceMaps` serves them as `application/json`, for a site that
-  wants its sources public. A map is never a `PublicFiles` entry.
+  wants its sources public. A map is never a `PublicFiles` entry. Vite's `build.sourcemap: true`
+  also writes a `//# sourceMappingURL=` comment into every served bundle, whose map then answers
+  404 and the browser's developer tools report a failed load. A site uses `'hidden'` or `false`
+  with this package, or sets `ServeSourceMaps`.
 - The security headers are those of `middleware.DefaultSecurity` on every response, the 404,
   the redirects and the 405 included. `Config.Security` replaces them for a site with a reason,
   such as `HSTS = 0` over plain HTTP. A page is the same bytes on every response, so it cannot
@@ -2346,7 +2349,12 @@ try {
     the same way.
   - a page or a 404 page without a head element, or one that carries icon links already.
   - a missing favicon file or `PublicFiles` entry, an invalid theme colour, an invalid language
-    configuration. A refused configuration value is never quoted.
+    configuration. A refused configuration value is never quoted. A `PublicFiles` entry that is
+    missing, a directory, a link or another non regular file is named by its position and the
+    kind only, and no `*fs.PathError` under the error carries it. A missing one still matches
+    `fs.ErrNotExist`. The files of the build itself, the pages, the 404 pages, the sitemap, the
+    assets and the favicon files, are named in an error: they are the operator's build output,
+    not configuration values.
   - an asset that is a symbolic link, not a regular file, has a name outside letters, digits,
     `.`, `_` and `-`, or an extension outside the table. A file or directory under `assets/`
     whose name starts with a dot is skipped and never served.
