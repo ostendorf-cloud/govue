@@ -31,6 +31,14 @@ func main() {
 }
 
 func run() error {
+	// `example frontend` is the frontend image of a site that runs its
+	// frontend and its API as two images, see frontend.go.
+	if len(os.Args) > 1 && os.Args[1] == frontendCommand {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return runFrontend(ctx, os.Getenv)
+	}
+
 	cfg, err := loadConfig(os.Getenv)
 	if err != nil {
 		return err
