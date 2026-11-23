@@ -133,6 +133,47 @@ func TestNewRefusesAnIncompleteBuild(t *testing.T) {
 	}
 }
 
+// TestNewRefusesALocThatCouldBecomeASchemeRelativeLocation covers the locs
+// whose path starts with // or /\. The escaped path of a page is the
+// Location of its slash form redirect, so such a path would read as another
+// host there. Each is refused at startup with the reason named, so no
+// redirect is ever built from it.
+func TestNewRefusesALocThatCouldBecomeASchemeRelativeLocation(t *testing.T) {
+	const doubleSlash = "starts with a double slash or a backslash after the leading slash"
+	for loc, want := range map[string]string{
+		origin + "//evil.com/de/":    doubleSlash,
+		origin + "//evil.com":        doubleSlash,
+		origin + "///evil.com/de/":   doubleSlash,
+		origin + "/\\evil.com":       doubleSlash,
+		origin + "/\\\\evil.com/de/": doubleSlash,
+		// Encoded, they decode to the same leading // or /\.
+		origin + "/%5cevil.com/de/": doubleSlash,
+		origin + "/%5C%5Cevil.com/": doubleSlash,
+		origin + "/%2fevil.com/de/": doubleSlash,
+		origin + "/%2F%2Fevil.com/": doubleSlash,
+		// Further in, the encoding and segment checks refuse them.
+		origin + "/de/%2f%2fevil.com": "has an encoded slash, backslash",
+		origin + "/de/\\evil.com":     "has an encoded slash, backslash",
+		origin + "/de//evil.com":      "is not a plain path segment",
+		// No host or no scheme of the site's own.
+		"//evil.com/de/":        "is not an absolute http or https URL",
+		"https:///evil.com/de/": "is not an absolute http or https URL",
+	} {
+		t.Run(loc, func(t *testing.T) {
+			build := buildOf(routes)
+			build["sitemap.xml"] = &fstest.MapFile{Data: sitemapOf(append([]string{loc},
+				origin+"/de/", origin+"/de/imprint", origin+"/de/privacy", origin+"/en/imprint", origin+"/en/privacy")...)}
+			_, err := frontend.New(testConfig(build, io.Discard))
+			if err == nil {
+				t.Fatalf("New accepted the loc %s, a redirect could be built from it", loc)
+			}
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error does not say %q:\n%v", want, err)
+			}
+		})
+	}
+}
+
 func TestNewNeedsBuildAndLogger(t *testing.T) {
 	_, err := frontend.New(frontend.Config{ThemeColor: themeColor})
 	if err == nil {

@@ -371,13 +371,21 @@ func (s *site) loadPage(build fs.FS, loc, wantOrigin string, opts []themeboot.Op
 	if wantOrigin != "" && origin != wantOrigin {
 		return bad("has another origin than the first loc, " + wantOrigin)
 	}
+	// The escaped path of a page becomes the Location of its slash form
+	// redirect. A decoded path that starts with // or /\ would be read as a
+	// scheme relative URL there, so it is refused first, whatever encoding
+	// it came in. The encoding check and the language check below refuse it
+	// a second time: no language code is empty or holds a backslash.
+	p := u.Path
+	if len(p) > 1 && (p[1] == '/' || p[1] == '\\') {
+		return bad("starts with a double slash or a backslash after the leading slash")
+	}
 	escaped := u.EscapedPath()
 	// Decoding %2f or %5c would change the segments, and %2e and %25 would
 	// give a dot or a percent the request check refuses.
 	if !encodingAllowed(escaped) {
 		return bad("has an encoded slash, backslash, dot, percent or NUL")
 	}
-	p := u.Path
 	segments := strings.Split(strings.TrimPrefix(p, "/"), "/")
 	if !strings.HasPrefix(p, "/") || !slices.Contains(s.languages, segments[0]) {
 		return bad("is not under a configured language prefix")
