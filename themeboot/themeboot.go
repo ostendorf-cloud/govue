@@ -14,11 +14,15 @@
 //
 // A page whose Content-Security-Policy carries a nonce runs the script only
 // when the tag carries that nonce. Tag and Shell take it from the caller and
-// from middleware.Nonce.
+// from middleware.Nonce. A page served as static bytes, with an ETag, cannot
+// carry a nonce: InjectStatic writes the tag without one, and Hash is the
+// script-src source that lets it run.
 package themeboot
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"encoding/base64"
 	"fmt"
 	"html"
 	"net/http"
@@ -116,11 +120,39 @@ func Inject(page []byte, nonce string, opts ...Option) []byte {
 	if at < 0 {
 		return page
 	}
-	inject := Tag(nonce, opts...)
-	if c := build(opts); c.icons != nil {
-		inject += c.icons.Links()
+	return insert(page, at, Tag(nonce, opts...), opts)
+}
+
+// InjectStatic is Inject for a page that is served as the same bytes on
+// every response, such as a prerendered page with an ETag: the script tag
+// carries no nonce, because a nonce in a cached or revalidated body would be
+// a reused nonce. Under a policy that carries a nonce or a hash, the script
+// then runs only when script-src also carries Hash with the same options.
+// The frontend package does both. A page without a head element is returned
+// unchanged.
+func InjectStatic(page []byte, opts ...Option) []byte {
+	at := afterHeadTag(string(page))
+	if at < 0 {
+		return page
 	}
-	return []byte(string(page[:at]) + inject + string(page[at:]))
+	return insert(page, at, "<script>"+Script(opts...)+"</script>", opts)
+}
+
+// insert places tag, and with WithFavicon the icon links behind it, at at.
+func insert(page []byte, at int, tag string, opts []Option) []byte {
+	if c := build(opts); c.icons != nil {
+		tag += c.icons.Links()
+	}
+	return []byte(string(page[:at]) + tag + string(page[at:]))
+}
+
+// Hash returns the Content-Security-Policy source that allows the script
+// InjectStatic writes, 'sha256-' and the base64 SHA-256 of Script with the
+// same options, quotes included, ready for Policy.Add("script-src", ...). It
+// allows exactly that script text and nothing else, wherever it appears.
+func Hash(opts ...Option) string {
+	sum := sha256.Sum256([]byte(Script(opts...)))
+	return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
 }
 
 // afterHeadTag returns the index just after the opening head tag, or -1.
