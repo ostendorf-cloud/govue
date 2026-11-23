@@ -40,6 +40,7 @@ const CHECKED_PREFIXES = [
   'rounded',
   'font',
   'ease',
+  'backdrop-blur',
   'max-w',
   'min-w',
   'w',
@@ -140,7 +141,7 @@ function declaredTokens(): Set<string> {
   const css = readFileSync(resolve(stylesDir, 'base.css'), 'utf8')
   const names = new Set<string>()
   for (const match of css.matchAll(
-    /--(?:color|text|shadow|radius|container|spacing|font|ease)-([\w-]+):/g,
+    /--(?:color|text|shadow|radius|container|spacing|font|ease|blur)-([\w-]+):/g,
   )) {
     names.add(match[1])
   }
@@ -238,6 +239,19 @@ describe('the token contract', () => {
     const base = colourTokens(resolve(stylesDir, 'base.css'))
     const theme = colourTokens(resolve(themesDir, name))
     expect([...base].filter((token) => !theme.has(token))).toEqual([])
+  })
+
+  // The header blur is not a colour, so the colour check above never sees it.
+  it.each(themeFiles())('%s fills the header blur base.css declares', (name) => {
+    const declares = (file: string) => /--blur-header:\s*[^;]+;/.test(readFileSync(file, 'utf8'))
+    expect(declares(resolve(stylesDir, 'base.css'))).toBe(true)
+    expect(declares(resolve(themesDir, name))).toBe(true)
+  })
+
+  it('rejects a backdrop blur utility the theme does not declare', () => {
+    const tokens = declaredTokens()
+    expect(unresolved(['backdrop-blur-header'], tokens)).toEqual([])
+    expect(unresolved(['backdrop-blur-heder'], tokens)).toEqual(['backdrop-blur-heder'])
   })
 
   // themeNames cannot discover the directory itself: it ships in the browser

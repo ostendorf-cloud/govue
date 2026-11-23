@@ -115,6 +115,17 @@
   --color-border: light-dark(#d3bbce, #513d4e);
   --color-border-strong: light-dark(#82647d, #977892);
 
+  /* The header. Its ground, its bottom border and the blur behind it are roles
+     of their own, so a site restyles the header in its theme file and never
+     with a selector on govue's markup. The defaults are the look the header
+     always had: the surface, the decorative border, no blur. A ground with
+     alpha, such as color-mix(in srgb, var(--color-surface) 95%, transparent),
+     needs a blur of its own to stay legible, and keeps text at 4.5:1 only from
+     the alpha the concept doc names. */
+  --color-header-bg: var(--color-surface);
+  --color-header-border: var(--color-border);
+  --blur-header: 0px;
+
   /* Text. */
   --color-text: light-dark(#3f223b, #e4c8df);
   --color-text-muted: light-dark(#664761, #bca9b9);

@@ -7,11 +7,20 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import {
+  composite,
+  DARKEST_CONTENT,
   failures,
+  HEADER_NON_TEXT_PAIRS,
+  HEADER_TEXT_PAIRS,
+  LIGHTEST_CONTENT,
+  luminance,
+  maxBackdropLuminance,
   NON_TEXT_MINIMUM,
   NON_TEXT_PAIRS,
   ratio,
   round,
+  TRANSLUCENT_ALPHA_ALL_TEXT,
+  TRANSLUCENT_ALPHA_TEXT,
   TEXT_MINIMUM,
   TEXT_PAIRS,
   tokens,
@@ -100,5 +109,86 @@ describe.each([
 
   it.each(['light', 'dark'] as const)('reaches AA for boundaries in %s mode', (mode) => {
     expect(failures(palettes[mode], NON_TEXT_PAIRS, NON_TEXT_MINIMUM)).toEqual([])
+  })
+
+  // The header ground, default and translucent, in every shipped theme.
+  it('defines the header ground in both modes', () => {
+    expect(palettes.light).toHaveProperty('header-bg')
+    expect(palettes.dark).toHaveProperty('header-bg')
+  })
+
+  it.each(['light', 'dark'] as const)('reaches AA on the header ground in %s mode', (mode) => {
+    expect(failures(palettes[mode], HEADER_TEXT_PAIRS, TEXT_MINIMUM)).toEqual([])
+    expect(failures(palettes[mode], HEADER_NON_TEXT_PAIRS, NON_TEXT_MINIMUM)).toEqual([])
+  })
+
+  // A translucent ground over the lightest and the darkest page content. The
+  // header-bg alpha documented in the concept doc is what this proves.
+  describe.each(['light', 'dark'] as const)('a translucent header ground in %s mode', (mode) => {
+    const palette = palettes[mode]
+
+    it.each([LIGHTEST_CONTENT, DARKEST_CONTENT])(
+      'keeps text at 4.5:1 at the documented alpha over %s',
+      (content) => {
+        const ground = composite(palette['header-bg'], TRANSLUCENT_ALPHA_TEXT, content)
+        expect(failures({ ...palette, ground }, [['text', 'ground']], TEXT_MINIMUM)).toEqual([])
+      },
+    )
+
+    it.each([LIGHTEST_CONTENT, DARKEST_CONTENT])(
+      'keeps every header text role at 4.5:1 at the strict documented alpha over %s',
+      (content) => {
+        const ground = composite(palette['header-bg'], TRANSLUCENT_ALPHA_ALL_TEXT, content)
+        const pairs = HEADER_TEXT_PAIRS.map(([fg]): [string, string] => [fg, 'ground'])
+        expect(failures({ ...palette, ground }, pairs, TEXT_MINIMUM)).toEqual([])
+      },
+    )
+
+    it('is opaque over its own surface, so a solid ground is the alpha 1 case', () => {
+      expect(composite(palette['header-bg'], 1, DARKEST_CONTENT)).toBe(palette['header-bg'])
+    })
+  })
+
+  // The transparent overlay state shows the dark-mode roles whatever the page
+  // mode is. Dark text has to hold on the darkest ground the host may put
+  // under the header: its luminance bound is what the docs state.
+  it('keeps the transparent overlay state legible on the dark hero it promises', () => {
+    const dark = palettes.dark
+    const bound = maxBackdropLuminance(dark.text)
+    expect(luminance(dark.bg)).toBeLessThanOrEqual(bound)
+    expect(luminance(DARKEST_CONTENT)).toBeLessThanOrEqual(bound)
+    expect(luminance(LIGHTEST_CONTENT)).toBeGreaterThan(bound)
+    expect(
+      failures(
+        dark,
+        [
+          ['text', 'bg'],
+          ['text-muted', 'bg'],
+          ['text-faint', 'bg'],
+          ['accent-text', 'bg'],
+        ],
+        TEXT_MINIMUM,
+      ),
+    ).toEqual([])
+    expect(failures(dark, [['focus', 'bg']], NON_TEXT_MINIMUM)).toEqual([])
+  })
+})
+
+describe('the translucent header check itself fails', () => {
+  const palette = tokens(read(resolve(stylesDir, 'base.css')))
+
+  it('rejects a ground too transparent for the text', () => {
+    // Half alpha of the light surface over black is 3.54:1 for the light text.
+    const ground = composite(palette.light['header-bg'], 0.5, DARKEST_CONTENT)
+    expect(failures({ ...palette.light, ground }, [['text', 'ground']], TEXT_MINIMUM)).not.toEqual(
+      [],
+    )
+  })
+
+  it('rejects the dark mode ground at an alpha under the documented one', () => {
+    const ground = composite(palette.dark['header-bg'], 0.75, LIGHTEST_CONTENT)
+    expect(failures({ ...palette.dark, ground }, [['text', 'ground']], TEXT_MINIMUM)).not.toEqual(
+      [],
+    )
   })
 })

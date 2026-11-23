@@ -23,6 +23,10 @@
   --color-border: light-dark(#cdb7d1, #503a55);
   --color-border-strong: light-dark(#806487, #917595);
 
+  --color-header-bg: var(--color-surface);
+  --color-header-border: var(--color-border);
+  --blur-header: 0px;
+
   --color-text: light-dark(#3c223f, #e1c4e8);
   --color-text-muted: light-dark(#614568, #bca3c2);
   --color-text-faint: light-dark(#67496f, #ae92b5);

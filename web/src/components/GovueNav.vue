@@ -2,9 +2,10 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { ref, useId } from 'vue'
+import { inject, onBeforeUnmount, ref, useId, watch } from 'vue'
 
 import { useGovueText } from '../i18n/plugin'
+import { headerContextKey } from './headerContext'
 
 export interface NavItem {
   href: string
@@ -29,6 +30,13 @@ const { t } = useGovueText()
 const listId = useId()
 const open = ref(false)
 const toggle = ref<HTMLButtonElement | null>(null)
+
+// Inside a GovueHeader the header learns whether the list is open, so an
+// overlay header can give the open menu a solid ground. Outside one this is
+// a no-op.
+const header = inject(headerContextKey, null)
+watch(open, (value) => header?.setMenuOpen(value))
+onBeforeUnmount(() => header?.setMenuOpen(false))
 
 /** close returns focus to the toggle, so Escape does not drop the visitor at
  *  the top of the page. */

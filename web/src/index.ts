@@ -55,6 +55,9 @@ export type {
   PasskeyStatus,
 } from './composables/usePasskey'
 
+export { DEFAULT_SCROLL_THRESHOLD, useScrolled } from './composables/useScrolled'
+export type { ScrolledOptions } from './composables/useScrolled'
+
 export { useToasts } from './composables/useToasts'
 export type { Toast, ToastInput, ToastKind, ToastState } from './composables/useToasts'
 
@@ -128,6 +131,7 @@ export { default as GovueField } from './components/GovueField.vue'
 export { default as GovueFooter } from './components/GovueFooter.vue'
 export type { FooterLink } from './components/GovueFooter.vue'
 export { default as GovueHeader } from './components/GovueHeader.vue'
+export type { NavPlacement } from './components/GovueHeader.vue'
 export { default as GovueInput } from './components/GovueInput.vue'
 export { default as GovueLanguageSwitch } from './components/GovueLanguageSwitch.vue'
 export { default as GovueLegalPage } from './components/GovueLegalPage.vue'

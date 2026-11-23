@@ -57,9 +57,62 @@ export const NON_TEXT_PAIRS: Array<[fg: string, bg: string]> = [
   ['focus', 'surface-hover'],
 ]
 
+// The header ground is a role of its own, so a site can replace it. The pairs
+// below are checked against whatever ground a stylesheet gives it, the default
+// being the surface. They stay out of TEXT_PAIRS because the theme generator
+// checks a palette of hex roles, and header-bg is an alias there, not a role.
+export const HEADER_TEXT_PAIRS: Array<[fg: string, bg: string]> = [
+  ['text', 'header-bg'],
+  ['text-muted', 'header-bg'],
+  ['accent-text', 'header-bg'],
+]
+
+export const HEADER_NON_TEXT_PAIRS: Array<[fg: string, bg: string]> = [
+  ['focus', 'header-bg'],
+  ['accent', 'header-bg'],
+]
+
+// A header ground with alpha lets the page content show through, so the
+// contrast of the text depends on that content. The two extremes bound it: the
+// lightest content is white, the darkest is black. These are the alphas of the
+// ground at which the shipped themes keep 4.5:1 over both extremes, in both
+// modes. 0.85 holds for `text`, the colour of the brand and the nav items.
+// 0.95 holds for every text role the header uses, `text-muted` and
+// `accent-text` included. The blur does not change this: it only mixes content
+// that lies between the extremes.
+export const LIGHTEST_CONTENT = '#ffffff'
+export const DARKEST_CONTENT = '#000000'
+export const TRANSLUCENT_ALPHA_TEXT = 0.85
+export const TRANSLUCENT_ALPHA_ALL_TEXT = 0.95
+
+function byte(hex: string, index: number): number {
+  return Number.parseInt(hex.slice(1 + 2 * index, 3 + 2 * index), 16)
+}
+
+/** composite lays foreground at the given alpha over background, as the
+ *  browser blends them, and returns the opaque result as hex. */
+export function composite(foreground: string, alpha: number, background: string): string {
+  const parts = [0, 1, 2].map((index) =>
+    Math.round(byte(foreground, index) * alpha + byte(background, index) * (1 - alpha))
+      .toString(16)
+      .padStart(2, '0'),
+  )
+  return `#${parts.join('')}`
+}
+
+/** maxBackdropLuminance is the relative luminance of the brightest ground a
+ *  text colour keeps 4.5:1 on. It is what a host guarantees about a hero under
+ *  a transparent header: the transparent state shows the dark-mode roles, so
+ *  the hero has to stay at or below this luminance for the dark `text`. */
+export function maxBackdropLuminance(text: string, minimum = TEXT_MINIMUM): number {
+  return (luminance(text) + 0.05) / minimum - 0.05
+}
+
 export type Palette = Record<string, string>
 
-/** tokens reads the hex token pairs of one stylesheet, one map per mode. */
+/** tokens reads the hex token pairs of one stylesheet, one map per mode. A
+ *  role that is only an alias of another, `--color-header-bg:
+ *  var(--color-surface)`, takes that role's pair. */
 export function tokens(css: string): { light: Palette; dark: Palette } {
   const light: Palette = {}
   const dark: Palette = {}
@@ -71,6 +124,13 @@ export function tokens(css: string): { light: Palette; dark: Palette } {
     const [, name, lightValue, darkValue] = match
     light[name] = lightValue
     dark[name] = darkValue
+  }
+  for (const match of css.matchAll(/--color-([\w-]+):\s*var\(--color-([\w-]+)\)\s*;/g)) {
+    const [, name, target] = match
+    if (light[target] !== undefined) {
+      light[name] = light[target]
+      dark[name] = dark[target]
+    }
   }
   return { light, dark }
 }
