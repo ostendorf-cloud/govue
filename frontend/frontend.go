@@ -93,6 +93,12 @@ type Config struct {
 	// build.sourcemap 'hidden' writes maps the site means to keep private.
 	// Only a site that wants its sources public sets it.
 	ServeSourceMaps bool
+	// Redirects send the old paths of moved pages to their pages with a
+	// 301 that keeps the query, such as /de/agb to /de/terms. A target must
+	// be a page of the sitemap. A source must pass the path rules and must
+	// not be a route already: a page, its slash form, /, an alias, a file
+	// or anything under /assets/. A redirect is never counted as a view.
+	Redirects []Redirect
 	// Security is the header middleware. Nil is middleware.DefaultSecurity.
 	// New adds themeboot.Hash to a copy of its policy's script-src, so the
 	// policy must set script-src. A nil Policy sends no CSP at all, which is
@@ -136,6 +142,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	publicFiles, err := checkPublicFiles(cfg.PublicFiles)
 	if err != nil {
+		problems = append(problems, err)
+	}
+	if err := checkRedirectSources(cfg.Redirects); err != nil {
 		problems = append(problems, err)
 	}
 
@@ -188,6 +197,9 @@ func New(cfg Config) (*Server, error) {
 	legal := language.LegalConfig{Config: cfg.Language, Terms: s.terms}
 	if err := language.HandleLegal(mux, legal, route); err != nil {
 		return nil, fmt.Errorf("frontend: legal routes: %w", err)
+	}
+	if err := s.mountRedirects(mux, cfg.Redirects, route); err != nil {
+		return nil, err
 	}
 	mux.Handle("/", route(s.catchAll()))
 

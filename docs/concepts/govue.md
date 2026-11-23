@@ -2285,6 +2285,7 @@ try {
   | `/robots.txt` | generated, names the sitemap | `public, max-age=3600` | yes |
   | `/` | `language.Redirect`, 302 | `no-store`, `Vary: Accept-Language, Cookie` | no |
   | legal aliases | `language.HandleLegal`, 302 | `no-store` | no |
+  | each `From` of `Config.Redirects` | 301 to its page | none | no |
   | anything else | `<code>/404.html`, 404 | `no-cache` | no |
 
 - An ETag is the quoted SHA-256 of the body. `http.ServeContent` answers a matching
@@ -2339,6 +2340,21 @@ try {
   path and a page the sitemap does not list answer 404. A browser's percent encoding of a page,
   such as `/de/%C3%BCber`, and the raw form reach the same page, the canonical link in the page
   names one.
+- A moved page keeps its old links through `Config.Redirects`, a list of exact
+  `frontend.Redirect{From, To}` pairs, such as `/de/agb` and `/de/agb/` to `/de/terms`. Each
+  answers a 301 to the escaped path of the target's `loc`, with the query kept and escaped like
+  the slash redirect, so no part of the request reaches `Location` but the query. A trailing
+  slash belongs to the path, so a site lists both forms. There are no patterns and no regular
+  expressions. `New` refuses, by position and kind and never by value:
+  - a target that is not a page of the sitemap, an alias, an asset or a file included.
+  - a source that fails the path rules above, `/` itself, or holds `{`, `}` or white space, the
+    syntax of a `ServeMux` pattern.
+  - a source under `/assets/`, which would shadow a file of the build.
+  - a source that is a route already: a page, its slash form, a language root, an alias, the
+    sitemap, `robots.txt` or a public file. `ServeMux` finds the conflict: its panic, which
+    quotes the pattern, is recovered and becomes an error that does not.
+  - a source listed twice.
+- A redirect answers no HTML with 200, so it is never counted as a view.
 - The build is refused at startup, every problem at once, naming the file:
   - no `<code>/404.html` for a configured language, or one without a head element.
   - no `/<code>/imprint` or `/<code>/privacy` in the sitemap for a configured language, or a
