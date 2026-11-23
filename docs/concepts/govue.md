@@ -2404,7 +2404,8 @@ try {
   `httpserver` sets `DisableGeneralOptionsHandler`, and answers the 404 page with every header.
   A site that serves `Handler` on its own `http.Server` without that field gets the empty 200
   `net/http` writes itself, with none of the headers above. `/api/` answers 404 from the
-  frontend, which is right only when the Ingress sends it to the API image first.
+  frontend, which is right only when the Ingress sends it to the API image first, or in
+  development when `Config.DevAPIProxy` forwards it, see below.
 - Health and readiness live on the admin listener with the metrics, behind `Recover` and
   `RequestID` only, as in "A second listener for what the Ingress must never route". The public
   chain is the outer chain of `example/`: `Recover`, `RequestID`, the security headers, the
@@ -2478,6 +2479,49 @@ try {
   `frontend.AnalyticsCloseTimeout` (five seconds), so the queued views are sent, and joins its
   error to the server's. A site that serves `Handler` on its own listener calls `Server.Close`
   after that listener stopped.
+- Development, one origin without nginx. In production the Ingress puts the frontend and the API
+  on one origin. A compose stack on a developer's machine needs the same, so the browser keeps
+  its same origin rules: no CORS, `connect-src 'self'`, the session cookie host-only, the CSRF
+  origin check on one origin and the Vue client on its default `baseUrl`. Two ports would be two
+  origins, and the image would differ from production in the API address it was built with.
+  So the frontend forwards `/api/` to the API container itself, for development only:
+  - `Config.Development` must be set, and the package never reads it from the environment. The
+    site decides, the example reads `DEVELOPMENT=true`. Without it a `DevAPIProxy` is refused,
+    and without a `DevAPIProxy` `/api/` stays the 404 of production. Tests pin both.
+  - `Config.DevAPIProxy` is `http` or `https` on a loopback address, `localhost` or one label
+    such as the compose service name `api`, with an optional port and path prefix, and no
+    userinfo, query or fragment. A public or private network address, a dotted name and `0.0.0.0`
+    are refused, by field and kind, never by value.
+  - Only the prefix `/api/` is forwarded, after the path rules. `/api` without the slash stays a
+    404, the shape of the Ingress rule. The path and the query go to the target unchanged, under
+    its prefix.
+  - `httputil.ReverseProxy` with `Rewrite`: the hop by hop headers and every inbound `Forwarded`,
+    `X-Forwarded-For`, `-Host`, `-Proto` and `X-Real-Ip` are dropped, and `X-Forwarded-For` is
+    set from `Config.ClientIP` alone, so a client cannot claim an address. The browser's cookies
+    and `Authorization` go along: they are the API's own, the frontend sets none.
+  - A request body over one MiB (`DevAPIProxyMaxBody`) answers 413. The dial has five seconds
+    and the response header thirty, and the environment's proxy settings are ignored. A failure
+    answers one opaque 502 and logs the error type only.
+  - The answer passes the frontend's chain: the frontend's security headers replace the API's
+    copies, so none is sent twice, the access log names the pattern `/api/`, and no answer under
+    `/api/` reaches the page view counter.
+  - A compose stack:
+
+    ```yaml
+    services:
+      api:
+        image: ghcr.io/example/site-api:dev
+      frontend:
+        image: ghcr.io/example/site-frontend:dev
+        environment:
+          DEVELOPMENT: "true"
+          DEV_API_PROXY: http://api:8080
+          ALLOW_PLAIN_HTTP: "true"
+        ports: ["8080:8080"]
+    ```
+
+  - Cookies on `localhost` are shared by every port, so another app on the same machine can see
+    them. That is the development machine's concern, the reason the option exists nowhere else.
 - What it does not do: the API server of a site and per request rendering.
 
 ### Favicons are a build requirement

@@ -75,6 +75,9 @@ repeated here.
   `Middleware` around the mux and `NotModified` on each page handler, so a 200 or a 304 of a
   page counts by its pattern and nothing else counts. The frontend registers
   `analytics_views_dropped_total` on its own metrics, and `Run` closes the client.
+  `Config.DevAPIProxy` forwards `/api/` to a loopback or single label host for a compose stack,
+  only with `Config.Development`, which the package never reads from the environment. Without
+  both `/api/` stays a 404. `X-Forwarded-For` comes from `Config.ClientIP` alone.
   "Frontend server" in the concept doc is the spec.
 - `pow` issues and verifies stateless proof of work challenges, the ALTCHA shape, signed with
   HMAC-SHA-256 over a domain separator and the site name. Keys are at least 32 bytes, the first

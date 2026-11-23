@@ -44,11 +44,19 @@ type frontendConfig struct {
 	// umamiHTTP posts the views. It is not read from the environment. Nil
 	// is the default client, and tests replace it.
 	umamiHTTP *http.Client
+	// development and devAPIProxy run the frontend and the API images on
+	// one origin in a compose stack: /api/ goes to the API container. Both
+	// are off unless DEVELOPMENT=true and DEV_API_PROXY are set.
+	development bool
+	devAPIProxy string
+	// devAPITransport reaches the API. It is not read from the environment.
+	// Nil is the package default, and tests answer in memory.
+	devAPITransport http.RoundTripper
 }
 
 // loadFrontendConfig reads ADDR, ADMIN_ADDR, LOG_LEVEL, TRUSTED_PROXIES,
-// ALLOW_PLAIN_HTTP, SITE_HOST, the UMAMI_ variables and SITE_DIR, which is
-// required here.
+// ALLOW_PLAIN_HTTP, SITE_HOST, the UMAMI_ variables, DEVELOPMENT,
+// DEV_API_PROXY and SITE_DIR, which is required here.
 func loadFrontendConfig(getenv func(string) string) (frontendConfig, error) {
 	l := envconf.New(getenv)
 	var problems []error
@@ -69,6 +77,10 @@ func loadFrontendConfig(getenv func(string) string) (frontendConfig, error) {
 	cfg.trustedProxies = proxies
 	cfg.allowPlainHTTP = l.Bool("ALLOW_PLAIN_HTTP", false)
 	cfg.siteHost = l.String("SITE_HOST", "localhost")
+	// The example reads the development flag from the environment, the
+	// package never does. frontend.New checks the URL.
+	cfg.development = l.Bool("DEVELOPMENT", false)
+	cfg.devAPIProxy = l.String("DEV_API_PROXY", "")
 	cfg.umami, err = analytics.LoadConfig(getenv)
 	if err != nil {
 		problems = append(problems, err)
@@ -120,6 +132,10 @@ func newFrontend(cfg frontendConfig, logger *slog.Logger) (*frontend.Server, err
 		ClientIP:   resolver,
 		Analytics:  views,
 		Logger:     logger,
+
+		Development:     cfg.development,
+		DevAPIProxy:     cfg.devAPIProxy,
+		DevAPITransport: cfg.devAPITransport,
 	})
 	if err != nil {
 		// Nothing was served, so nothing is queued.

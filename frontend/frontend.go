@@ -124,6 +124,22 @@ type Config struct {
 	// the client after the listeners stopped. A site that serves Handler
 	// itself closes it.
 	Analytics *analytics.Client
+	// Development allows the options that are for a developer's machine
+	// only, today DevAPIProxy. The package never reads it from the
+	// environment, the site decides. Off in production.
+	Development bool
+	// DevAPIProxy, with Development set, forwards every request under
+	// /api/ to this URL, so the browser talks to the frontend and the API
+	// on one origin in a compose stack, as the Ingress does in production.
+	// It must be http or https on a loopback address, localhost or a single
+	// label host such as a compose service name, with an optional port and
+	// path prefix, and no userinfo, query or fragment. Without Development
+	// it is refused, and empty /api/ stays a 404.
+	DevAPIProxy string
+	// DevAPITransport is the transport of DevAPIProxy. Nil is one with a
+	// five second dial and a thirty second header timeout that ignores the
+	// proxy environment. A test passes one that answers in memory.
+	DevAPITransport http.RoundTripper
 	// RateLimit, when set, is applied to every route. Nil applies none.
 	RateLimit *middleware.RateLimit
 	// Logger receives the access log and the server's own lines.
@@ -172,6 +188,10 @@ func New(cfg Config) (*Server, error) {
 		problems = append(problems, err)
 	}
 	if err := checkRedirectSources(cfg.Redirects); err != nil {
+		problems = append(problems, err)
+	}
+	devAPI, err := checkDevAPIProxy(cfg.DevAPIProxy, cfg.Development)
+	if err != nil {
 		problems = append(problems, err)
 	}
 
@@ -261,7 +281,11 @@ func New(cfg Config) (*Server, error) {
 	// that read r.Pattern. The path check sits between the access log and
 	// the view counter and passes the request on unchanged, and the counter
 	// wraps the mux directly, so the pattern the mux sets is still seen.
-	srv.handler = middleware.Chain(s.canonicalOnly(views.Middleware(mux)),
+	site := views.Middleware(mux)
+	if devAPI != nil {
+		site = withDevAPIProxy(site, newDevAPIProxy(devAPI, cfg.DevAPITransport, resolver, cfg.Logger), route)
+	}
+	srv.handler = middleware.Chain(s.canonicalOnly(site),
 		middleware.Recover(cfg.Logger),
 		middleware.RequestID(cfg.Logger),
 		security.Middleware,
