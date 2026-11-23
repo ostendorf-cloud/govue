@@ -58,6 +58,29 @@ var languageTag = regexp.MustCompile(`^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8}){0,3}$`)
 // w.(http.Hijacker) assertion fails. http.ResponseController reaches Hijack
 // and every other capability through Unwrap.
 func (c *Client) Middleware(next http.Handler) http.Handler {
+	return c.counting(next, func(status int, contentType string) bool {
+		return status == http.StatusOK && isHTML(contentType)
+	})
+}
+
+// NotModified records a view for every GET that answers 304, with the same
+// rules as Middleware otherwise. A page served with an ETag is revalidated
+// on a revisit, and the browser shows its cached copy after a 304, so the
+// visit would otherwise go uncounted. A 304 carries no Content-Type, so this
+// wraps the handler of an HTML page only, never an asset or a file, and
+// Middleware still wraps the mux for the 200 answers. It reads the route
+// pattern like Middleware, which the mux has set by the time it calls a
+// registered handler. A configuration that counts nothing returns next
+// unchanged.
+func (c *Client) NotModified(next http.Handler) http.Handler {
+	return c.counting(next, func(status int, _ string) bool {
+		return status == http.StatusNotModified
+	})
+}
+
+// counting is the body of Middleware and NotModified: count reports whether
+// the answer is a view.
+func (c *Client) counting(next http.Handler, count func(status int, contentType string) bool) http.Handler {
 	if !c.enabled {
 		return next
 	}
@@ -69,7 +92,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 		}
 		rec := &pageWriter{ResponseWriter: w}
 		next.ServeHTTP(rec, r)
-		if rec.status != http.StatusOK || !isHTML(rec.contentType) {
+		if !count(rec.status, rec.contentType) {
 			return
 		}
 		route, ok := c.route(r)

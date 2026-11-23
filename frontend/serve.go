@@ -29,9 +29,12 @@ func (f *file) handler() http.Handler {
 
 // mount registers every page, its slash form, the sitemap, robots.txt, the
 // public files and the assets on mux, each wrapped by route.
-func (s *site) mount(mux *http.ServeMux, route func(http.Handler) http.Handler) {
+//
+// page wraps the handler of each page only, inside route: it is where a 304
+// of a page is counted as a view.
+func (s *site) mount(mux *http.ServeMux, route, page func(http.Handler) http.Handler) {
 	for _, p := range s.pages {
-		mux.Handle(p.pattern, route(p.file.handler()))
+		mux.Handle(p.pattern, route(page(p.file.handler())))
 		mux.Handle(p.slashPattern, route(redirectTo(p.location)))
 	}
 	mux.Handle("GET /"+sitemapFile, route(s.sitemap.handler()))

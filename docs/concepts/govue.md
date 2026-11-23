@@ -2457,9 +2457,28 @@ try {
     another site is a third party cookie, which several browsers block by default. Keep the API
     on the same site.
   - every preflight is a round trip more. Same origin needs none of this, so it is the default.
-- What it does not do: the API server of a site and per request rendering. Page view counting
-  through `analytics` is not wired into it yet, so a site that counts views server side keeps
-  its pages in the API image until it is.
+- Page views. `Config.Analytics` takes the site's `*analytics.Client`, nil counts nothing. A site
+  cannot wrap `Handler` itself: `RequestID` and the security headers replace the request inside
+  the chain, so an outer counter would never see `r.Pattern`. So `New` places the client:
+  - `Middleware` directly around the mux, inside the access log and the path check, as
+    `example/` does for the one server. A page answered with 200 counts by its pattern, such as
+    `/de/imprint`, never by its path, and the query is never sent.
+  - `NotModified` on the handler of each page and of nothing else, so a page revalidated with
+    its ETag and answered with 304 counts too, see "Analytics".
+  - A redirect, an alias, the slash form, a 404, an asset, a public file, `robots.txt` and the
+    sitemap answer no HTML with 200 and no page 304, so none of them counts.
+  - The rules of `analytics` hold unchanged: GET only, Do Not Track and Global Privacy Control
+    honoured, no bot, no prefetch, no private client, the address masked unless the site sets
+    `FullIP`, the client address from the same `Config.ClientIP` as the access log.
+- The drop counter. The frontend owns its metrics registry, so it registers
+  `analytics_views_dropped_total` itself, read from `Stats().Dropped` through
+  `metrics.NewCounterFunc`, when the client counts. The site passes no `OnDrop`, and the name is
+  the one `example/` uses on the one server.
+- Shutdown. `Run` closes the client once both listeners stopped, within
+  `frontend.AnalyticsCloseTimeout` (five seconds), so the queued views are sent, and joins its
+  error to the server's. A site that serves `Handler` on its own listener calls `Server.Close`
+  after that listener stopped.
+- What it does not do: the API server of a site and per request rendering.
 
 ### Favicons are a build requirement
 
@@ -2595,9 +2614,12 @@ try {
   - The method is GET. HEAD is not counted, a crawler or a link checker sends it.
   - The response is 200 with a `text/html` body. A 404, a 5xx, a redirect, a 304, JSON, an asset
     and an empty 200 are not pages. A handler that sets no content type gets the type net/http
-    would sniff. A panicking handler counts nothing. A 304 is never counted: it carries no body,
-    and a revalidating visitor is therefore missing from the numbers. That undercount is
-    accepted over counting an asset.
+    would sniff. A panicking handler counts nothing. `Middleware` never counts a 304: it
+    carries no body and no content type, so it cannot tell a page from an asset. A server that
+    revalidates its pages with an ETag wraps the handler of each page, and only of a page, with
+    `NotModified`, which counts a 304 of a GET with every other rule here unchanged. Without it
+    a revisit that answers 304 is missing from the numbers. The `frontend` package does this,
+    so its pages count the way a server without an ETag counted them.
   - The request has no `DNT: 1` and no `Sec-GPC: 1`. Either one means the visitor is not counted
     at all. Every header line and every comma separated part is read, so `0` then `1` and
     `0, 1` are a signal. `DNT: 0`, a missing header and a value that is not `1`, such as `yes`,
@@ -2690,7 +2712,7 @@ try {
 - What a product must say in its privacy text, as a checklist and not as legal text or legal
   advice. The product's own counsel decides what the law asks of it:
   - Page views are counted on the server, with no script, no cookie and nothing stored on the
-    visitor's device.
+    visitor's device. A revisit of a page the browser revalidates counts like the first visit.
   - What is sent to Umami: the page (the route, not the address with its query), the referring
     site (its origin only), the browser language, the user agent and the visitor's IP address,
     shortened to its first three bytes for IPv4 or six for IPv6 unless the product sets

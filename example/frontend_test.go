@@ -142,6 +142,40 @@ func TestFrontendServesTheBuildThroughTheRealChain(t *testing.T) {
 	}
 }
 
+// TestFrontendCountsPagesThroughTheRealChain runs the frontend image with
+// Umami set: a page is counted by its pattern, a redirect, an alias, a 404
+// and a file are not.
+func TestFrontendCountsPagesThroughTheRealChain(t *testing.T) {
+	env := map[string]string{
+		"SITE_DIR":         writeFrontendBuild(t),
+		"SITE_HOST":        "site.example.test",
+		"UMAMI_URL":        umamiTestURL,
+		"UMAMI_WEBSITE_ID": umamiTestID,
+	}
+	cfg, err := loadFrontendConfig(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeUmami{}
+	cfg.umamiHTTP = &http.Client{Transport: fake}
+	s, err := newFrontend(cfg, testLogger())
+	if err != nil {
+		t.Fatalf("newFrontend: %v", err)
+	}
+	for _, target := range []string{
+		"/de/imprint?token=abc", "/", "/de", "/impressum", "/de/missing", "/assets/index-BXa3k2_9.js", "/robots.txt",
+	} {
+		visit(t, s.Handler(), target, nil)
+	}
+	if err := s.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	posts := fake.bodies()
+	if len(posts) != 1 || !strings.Contains(posts[0], `"url":"/de/imprint"`) || strings.Contains(posts[0], "token") {
+		t.Errorf("posts = %v, want the one page by its pattern", posts)
+	}
+}
+
 func TestFrontendRefusesABuildWithoutA404Page(t *testing.T) {
 	dir := writeFrontendBuild(t)
 	if err := os.Remove(filepath.Join(dir, "en", "404.html")); err != nil {

@@ -52,7 +52,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"time"
 
+	"github.com/ostendorf-cloud/govue/analytics"
 	"github.com/ostendorf-cloud/govue/clientip"
 	"github.com/ostendorf-cloud/govue/favicon"
 	"github.com/ostendorf-cloud/govue/health"
@@ -112,11 +114,29 @@ type Config struct {
 	// ClientIP resolves the client address of the access log and of
 	// RateLimit. Nil trusts no proxy and logs the peer address.
 	ClientIP *clientip.Resolver
+	// Analytics counts page views, nil counts nothing. New places its
+	// Middleware directly around the mux, inside the access log, and its
+	// NotModified on each page, so a page answered with 200 or revalidated
+	// with 304 is counted by its route pattern, never by its path. A
+	// redirect, an alias, a 404, an asset, robots.txt and the sitemap are
+	// never counted. The drop counter analytics_views_dropped_total is on
+	// the frontend's own metrics, so the site passes no OnDrop. Run closes
+	// the client after the listeners stopped. A site that serves Handler
+	// itself closes it.
+	Analytics *analytics.Client
 	// RateLimit, when set, is applied to every route. Nil applies none.
 	RateLimit *middleware.RateLimit
 	// Logger receives the access log and the server's own lines.
 	Logger *slog.Logger
 }
+
+// viewsDroppedMetric names the counter of page views lost before they reached
+// Umami, the name example/ uses.
+const viewsDroppedMetric = "analytics_views_dropped_total"
+
+// AnalyticsCloseTimeout bounds how long Run waits, after the listeners
+// stopped, for the queued page views to reach Umami.
+const AnalyticsCloseTimeout = 5 * time.Second
 
 // Server is a frontend server built by New.
 type Server struct {
@@ -124,6 +144,8 @@ type Server struct {
 	health  *health.Registry
 	handler http.Handler
 	admin   http.Handler
+	// views is Config.Analytics, nil when the site counts nothing.
+	views *analytics.Client
 }
 
 // New reads cfg.Build and returns the server. It returns every problem at
@@ -202,9 +224,17 @@ func New(cfg Config) (*Server, error) {
 		route = cfg.RateLimit.Middleware
 	}
 
+	// views counts page views: Middleware around the mux for a page answered
+	// with 200, NotModified on each page for one revalidated with 304. Both
+	// return the handler unchanged for a nil or inert client.
+	views := cfg.Analytics
+	if views == nil {
+		views = &analytics.Client{}
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("GET /{$}", route(redirect))
-	s.mount(mux, route)
+	s.mount(mux, route, views.NotModified)
 	legal := language.LegalConfig{Config: cfg.Language, Terms: s.terms}
 	if err := language.HandleLegal(mux, legal, route); err != nil {
 		return nil, fmt.Errorf("frontend: legal routes: %w", err)
@@ -217,14 +247,21 @@ func New(cfg Config) (*Server, error) {
 	registry := metrics.NewRegistry()
 	httpMetrics := metrics.NewHTTP(registry)
 	accessLog := middleware.AccessLog{ClientIP: resolver}
+	if views.Enabled() {
+		// The frontend owns the registry, so it owns the drop counter: it
+		// reads the client's own count, and the site passes no OnDrop.
+		metrics.NewCounterFunc(registry, viewsDroppedMetric,
+			"Page views lost to a full queue or a shutdown before they reached Umami.",
+			func() float64 { return float64(views.Stats().Dropped) })
+	}
 
-	srv := &Server{logger: cfg.Logger, health: health.New()}
+	srv := &Server{logger: cfg.Logger, health: health.New(), views: cfg.Analytics}
 	// The outer chain of example/: Recover first, then RequestID and the
 	// security headers, which replace the request, then the two middlewares
 	// that read r.Pattern. The path check sits between the access log and
-	// the mux and passes the request on unchanged, so the pattern the mux
-	// sets is still seen.
-	srv.handler = middleware.Chain(s.canonicalOnly(mux),
+	// the view counter and passes the request on unchanged, and the counter
+	// wraps the mux directly, so the pattern the mux sets is still seen.
+	srv.handler = middleware.Chain(s.canonicalOnly(views.Middleware(mux)),
 		middleware.Recover(cfg.Logger),
 		middleware.RequestID(cfg.Logger),
 		security.Middleware,
@@ -259,12 +296,14 @@ func (s *Server) Health() *health.Registry { return s.health }
 // Run serves Handler on addr and AdminHandler on adminAddr with
 // httpserver.RunAdmin until ctx is cancelled, and fails readiness before the
 // drain delay. adminAddr is required: without it no probe and no metric
-// would be served.
+// would be served. Once the listeners stopped, Run closes Config.Analytics
+// within AnalyticsCloseTimeout, so the queued views are sent, and returns
+// both errors joined.
 func (s *Server) Run(ctx context.Context, addr, adminAddr string) error {
 	if adminAddr == "" {
 		return errors.New("frontend: run: the admin address is required, the probes and the metrics live there")
 	}
-	return httpserver.RunAdmin(ctx, httpserver.Config{
+	err := httpserver.RunAdmin(ctx, httpserver.Config{
 		Addr:           addr,
 		Handler:        s.handler,
 		Logger:         s.logger,
@@ -273,4 +312,24 @@ func (s *Server) Run(ctx context.Context, addr, adminAddr string) error {
 		Addr:    adminAddr,
 		Handler: s.admin,
 	})
+	// The listeners have stopped, so the run context is done: Close gets a
+	// fresh one, bounded by AnalyticsCloseTimeout.
+	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), AnalyticsCloseTimeout)
+	defer cancel()
+	return errors.Join(err, s.Close(closeCtx))
+}
+
+// Close sends the page views still queued in Config.Analytics and stops its
+// workers, within ctx. Run calls it once the listeners stopped. A site that
+// serves Handler on its own listener calls it after that listener stopped,
+// with a bounded context. It is a no-op without Config.Analytics and safe to
+// call more than once.
+func (s *Server) Close(ctx context.Context) error {
+	if s.views == nil {
+		return nil
+	}
+	if err := s.views.Close(ctx); err != nil {
+		return fmt.Errorf("frontend: close analytics: %w", err)
+	}
+	return nil
 }
