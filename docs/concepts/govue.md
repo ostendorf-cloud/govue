@@ -2836,17 +2836,25 @@ try {
   replicas a solution can be used once per replica until it expires. A consumer that needs one
   global answer passes its own `Seen`. Statelessness is the owner decision: nothing about an
   issued challenge is stored.
-- `MemorySeen` scans the whole map while it is full, so each `Use` is O(n) then: about 674
-  microseconds at 100000 entries. `ErrBusy` is a global fail closed lockout, because a full set
-  refuses every solution until entries expire. `Verify` therefore runs behind the consumer's per
-  client rate limit, so one client cannot fill the set.
+- `MemorySeen` keeps a min-heap by expiry next to its map. Every `Use` first drops each entry
+  whose expiry has passed, then checks and records, so a `Use` costs O(log n) and never scans the
+  set. An entry stays past its expiry only until the next solution reaches the replay check, or
+  until the process ends: on an idle site that can be long. There is no background goroutine and
+  nothing to close. The other choices were a sweep goroutine, which needs a `Close` that every
+  consumer has to call, and a first in first out queue, which is O(1) but lets an entry with a
+  late expiry hold back the ones behind it, so the documentation could not say when an entry
+  goes. `ErrBusy` is a global fail closed lockout, because a full set holds only unexpired
+  entries and refuses every solution until one expires. `Verify` therefore runs behind the
+  consumer's per client rate limit, so one client cannot fill the set.
 - Limits. Proof of work is a speed bump: native code solves 300000 hashes in tens of
   milliseconds, so it only slows a naive script. The rate limits of the route and a global
   ceiling are the real control. There is no binding to an address or a session, because mobile
   clients change networks. The challenge route is unauthenticated and costs the server one HMAC.
 - Privacy facts a consumer's page can quote: the server stores no challenge and nothing about
-  the visitor, the single use record holds one hash until expiry and is not linked to a person,
-  no cookie is set, no browser storage is used and no third party is called.
+  the visitor, the single use record holds one hash of a solved challenge in process memory and
+  is not linked to a person, no cookie is set, no browser storage is used and no third party is
+  called. With `MemorySeen` the hash goes with the first solution checked after the challenge
+  expired, 10 minutes by default, or with the process, whichever comes first.
 - `pow/testdata/vectors.json` is the shared contract with the browser solver (#198): a fixed
   key, audience, clock and challenge, hash vectors and verify cases with the expected outcome.
   The Go test reads it, and `go test ./pow -run TestVectors -update` rewrites it.

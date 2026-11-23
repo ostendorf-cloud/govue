@@ -84,7 +84,9 @@ repeated here.
 - `pow` issues and verifies stateless proof of work challenges, the ALTCHA shape, signed with
   HMAC-SHA-256 over a domain separator and the site name. Keys are at least 32 bytes, the first
   signs and all verify. Replay is limited by the expiry plus a single use `Seen`, by default a
-  bounded in memory set that is per process and refuses with `ErrBusy` rather than forget.
+  bounded in memory set that is per process and refuses with `ErrBusy` rather than forget. Every
+  `Use` of it first drops the expired entries through a min-heap by expiry, O(log n), with no
+  goroutine, so an entry outlives its expiry only until the next checked solution.
   Proof of work is a speed bump, the rate limits are the control. It sets no cookie and stores
   nothing about a visitor. `pow/testdata/vectors.json` is shared with the Vue solver. It imports
   no other govue package.

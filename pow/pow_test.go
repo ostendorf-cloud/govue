@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"strconv"
 	"strings"
 	"sync"
@@ -472,6 +473,123 @@ func TestMemorySeen(t *testing.T) {
 	}
 	if NewMemorySeen(0).max != DefaultMaxUsed {
 		t.Error("default bound missing")
+	}
+}
+
+// Expired entries go at the next Use, not only when the set is full.
+func TestMemorySeenDropsExpiredOnEveryUse(t *testing.T) {
+	t.Parallel()
+
+	m := NewMemorySeen(100)
+	// Recorded out of expiry order.
+	for _, e := range []struct {
+		id  string
+		exp time.Duration
+	}{{"a", time.Minute}, {"b", 3 * time.Minute}, {"c", 2 * time.Minute}} {
+		if err := m.Use(e.id, t0.Add(e.exp), t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Just before the first expiry nothing goes.
+	if err := m.Use("d", t0.Add(10*time.Minute), t0.Add(time.Minute-time.Nanosecond)); err != nil {
+		t.Fatal(err)
+	}
+	if m.Len() != 4 {
+		t.Fatalf("len = %d before any expiry, want 4", m.Len())
+	}
+	// At the expiry of c, a and c go, b and d stay. The expiry instant counts
+	// as expired, like in Verify.
+	if err := m.Use("e", t0.Add(10*time.Minute), t0.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if m.Len() != 3 {
+		t.Fatalf("len = %d after a and c expired, want 3", m.Len())
+	}
+	for _, id := range []string{"b", "d", "e"} {
+		if err := m.Use(id, t0.Add(time.Hour), t0.Add(2*time.Minute)); !errors.Is(err, ErrReplay) {
+			t.Errorf("Use(%s) = %v, want ErrReplay", id, err)
+		}
+	}
+	// A dropped id can be recorded again.
+	if err := m.Use("a", t0.Add(time.Hour), t0.Add(2*time.Minute)); err != nil {
+		t.Errorf("Use(a) after expiry = %v", err)
+	}
+	if err := m.Use("a", t0.Add(time.Hour), t0.Add(2*time.Minute)); !errors.Is(err, ErrReplay) {
+		t.Errorf("second Use(a) = %v, want ErrReplay", err)
+	}
+	// A refused Use sweeps too.
+	if err := m.Use("a", t0.Add(time.Hour), t0.Add(59*time.Minute)); !errors.Is(err, ErrReplay) {
+		t.Fatalf("Use(a) = %v, want ErrReplay", err)
+	}
+	if m.Len() != 1 {
+		t.Fatalf("len = %d after b, d and e expired on a refused Use, want 1", m.Len())
+	}
+}
+
+// The service with a fake clock: an entry goes at the first Verify after its
+// challenge expired.
+func TestMemorySeenExpiryThroughVerify(t *testing.T) {
+	t.Parallel()
+
+	c := &clock{t: t0}
+	m := NewMemorySeen(10)
+	s := newService(t, c, func(cfg *Config) { cfg.Seen = m })
+	first, _ := s.Create()
+	c.advance(5 * time.Second)
+	if err := s.Verify(solve(t, first)); err != nil {
+		t.Fatal(err)
+	}
+	c.advance(10 * time.Minute)
+	second, _ := s.Create()
+	c.advance(5 * time.Second)
+	if m.Len() != 1 {
+		t.Fatalf("len = %d, want 1: no Verify ran since the expiry", m.Len())
+	}
+	if err := s.Verify(solve(t, second)); err != nil {
+		t.Fatal(err)
+	}
+	if m.Len() != 1 {
+		t.Fatalf("len = %d, want 1: the expired entry stayed", m.Len())
+	}
+}
+
+// A model check: after every Use the set holds exactly the unexpired ids,
+// whatever the order of the expiries.
+func TestMemorySeenMatchesModel(t *testing.T) {
+	t.Parallel()
+
+	const capacity = 64
+	m := NewMemorySeen(capacity)
+	model := map[string]time.Time{}
+	rng := rand.New(rand.NewPCG(1, 2))
+	now := t0
+	for i := range 5000 {
+		now = now.Add(time.Duration(rng.IntN(3)) * time.Second)
+		id := strconv.Itoa(rng.IntN(200))
+		exp := now.Add(time.Duration(rng.IntN(120)-10) * time.Second)
+		for k, e := range model {
+			if !now.Before(e) {
+				delete(model, k)
+			}
+		}
+		var want error
+		switch _, ok := model[id]; {
+		case ok:
+			want = ErrReplay
+		case len(model) >= capacity:
+			want = ErrBusy
+		default:
+			model[id] = exp
+		}
+		if err := m.Use(id, exp, now); !errors.Is(err, want) || (want == nil && err != nil) {
+			t.Fatalf("step %d: Use(%s) = %v, want %v", i, id, err, want)
+		}
+		if m.Len() != len(model) {
+			t.Fatalf("step %d: len = %d, want %d", i, m.Len(), len(model))
+		}
+		if len(m.order) != len(m.used) {
+			t.Fatalf("step %d: heap holds %d, map %d", i, len(m.order), len(m.used))
+		}
 	}
 }
 

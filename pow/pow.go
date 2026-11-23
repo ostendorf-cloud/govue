@@ -34,18 +34,20 @@
 // A consumer that needs one global answer supplies its own [Seen]. A full set
 // refuses with [ErrBusy], it never forgets an unexpired entry.
 //
-// [MemorySeen] scans the whole map while it is full, so a [Service.Verify] is
-// O(n) then: about 0.7 ms at 100000 entries. [ErrBusy] is a global fail closed
-// lockout: while the set is full of unexpired entries every solution is
-// refused. Run Verify behind a per client rate limit so that one client
-// cannot fill the set.
+// [MemorySeen] drops every expired entry at the start of each use, through a
+// min-heap by expiry, so a [Service.Verify] costs O(log n) in the set and
+// never scans it. [ErrBusy] is a global fail closed lockout: while the set is
+// full of unexpired entries every solution is refused. Run Verify behind a
+// per client rate limit so that one client cannot fill the set.
 //
 // Privacy facts a consumer's page can quote, all true of this package:
 //
 //   - Nothing is stored about a visitor. The server keeps no challenge, no
 //     address and no identifier of a person. The single use record holds one
-//     hash of a solved challenge until the challenge expires, and it is not
-//     linked to a person.
+//     hash of a solved challenge in process memory, and it is not linked to
+//     a person. With [MemorySeen] the hash is dropped by the first solution
+//     checked after the challenge expired, or with the process, whichever
+//     comes first, so on an idle site it can stay past the expiry until then.
 //   - No cookie is set and no browser storage is used. The challenge is a
 //     response body and the solution is a request body.
 //   - No third party is called.
@@ -56,6 +58,7 @@
 package pow
 
 import (
+	"container/heap"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -368,10 +371,52 @@ func (s *Service) Verify(sol Solution) error {
 }
 
 // MemorySeen is a bounded in memory [Seen]. It is per process.
+//
+// Every [MemorySeen.Use] first drops every entry whose expiry is not after
+// the now it is given, then checks and records. An entry therefore stays in
+// memory past its expiry only until the next Use, which [Service.Verify] makes
+// for every solution that passed all other checks, or until the process ends. There is no background goroutine and
+// nothing to close. A Use costs O(log n) in the number of entries: the
+// entries sit in a min-heap by expiry next to the map, so a sweep touches
+// only expired entries and never scans the whole set.
 type MemorySeen struct {
-	mu   sync.Mutex
-	max  int
-	used map[string]time.Time
+	mu    sync.Mutex
+	max   int
+	used  map[string]time.Time
+	order expiryHeap
+}
+
+// seenEntry is one recorded id with its expiry.
+type seenEntry struct {
+	id      string
+	expires time.Time
+}
+
+// expiryHeap is a min-heap of entries by expiry. It holds exactly the ids of
+// MemorySeen.used: an id is pushed when it is recorded and popped when it is
+// dropped, and an id is recorded again only after it was dropped.
+// It implements container/heap.Interface.
+type expiryHeap []seenEntry
+
+func (h expiryHeap) Len() int           { return len(h) }
+func (h expiryHeap) Less(i, j int) bool { return h[i].expires.Before(h[j].expires) }
+func (h expiryHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+// Push appends an entry, for container/heap.
+func (h *expiryHeap) Push(x any) {
+	e, _ := x.(seenEntry) // Only Use pushes, always a seenEntry.
+	*h = append(*h, e)
+}
+
+// Pop removes the last entry, for container/heap.
+func (h *expiryHeap) Pop() any {
+	s := *h
+	last := len(s) - 1
+	e := s[last]
+	// Clear the vacated slot so the backing array does not keep the id alive.
+	s[last] = seenEntry{}
+	*h = s[:last]
+	return e
 }
 
 // NewMemorySeen returns a set that holds at most max unexpired entries.
@@ -383,29 +428,31 @@ func NewMemorySeen(max int) *MemorySeen {
 	return &MemorySeen{max: max, used: map[string]time.Time{}}
 }
 
-// Use implements [Seen]. Only an expired entry is dropped to make room.
+// Use implements [Seen]. It drops every entry that expired at now, then
+// refuses a recorded id with [ErrReplay] and a full set with [ErrBusy]. A
+// full set holds only unexpired entries, so it never forgets one to make
+// room.
 func (m *MemorySeen) Use(id string, expires, now time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if exp, ok := m.used[id]; ok && now.Before(exp) {
+	for len(m.order) > 0 && !now.Before(m.order[0].expires) {
+		e, _ := heap.Pop(&m.order).(seenEntry) // The heap holds seenEntry only.
+		delete(m.used, e.id)
+	}
+	if _, ok := m.used[id]; ok {
 		return ErrReplay
 	}
 	if len(m.used) >= m.max {
-		for k, exp := range m.used {
-			if !now.Before(exp) {
-				delete(m.used, k)
-			}
-		}
-		if len(m.used) >= m.max {
-			// Refusing is safe: forgetting an unexpired entry would allow a replay.
-			return ErrBusy
-		}
+		// Refusing is safe: forgetting an unexpired entry would allow a replay.
+		return ErrBusy
 	}
 	m.used[id] = expires
+	heap.Push(&m.order, seenEntry{id: id, expires: expires})
 	return nil
 }
 
-// Len returns the number of recorded entries.
+// Len returns the number of recorded entries, expired ones that no Use has
+// dropped yet included.
 func (m *MemorySeen) Len() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
