@@ -44,6 +44,6 @@ jobs:
           fetch-depth: 0
 
       - name: Tag and release every merged release pull request
-        uses: ostendorf-cloud/release-me/action@e3346c4a5aa463642e8d0627b01b3308dc49e2ec  # v0.5.1
+        uses: ostendorf-cloud/release-me/action@31ce7e6832baa796d74fba552dac7b66f48915ad  # v0.5.3
         with:
           token: ${{ steps.app-token.outputs.token }}
