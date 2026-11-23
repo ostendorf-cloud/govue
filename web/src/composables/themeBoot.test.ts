@@ -102,6 +102,68 @@ describe('the theme boot script', () => {
     expect(root.hasAttribute(MODE_ATTRIBUTE)).toBe(false)
   })
 
+  describe('the theme-color tags', () => {
+    const LIGHT = '#0f766e'
+    const DARK = '#0b1f1c'
+
+    /** The two tags favicon.Icons.Links writes with a dark colour. */
+    function writeTags(): HTMLMetaElement[] {
+      document.head.innerHTML =
+        `<meta name="theme-color" content="${LIGHT}" media="(prefers-color-scheme: light)">` +
+        `<meta name="theme-color" content="${DARK}" media="(prefers-color-scheme: dark)">`
+      return Array.from(document.head.querySelectorAll('meta'))
+    }
+
+    beforeEach(() => {
+      document.head.innerHTML = ''
+    })
+
+    it('leaves both tags to the system when nothing is stored', () => {
+      const tags = writeTags()
+      boot()
+      expect(tags.map((t) => t.content)).toEqual([LIGHT, DARK])
+    })
+
+    it('pins both tags to dark when dark is stored', () => {
+      localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify({ theme: 'sample', mode: 'dark' }))
+      const tags = writeTags()
+      boot()
+      expect(tags.map((t) => t.content)).toEqual([DARK, DARK])
+    })
+
+    it('pins both tags to light when light is stored against a dark system', () => {
+      vi.stubGlobal('matchMedia', () => ({ matches: true }))
+      localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify({ theme: 'sample', mode: 'light' }))
+      const tags = writeTags()
+      boot()
+      expect(tags.map((t) => t.content)).toEqual([LIGHT, LIGHT])
+    })
+
+    it('leaves both tags alone for the system choice', () => {
+      localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify({ theme: 'sample', mode: 'system' }))
+      const tags = writeTags()
+      boot()
+      expect(tags.map((t) => t.content)).toEqual([LIGHT, DARK])
+    })
+
+    it('leaves a single tag without a media query alone', () => {
+      localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify({ theme: 'sample', mode: 'dark' }))
+      document.head.innerHTML = `<meta name="theme-color" content="${LIGHT}">`
+      boot()
+      expect(document.head.querySelector('meta')?.content).toBe(LIGHT)
+    })
+
+    it('ignores a stored mode outside light and dark', () => {
+      localStorage.setItem(
+        THEME_STORAGE_KEY,
+        JSON.stringify({ theme: 'sample', mode: 'dark) or (x' }),
+      )
+      const tags = writeTags()
+      boot()
+      expect(tags.map((t) => t.content)).toEqual([LIGHT, DARK])
+    })
+  })
+
   it('agrees with what useTheme stores and applies', async () => {
     const first = useTheme({ theme: 'sample-contrast' })
     first.setMode('dark')

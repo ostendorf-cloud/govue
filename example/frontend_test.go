@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,6 +140,116 @@ func TestFrontendServesTheBuildThroughTheRealChain(t *testing.T) {
 		if res := do(t, admin, http.MethodGet, target, nil); res.StatusCode != http.StatusOK {
 			t.Errorf("admin %s: status %d", target, res.StatusCode)
 		}
+	}
+}
+
+// TestFrontendCountsPagesThroughTheRealChain runs the frontend image with
+// Umami set: a page is counted by its pattern, a redirect, an alias, a 404
+// and a file are not.
+func TestFrontendCountsPagesThroughTheRealChain(t *testing.T) {
+	env := map[string]string{
+		"SITE_DIR":         writeFrontendBuild(t),
+		"SITE_HOST":        "site.example.test",
+		"UMAMI_URL":        umamiTestURL,
+		"UMAMI_WEBSITE_ID": umamiTestID,
+	}
+	cfg, err := loadFrontendConfig(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeUmami{}
+	cfg.umamiHTTP = &http.Client{Transport: fake}
+	s, err := newFrontend(cfg, testLogger())
+	if err != nil {
+		t.Fatalf("newFrontend: %v", err)
+	}
+	for _, target := range []string{
+		"/de/imprint?token=abc", "/", "/de", "/impressum", "/de/missing", "/assets/index-BXa3k2_9.js", "/robots.txt",
+	} {
+		visit(t, s.Handler(), target, nil)
+	}
+	if err := s.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	posts := fake.bodies()
+	if len(posts) != 1 || !strings.Contains(posts[0], `"url":"/de/imprint"`) || strings.Contains(posts[0], "token") {
+		t.Errorf("posts = %v, want the one page by its pattern", posts)
+	}
+}
+
+// handlerTransport answers a proxied request with a handler in memory, the
+// example's own API here, so no socket is opened.
+type handlerTransport struct{ h http.Handler }
+
+func (t handlerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	rec := httptest.NewRecorder()
+	// The API sees the request as a server would: a RequestURI and a body.
+	in := req.Clone(req.Context())
+	in.RequestURI = req.URL.RequestURI()
+	if in.Body == nil {
+		in.Body = http.NoBody
+	}
+	t.h.ServeHTTP(rec, in)
+	res := rec.Result()
+	res.Request = req
+	return res, nil
+}
+
+// TestFrontendProxiesTheAPIInDevelopment runs the frontend image and the
+// example's API on one origin, the compose shape: a page from the frontend,
+// /api/ from the API handler, both through the frontend's chain.
+func TestFrontendProxiesTheAPIInDevelopment(t *testing.T) {
+	api, _ := newTestApp(t, 1000)
+	env := map[string]string{
+		"SITE_DIR":      writeFrontendBuild(t),
+		"DEVELOPMENT":   "true",
+		"DEV_API_PROXY": "http://api:8080",
+	}
+	cfg, err := loadFrontendConfig(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.devAPITransport = handlerTransport{h: api.handler()}
+	s, err := newFrontend(cfg, testLogger())
+	if err != nil {
+		t.Fatalf("newFrontend: %v", err)
+	}
+
+	res := do(t, s.Handler(), http.MethodGet, "/api/v1/contact/challenge", nil)
+	got := bodyOf(t, res)
+	// The example runs without a contact key, so its API answers 503
+	// not_configured: the answer of the API, not of the frontend.
+	if res.StatusCode != http.StatusServiceUnavailable || !strings.Contains(got, "not_configured") {
+		t.Errorf("status %d, body %q, want the API's own answer", res.StatusCode, got)
+	}
+	if res.Header.Values("X-Frame-Options")[0] != "DENY" || len(res.Header.Values("Content-Security-Policy")) != 1 {
+		t.Errorf("the proxied answer lacks the frontend's headers: %v", res.Header)
+	}
+	if page := do(t, s.Handler(), http.MethodGet, "/de/", nil); page.StatusCode != http.StatusOK {
+		t.Errorf("page: status %d", page.StatusCode)
+	}
+}
+
+func TestFrontendWithoutDevelopmentKeepsAPIA404(t *testing.T) {
+	env := map[string]string{"SITE_DIR": writeFrontendBuild(t), "DEV_API_PROXY": "http://api:8080"}
+	cfg, err := loadFrontendConfig(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newFrontend(cfg, testLogger()); err == nil || !strings.Contains(err.Error(), "Config.Development") {
+		t.Errorf("newFrontend error = %v, want the refused proxy", err)
+	}
+	delete(env, "DEV_API_PROXY")
+	cfg, err = loadFrontendConfig(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := newFrontend(cfg, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := do(t, s.Handler(), http.MethodGet, "/api/v1/contact/challenge", nil); res.StatusCode != http.StatusNotFound {
+		t.Errorf("status %d, want 404", res.StatusCode)
 	}
 }
 

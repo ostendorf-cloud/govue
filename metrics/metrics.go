@@ -58,6 +58,16 @@ func NewCounter(registry prometheus.Registerer, name, help string) func() {
 	return counter.Inc
 }
 
+// NewCounterFunc registers a counter with no labels into registry whose value
+// is read from value at every scrape. It is for a count a package keeps
+// itself, such as analytics.Client.Stats().Dropped, so the package needs no
+// dependency on Prometheus and the application no callback of its own.
+// value must never decrease. A name that is already registered panics, like
+// NewCounter does.
+func NewCounterFunc(registry prometheus.Registerer, name, help string, value func() float64) {
+	registry.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{Name: name, Help: help}, value))
+}
+
 // HTTP holds the request metrics of one app.
 type HTTP struct {
 	requests *prometheus.CounterVec

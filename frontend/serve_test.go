@@ -84,11 +84,16 @@ func TestPagesCarryTheBootScriptAllowedByTheirHash(t *testing.T) {
 	for _, target := range []string{"/de/", "/en/privacy", "/de/missing"} {
 		res := do(t, h, http.MethodGet, target, nil)
 		page := body(t, res)
-		const open = "<head><script>"
+		// The favicon links lead, then the boot script, ahead of everything
+		// the page carries itself.
+		open := "<head>" + `<link rel="icon" href="/favicon.svg" type="image/svg+xml">` +
+			`<link rel="icon" href="/favicon-32x32.png" type="image/png" sizes="32x32">` +
+			`<link rel="apple-touch-icon" href="/apple-touch-icon.png">` +
+			`<meta name="theme-color" content="` + themeColor + `"><script>`
 		start := strings.Index(page, open)
 		end := strings.Index(page, "</script>")
 		if start < 0 || end < start {
-			t.Fatalf("%s: no boot script right after the head tag: %s", target, page)
+			t.Fatalf("%s: no icon links and boot script right after the head tag: %s", target, page)
 		}
 		script := page[start+len(open) : end]
 		if script != themeboot.Script() {

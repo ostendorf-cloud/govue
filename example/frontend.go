@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/netip"
 	"os"
 
+	"github.com/ostendorf-cloud/govue/analytics"
 	"github.com/ostendorf-cloud/govue/clientip"
 	"github.com/ostendorf-cloud/govue/envconf"
 	"github.com/ostendorf-cloud/govue/frontend"
@@ -35,10 +37,26 @@ type frontendConfig struct {
 	allowPlainHTTP bool
 	// siteDir is the build: Vite's dist with the prerender written into it.
 	siteDir string
+	// siteHost and umami count page views, as the one server does. Counting
+	// is off unless UMAMI_URL and UMAMI_WEBSITE_ID are both set.
+	siteHost string
+	umami    analytics.Config
+	// umamiHTTP posts the views. It is not read from the environment. Nil
+	// is the default client, and tests replace it.
+	umamiHTTP *http.Client
+	// development and devAPIProxy run the frontend and the API images on
+	// one origin in a compose stack: /api/ goes to the API container. Both
+	// are off unless DEVELOPMENT=true and DEV_API_PROXY are set.
+	development bool
+	devAPIProxy string
+	// devAPITransport reaches the API. It is not read from the environment.
+	// Nil is the package default, and tests answer in memory.
+	devAPITransport http.RoundTripper
 }
 
 // loadFrontendConfig reads ADDR, ADMIN_ADDR, LOG_LEVEL, TRUSTED_PROXIES,
-// ALLOW_PLAIN_HTTP and SITE_DIR, which is required here.
+// ALLOW_PLAIN_HTTP, SITE_HOST, the UMAMI_ variables, DEVELOPMENT,
+// DEV_API_PROXY and SITE_DIR, which is required here.
 func loadFrontendConfig(getenv func(string) string) (frontendConfig, error) {
 	l := envconf.New(getenv)
 	var problems []error
@@ -58,6 +76,15 @@ func loadFrontendConfig(getenv func(string) string) (frontendConfig, error) {
 	}
 	cfg.trustedProxies = proxies
 	cfg.allowPlainHTTP = l.Bool("ALLOW_PLAIN_HTTP", false)
+	cfg.siteHost = l.String("SITE_HOST", "localhost")
+	// The example reads the development flag from the environment, the
+	// package never does. frontend.New checks the URL.
+	cfg.development = l.Bool("DEVELOPMENT", false)
+	cfg.devAPIProxy = l.String("DEV_API_PROXY", "")
+	cfg.umami, err = analytics.LoadConfig(getenv)
+	if err != nil {
+		problems = append(problems, err)
+	}
 	if cfg.adminAddr == "" {
 		problems = append(problems, errors.New("ADMIN_ADDR: must not be empty, the probes and the metrics live there"))
 	}
@@ -84,15 +111,35 @@ func newFrontend(cfg frontendConfig, logger *slog.Logger) (*frontend.Server, err
 		// told to upgrade every future visit to HTTPS.
 		security.HSTS = 0
 	}
+	resolver := clientip.NewResolver(cfg.trustedProxies)
+	// The same counting as the one server: the trusted proxy resolver, the
+	// masked address. frontend registers the drop counter itself, so there
+	// is no OnDrop here, and Run closes the client.
+	views, err := analytics.New(cfg.umami, analytics.Options{
+		Hostname:   cfg.siteHost,
+		Logger:     logger,
+		HTTPClient: cfg.umamiHTTP,
+		ClientIP:   resolver,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("example: frontend: %w", err)
+	}
 	s, err := frontend.New(frontend.Config{
 		Build:      root.FS(),
 		Language:   language.Config{Languages: siteLanguages},
 		ThemeColor: themeColor,
 		Security:   &security,
-		ClientIP:   clientip.NewResolver(cfg.trustedProxies),
+		ClientIP:   resolver,
+		Analytics:  views,
 		Logger:     logger,
+
+		Development:     cfg.development,
+		DevAPIProxy:     cfg.devAPIProxy,
+		DevAPITransport: cfg.devAPITransport,
 	})
 	if err != nil {
+		// Nothing was served, so nothing is queued.
+		_ = views.Close(context.Background())
 		return nil, fmt.Errorf("example: frontend: %w", err)
 	}
 	return s, nil

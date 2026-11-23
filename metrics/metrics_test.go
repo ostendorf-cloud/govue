@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -218,6 +219,27 @@ func TestNewCounter_PanicsOnADuplicateName(t *testing.T) {
 		}
 	}()
 	NewCounter(registry, "example_events_total", "Events seen.")
+}
+
+func TestNewCounterFunc_ReadsTheValueAtEveryScrape(t *testing.T) {
+	t.Parallel()
+
+	registry := prometheus.NewRegistry()
+	var n atomic.Uint64
+	NewCounterFunc(registry, "example_dropped_total", "Dropped.", func() float64 { return float64(n.Load()) })
+	if got := scrape(t, registry); !strings.Contains(got, "example_dropped_total 0") {
+		t.Errorf("scrape does not hold the counter at 0:\n%s", got)
+	}
+	n.Add(3)
+	if got := scrape(t, registry); !strings.Contains(got, "example_dropped_total 3") {
+		t.Errorf("scrape does not hold the counter at 3:\n%s", got)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("a second counter with the same name did not panic")
+		}
+	}()
+	NewCounterFunc(registry, "example_dropped_total", "Dropped.", func() float64 { return 0 })
 }
 
 func TestNewRegistry_HoldsTheRuntimeCollectors(t *testing.T) {

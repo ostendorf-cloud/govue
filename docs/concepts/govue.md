@@ -1908,6 +1908,21 @@ try {
   test instead of showing up as a flash.
 - With nothing stored the script leaves `data-mode` off, because the stylesheet already follows
   the system setting through `light-dark()` and an explicit value would only pin it.
+- The browser bar follows the mode too. `favicon.Icons.WithDarkThemeColor` writes one
+  `theme-color` tag per mode, with the media query `(prefers-color-scheme: light)` or `dark`, so
+  the browser picks the system's one with no script at all. Media queries alone cannot follow a
+  stored mode that differs from the system, so for a stored light or dark mode the script copies
+  the colour of that mode's tag into every `theme-color` tag above it. The tags therefore come
+  ahead of the script in the head, both still ahead of every stylesheet. The colours live in the
+  tags and not in the script, so `themeboot.Hash` does not change with them and one hash covers
+  every site. A site with one colour keeps one tag without a media query, which the script
+  leaves alone.
+- A change of the mode after load re-pins the tags too. Before it pins anything, the boot script
+  stores each tag's own colour in `data-govue-color`. `useTheme` calls `pinThemeColor` from
+  `web/src/composables/themeColor.ts` whenever the mode changes: light and dark give every tag
+  that mode's colour, system gives each tag its own colour back, so the browser follows the
+  system again. The boot script is inline and imports nothing, so it holds a small copy of the
+  same step, and a Vitest test runs both on the same page and compares the tags.
 
 ### The language layer
 
@@ -2285,6 +2300,7 @@ try {
   | `/robots.txt` | generated, names the sitemap | `public, max-age=3600` | yes |
   | `/` | `language.Redirect`, 302 | `no-store`, `Vary: Accept-Language, Cookie` | no |
   | legal aliases | `language.HandleLegal`, 302 | `no-store` | no |
+  | each `From` of `Config.Redirects` | 301 to its page | none | no |
   | anything else | `<code>/404.html`, 404 | `no-cache` | no |
 
 - An ETag is the quoted SHA-256 of the body. `http.ServeContent` answers a matching
@@ -2339,6 +2355,22 @@ try {
   path and a page the sitemap does not list answer 404. A browser's percent encoding of a page,
   such as `/de/%C3%BCber`, and the raw form reach the same page, the canonical link in the page
   names one.
+- A moved page keeps its old links through `Config.Redirects`, a list of exact
+  `frontend.Redirect{From, To}` pairs, such as `/de/agb` and `/de/agb/` to `/de/terms`. Each
+  answers a 301 to the escaped path of the target's `loc`, with the query kept and escaped like
+  the slash redirect, so no part of the request reaches `Location` but the query. A trailing
+  slash belongs to the path, so a site lists both forms. There are no patterns and no regular
+  expressions. `New` refuses, by position and kind and never by value:
+  - a target that is not a page of the sitemap, an alias, an asset or a file included.
+  - a source that fails the path rules above, `/` itself, or holds `{`, `}` or white space, the
+    syntax of a `ServeMux` pattern, or `?` or `#`, which a request carries outside its path, so
+    such a source would never match.
+  - a source under `/assets/`, which would shadow a file of the build.
+  - a source that is a route already: a page, its slash form, a language root, an alias, the
+    sitemap, `robots.txt` or a public file. `ServeMux` finds the conflict: its panic, which
+    quotes the pattern, is recovered and becomes an error that does not.
+  - a source listed twice.
+- A redirect answers no HTML with 200, so it is never counted as a view.
 - The build is refused at startup, every problem at once, naming the file:
   - no `<code>/404.html` for a configured language, or one without a head element.
   - no `/<code>/imprint` or `/<code>/privacy` in the sitemap for a configured language, or a
@@ -2347,7 +2379,8 @@ try {
   - no `sitemap.xml`, one that is a symbolic link or not a regular file, or one of the shapes
     `example/site.go` refuses, see "Language routes". A favicon file that is a link is refused
     the same way.
-  - a page or a 404 page without a head element, or one that carries icon links already.
+  - a page or a 404 page without a head element, or one that carries icon links or a
+    `theme-color` tag already.
   - a missing favicon file or `PublicFiles` entry, an invalid theme colour, an invalid language
     configuration. A refused configuration value is never quoted. A `PublicFiles` entry that is
     missing, a directory, a link or another non regular file is named by its position and the
@@ -2359,12 +2392,27 @@ try {
   - an asset that is a symbolic link, not a regular file, has a name outside letters, digits,
     `.`, `_` and `-`, or an extension outside the table. A file or directory under `assets/`
     whose name starts with a dot is skipped and never served.
+- The browser bar colour: `Config.ThemeColor` alone writes one `theme-color` tag for both
+  modes. With `Config.ThemeColorDark` it is the light colour, and every page carries one tag
+  per mode, which the boot script pins to a stored mode, see "The theme switch and its boot
+  script". An invalid dark colour is refused, by field and never by value.
+- Migration of a site's prerender. `frontend` writes the head markup itself, so a page that
+  already carries it is refused. Before a site moves its pages into the frontend image, its
+  prerender stops writing:
+  - the icon links, `rel="icon"` and `rel="apple-touch-icon"`. The favicon files stay at the root
+    of the build.
+  - every `theme-color` meta tag. The colours move to `Config.ThemeColor` and
+    `Config.ThemeColorDark`.
+  - its own theme boot script, inline or as a file. A script of its own would also need its own
+    hash in the policy. A site with its own `localStorage` key passes
+    `themeboot.WithStorageKey` in `Config.ThemeBoot`.
 - No session, no cookie, no API route, no CORS. Every method but `GET` and `HEAD` answers 405
   with `Allow: GET, HEAD`. A bare `OPTIONS *` reaches the handler under `Run`, because
   `httpserver` sets `DisableGeneralOptionsHandler`, and answers the 404 page with every header.
   A site that serves `Handler` on its own `http.Server` without that field gets the empty 200
   `net/http` writes itself, with none of the headers above. `/api/` answers 404 from the
-  frontend, which is right only when the Ingress sends it to the API image first.
+  frontend, which is right only when the Ingress sends it to the API image first, or in
+  development when `Config.DevAPIProxy` forwards it, see below.
 - Health and readiness live on the admin listener with the metrics, behind `Recover` and
   `RequestID` only, as in "A second listener for what the Ingress must never route". The public
   chain is the outer chain of `example/`: `Recover`, `RequestID`, the security headers, the
@@ -2417,9 +2465,75 @@ try {
     another site is a third party cookie, which several browsers block by default. Keep the API
     on the same site.
   - every preflight is a round trip more. Same origin needs none of this, so it is the default.
-- What it does not do: the API server of a site and per request rendering. Page view counting
-  through `analytics` is not wired into it yet, so a site that counts views server side keeps
-  its pages in the API image until it is.
+- Page views. `Config.Analytics` takes the site's `*analytics.Client`, nil counts nothing. A site
+  cannot wrap `Handler` itself: `RequestID` and the security headers replace the request inside
+  the chain, so an outer counter would never see `r.Pattern`. So `New` places the client:
+  - `Middleware` directly around the mux, inside the access log and the path check, as
+    `example/` does for the one server. A page answered with 200 counts by its pattern, such as
+    `/de/imprint`, never by its path, and the query is never sent.
+  - `NotModified` on the handler of each page and of nothing else, so a page revalidated with
+    its ETag and answered with 304 counts too, see "Analytics".
+  - A redirect, an alias, the slash form, a 404, an asset, a public file, `robots.txt` and the
+    sitemap answer no HTML with 200 and no page 304, so none of them counts.
+  - The rules of `analytics` hold unchanged: GET only, Do Not Track and Global Privacy Control
+    honoured, no bot, no prefetch, no private client, the address masked unless the site sets
+    `FullIP`, the client address from the same `Config.ClientIP` as the access log.
+- The drop counter. The frontend owns its metrics registry, so it registers
+  `analytics_views_dropped_total` itself, read from `Stats().Dropped` through
+  `metrics.NewCounterFunc`, when the client counts. The site passes no `OnDrop`, and the name is
+  the one `example/` uses on the one server.
+- Shutdown. `Run` closes the client once both listeners stopped, within
+  `frontend.AnalyticsCloseTimeout` (five seconds), so the queued views are sent, and joins its
+  error to the server's, on every way out, a listen that fails included. A test runs `Run` with
+  an address without a port, which fails while it is parsed, before any socket. A site that
+  serves `Handler` on its own listener calls `Server.Close` after that listener stopped.
+- Development, one origin without nginx. In production the Ingress puts the frontend and the API
+  on one origin. A compose stack on a developer's machine needs the same, so the browser keeps
+  its same origin rules: no CORS, `connect-src 'self'`, the session cookie host-only, the CSRF
+  origin check on one origin and the Vue client on its default `baseUrl`. Two ports would be two
+  origins, and the image would differ from production in the API address it was built with.
+  So the frontend forwards `/api/` to the API container itself, for development only:
+  - `Config.Development` must be set, and the package never reads it from the environment. The
+    site decides, the example reads `DEVELOPMENT=true`. Without it a `DevAPIProxy` is refused,
+    and without a `DevAPIProxy` `/api/` stays the 404 of production. Tests pin both.
+  - `Config.DevAPIProxy` is `http` or `https` on a loopback address, `localhost` or one label
+    such as the compose service name `api`, with an optional port and path prefix, and no
+    userinfo, query or fragment. A public or private network address, a dotted name and `0.0.0.0`
+    are refused, by field and kind, never by value. So is a label a resolver may read as an IPv4
+    address: all digits, octal with a leading `0` included, or `0x` and hex digits. The macOS
+    resolver turns `167772161` and `0x0a000001` into `10.0.0.1`.
+  - Only the prefix `/api/` is forwarded, after the path rules. `/api` without the slash stays a
+    404, the shape of the Ingress rule. The path and the query go to the target unchanged, under
+    its prefix.
+  - `httputil.ReverseProxy` with `Rewrite`: the hop by hop headers and every inbound `Forwarded`,
+    `X-Forwarded-For`, `-Host`, `-Proto`, `X-Real-Ip` and `Via` are dropped, and
+    `X-Forwarded-For` is set from `Config.ClientIP` alone, so a client cannot claim an address.
+    The browser's cookies and `Authorization` go along: they are the API's own, the frontend sets
+    none.
+  - A request body over one MiB (`DevAPIProxyMaxBody`) answers 413. The dial has five seconds
+    and the response header thirty, and the environment's proxy settings are ignored. A failure
+    answers one opaque 502 and logs the error type only.
+  - The answer passes the frontend's chain: the frontend's security headers replace the API's
+    copies, so none is sent twice, the access log names the pattern `/api/`, and no answer under
+    `/api/` reaches the page view counter.
+  - A compose stack:
+
+    ```yaml
+    services:
+      api:
+        image: ghcr.io/example/site-api:dev
+      frontend:
+        image: ghcr.io/example/site-frontend:dev
+        environment:
+          DEVELOPMENT: "true"
+          DEV_API_PROXY: http://api:8080
+          ALLOW_PLAIN_HTTP: "true"
+        ports: ["8080:8080"]
+    ```
+
+  - Cookies on `localhost` are shared by every port, so another app on the same machine can see
+    them. That is the development machine's concern, the reason the option exists nowhere else.
+- What it does not do: the API server of a site and per request rendering.
 
 ### Favicons are a build requirement
 
@@ -2429,8 +2543,8 @@ try {
   SVG, a 32 pixel PNG fallback and a 180 pixel Apple touch icon. `favicon.Load` fails at startup
   naming the file and the path it expected. A web manifest stays optional and is not generated.
 - The links are written by `themeboot.Inject`, through `themeboot.WithFavicon`, in the same step
-  as the boot script. A second injection point would have been a second place to forget. The
-  links hold no script, so they need no nonce.
+  as the boot script, right ahead of it. A second injection point would have been a second place
+  to forget. The links hold no script, so they need no nonce.
 - The PNG files are generated from the one source SVG by the `favicon:generate` task target with
   ImageMagick, pinned in `mise.toml`, and committed. Output depends on the tool version, so the
   pin matters. A site brings its own artwork. A site without a brand mark gets a placeholder SVG,
@@ -2555,9 +2669,12 @@ try {
   - The method is GET. HEAD is not counted, a crawler or a link checker sends it.
   - The response is 200 with a `text/html` body. A 404, a 5xx, a redirect, a 304, JSON, an asset
     and an empty 200 are not pages. A handler that sets no content type gets the type net/http
-    would sniff. A panicking handler counts nothing. A 304 is never counted: it carries no body,
-    and a revalidating visitor is therefore missing from the numbers. That undercount is
-    accepted over counting an asset.
+    would sniff. A panicking handler counts nothing. `Middleware` never counts a 304: it
+    carries no body and no content type, so it cannot tell a page from an asset. A server that
+    revalidates its pages with an ETag wraps the handler of each page, and only of a page, with
+    `NotModified`, which counts a 304 of a GET with every other rule here unchanged. Without it
+    a revisit that answers 304 is missing from the numbers. The `frontend` package does this,
+    so its pages count the way a server without an ETag counted them.
   - The request has no `DNT: 1` and no `Sec-GPC: 1`. Either one means the visitor is not counted
     at all. Every header line and every comma separated part is read, so `0` then `1` and
     `0, 1` are a signal. `DNT: 0`, a missing header and a value that is not `1`, such as `yes`,
@@ -2650,7 +2767,7 @@ try {
 - What a product must say in its privacy text, as a checklist and not as legal text or legal
   advice. The product's own counsel decides what the law asks of it:
   - Page views are counted on the server, with no script, no cookie and nothing stored on the
-    visitor's device.
+    visitor's device. A revisit of a page the browser revalidates counts like the first visit.
   - What is sent to Umami: the page (the route, not the address with its query), the referring
     site (its origin only), the browser language, the user agent and the visitor's IP address,
     shortened to its first three bytes for IPv4 or six for IPv6 unless the product sets

@@ -70,6 +70,17 @@ func TestHashIsAQuotedSHA256Source(t *testing.T) {
 	}
 }
 
+// TestScriptMatchesTheMediaQueriesOfTheThemeColorTags keeps boot.js and the
+// tags favicon writes in step: the script pins a tag by its exact media
+// query.
+func TestScriptMatchesTheMediaQueriesOfTheThemeColorTags(t *testing.T) {
+	for _, media := range []string{favicon.MediaLight, favicon.MediaDark} {
+		if !strings.Contains(themeboot.Script(), "'"+media+"'") {
+			t.Errorf("the boot script does not name %s", media)
+		}
+	}
+}
+
 func TestInjectStaticLeavesAPageWithoutHeadUnchanged(t *testing.T) {
 	const noHead = `<header>x</header><!-- <head> -->`
 	if got := string(themeboot.InjectStatic([]byte(noHead))); got != noHead {
@@ -77,7 +88,7 @@ func TestInjectStaticLeavesAPageWithoutHeadUnchanged(t *testing.T) {
 	}
 }
 
-func TestInjectStaticWritesTheIconsBehindTheScript(t *testing.T) {
+func TestInjectStaticWritesTheIconsAheadOfTheScript(t *testing.T) {
 	public := fstest.MapFS{
 		favicon.SVGFile:   {Data: []byte("<svg/>")},
 		favicon.PNGFile:   {Data: []byte("\x89PNG\r\n\x1a\n")},
@@ -91,7 +102,7 @@ func TestInjectStaticWritesTheIconsBehindTheScript(t *testing.T) {
 	if err := favicon.CheckPage([]byte(got), public); err != nil {
 		t.Errorf("the page fails the favicon check: %v", err)
 	}
-	if !strings.Contains(got, "</script>"+icons.Links()) {
-		t.Errorf("the icon links do not follow the script: %s", got)
+	if !strings.Contains(got, "<head>"+icons.Links()+"<script>") {
+		t.Errorf("the icon links do not lead the script: %s", got)
 	}
 }

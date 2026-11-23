@@ -475,8 +475,11 @@ func TestNonceReachesTheHandlerThatRenderedUnderIt(t *testing.T) {
 		t.Errorf("the handler's inline script does not carry the header's own nonce: body=%s header=%s", rec.Body.String(), csp)
 	}
 
-	if !strings.Contains(rec.Body.String(), `<head><script nonce="`+nonce+`">`+themeboot.Script()) {
-		t.Errorf("the theme boot script is not first in the head under the header's nonce: %s", rec.Body.String())
+	// The favicon links lead the head, so the script reads the theme-color
+	// tag, and the script follows under the header's nonce.
+	if !strings.Contains(rec.Body.String(), `<head>`+a.icons.Links()+`<script nonce="`+nonce+`">`+themeboot.Script()) {
+		t.Errorf("the icon links and the theme boot script do not lead the head under the header's nonce: %s",
+			rec.Body.String())
 	}
 }
 
