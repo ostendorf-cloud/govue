@@ -2898,6 +2898,13 @@ try {
   two timers fired first.
 - `Config.Validate` takes a bare host name: a colon, a slash, white space and the URL characters
   are refused.
+- `LoadConfig` reads `SMTP_HOST`, `SMTP_PORT` (587 by default, 465 means implicit TLS),
+  `SMTP_USERNAME` or `SMTP_USERNAME_FILE`, and `SMTP_PASSWORD` or `SMTP_PASSWORD_FILE`. A
+  `_FILE` variable names a file mounted from a secret store, and its content is trimmed of
+  surrounding white space like the direct value. The user name is not a secret, but it sits next
+  to the password in the same secret, so it has the same twin. A variable and its twin together,
+  an empty file and an unreadable file are startup errors that name the variables, never a value
+  or a path.
 - `Error` splits the reply from the text. `Error()` holds the stage and the code. `Reply` holds
   the server's text for the log, with the password removed, also its base64 form and the base64
   AUTH PLAIN string a server may echo. It can echo an address, so it never goes to a client.

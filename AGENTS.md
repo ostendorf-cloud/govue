@@ -97,9 +97,10 @@ repeated here.
   leaves), `ImplicitTLS` is an option, `Plain` is for a local test sink and refuses
   credentials, AUTH PLAIN or LOGIN runs inside TLS only, TLS is 1.2 or newer, there are no
   retries, `Config.Timeout` and the context are one deadline over dial and conversation, and
-  `Sender` is the interface consumers fake. `LoadConfig` reads `SMTP_HOST`,
-  `SMTP_PORT`, `SMTP_USERNAME` and `SMTP_PASSWORD` or `SMTP_PASSWORD_FILE`, the password is a
-  `mail.Secret`, and the environment never selects `Plain`. `*mail.Error` carries the reply for a
+  `Sender` is the interface consumers fake. `LoadConfig` reads `SMTP_HOST`, `SMTP_PORT`,
+  `SMTP_USERNAME` or `SMTP_USERNAME_FILE` and `SMTP_PASSWORD` or `SMTP_PASSWORD_FILE`, a
+  variable and its twin together are a startup error, the password is a `mail.Secret`, and the
+  environment never selects `Plain`. `*mail.Error` carries the reply for a
   log, its `Error()` text never holds an address or the password. It imports `envconf` only.
   Its tests run the SMTP dialogue over `net.Pipe`, through `Config.DialContext`, with no socket.
 - `contact` is the stateless contact form: `Normalize` and `Validate` with the stable field codes

@@ -4,6 +4,7 @@
 package mail
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,219 @@ func TestLoadConfig(t *testing.T) {
 			if cfg.Port != tc.port || cfg.Security != tc.security || cfg.Username != tc.user ||
 				cfg.Password.Reveal() != tc.password {
 				t.Errorf("cfg = %+v", cfg)
+			}
+		})
+	}
+}
+
+// userFixture is a user name that no error text contains by accident.
+const userFixture = "smtp-user-7f3k9q"
+
+// writeFile writes content into a new file of a test directory.
+func writeFile(t *testing.T, name, content string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLoadConfigUsernameFile(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		content string
+	}{
+		{"trailing newline", userFixture + "\n"},
+		{"trailing CRLF", userFixture + "\r\n"},
+		{"no newline", userFixture},
+		{"surrounding white space", " \t" + userFixture + " \n\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := LoadConfig(env(map[string]string{
+				"SMTP_HOST":          "mail.example.org",
+				"SMTP_USERNAME_FILE": writeFile(t, "username", tc.content),
+				"SMTP_PASSWORD":      "p",
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Username != userFixture {
+				t.Errorf("Username = %q, want %q", cfg.Username, userFixture)
+			}
+		})
+	}
+
+	t.Run("file and password file together", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := LoadConfig(env(map[string]string{
+			"SMTP_HOST":          "mail.example.org",
+			"SMTP_USERNAME_FILE": writeFile(t, "username", userFixture+"\n"),
+			"SMTP_PASSWORD_FILE": writeFile(t, "password", secretPassword+"\n"),
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Username != userFixture || cfg.Password.Reveal() != secretPassword {
+			t.Errorf("Username = %q, password set = %v", cfg.Username, !cfg.Password.IsZero())
+		}
+	})
+
+	t.Run("direct variable unchanged", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := LoadConfig(env(map[string]string{
+			"SMTP_HOST": "mail.example.org", "SMTP_USERNAME": " " + userFixture + " ", "SMTP_PASSWORD": "p",
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Username != userFixture {
+			t.Errorf("Username = %q, want %q", cfg.Username, userFixture)
+		}
+	})
+
+	t.Run("neither variable means no AUTH", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := LoadConfig(env(map[string]string{"SMTP_HOST": "mail.example.org"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Username != "" || !cfg.Password.IsZero() {
+			t.Errorf("Username = %q, password set = %v", cfg.Username, !cfg.Password.IsZero())
+		}
+	})
+}
+
+// errorTree is err and every error below it, through Unwrap() error and
+// Unwrap() []error.
+func errorTree(err error) []error {
+	if err == nil {
+		return nil
+	}
+	tree := []error{err}
+	if single, ok := err.(interface{ Unwrap() error }); ok {
+		tree = append(tree, errorTree(single.Unwrap())...)
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, child := range joined.Unwrap() {
+			tree = append(tree, errorTree(child)...)
+		}
+	}
+	return tree
+}
+
+// assertHidden fails when any error of the tree, in any fmt verb, carries
+// one of the hidden strings, also hex encoded.
+func assertHidden(t *testing.T, err error, hidden ...string) {
+	t.Helper()
+
+	tree := errorTree(err)
+	if len(tree) == 0 {
+		t.Fatal("no error")
+	}
+	for _, node := range tree {
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "% x", "%d"} {
+			text := fmt.Sprintf(verb, node)
+			for _, h := range hidden {
+				for _, form := range []string{h, fmt.Sprintf("%x", h), fmt.Sprintf("%X", h), fmt.Sprintf("% x", h)} {
+					if strings.Contains(text, form) {
+						t.Errorf("%T in %s carries a hidden value: %s", node, verb, text)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestLoadConfigUsernameFileRefusals(t *testing.T) {
+	t.Parallel()
+
+	unreadable := writeFile(t, "username-"+userFixture, userFixture+"\n")
+	if err := os.Chmod(unreadable, 0); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(unreadable); err == nil && len(raw) > 0 {
+		// Root reads a file without permission bits, so the case proves
+		// nothing here. The missing file case still covers the read error.
+		unreadable = ""
+	}
+	directory := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "missing-"+userFixture)
+
+	for _, tc := range []struct {
+		name   string
+		values map[string]string
+		want   []string
+	}{
+		{
+			name: "both set",
+			values: map[string]string{
+				"SMTP_USERNAME":      userFixture,
+				"SMTP_USERNAME_FILE": writeFile(t, "username-"+userFixture, userFixture+"\n"),
+				"SMTP_PASSWORD":      secretPassword,
+			},
+			want: []string{"SMTP_USERNAME", "SMTP_USERNAME_FILE", "both set"},
+		},
+		{
+			name: "empty file",
+			values: map[string]string{
+				"SMTP_USERNAME_FILE": writeFile(t, "username-"+userFixture, "\n"),
+				"SMTP_PASSWORD":      secretPassword,
+			},
+			want: []string{"SMTP_USERNAME_FILE", "empty"},
+		},
+		{
+			name: "missing file",
+			values: map[string]string{
+				"SMTP_USERNAME_FILE": missing,
+				"SMTP_PASSWORD":      secretPassword,
+			},
+			want: []string{"SMTP_USERNAME_FILE", "cannot read"},
+		},
+		{
+			name: "directory",
+			values: map[string]string{
+				"SMTP_USERNAME_FILE": directory,
+				"SMTP_PASSWORD":      secretPassword,
+			},
+			want: []string{"SMTP_USERNAME_FILE", "cannot read"},
+		},
+		{
+			name: "unreadable file",
+			values: map[string]string{
+				"SMTP_USERNAME_FILE": unreadable,
+				"SMTP_PASSWORD":      secretPassword,
+			},
+			want: []string{"SMTP_USERNAME_FILE", "cannot read"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if tc.values["SMTP_USERNAME_FILE"] == "" {
+				t.Skip("running as root, a file without permission bits is readable")
+			}
+			tc.values["SMTP_HOST"] = "mail.example.org"
+			cfg, err := LoadConfig(env(tc.values))
+			if err == nil {
+				t.Fatalf("LoadConfig() = %+v, want an error", cfg)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %v, does not name %q", err, want)
+				}
+			}
+			assertHidden(t, err, userFixture, secretPassword, tc.values["SMTP_USERNAME_FILE"])
+			if cfg.Username != "" || !cfg.Password.IsZero() {
+				t.Error("a refused configuration is not the zero Config")
 			}
 		})
 	}
