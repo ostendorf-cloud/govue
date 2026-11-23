@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -90,6 +91,34 @@ func (p *Policy) Add(directive string, sources ...string) *Policy {
 	}
 	p.values[directive] = append(p.values[directive], sources...)
 	return p
+}
+
+// Clone returns a deep copy of the policy, so a package that adds a source
+// for its own responses never changes the policy its caller built. A nil
+// policy clones to nil.
+func (p *Policy) Clone() *Policy {
+	if p == nil {
+		return nil
+	}
+	c := &Policy{
+		order:  slices.Clone(p.order),
+		values: make(map[string][]string, len(p.values)),
+		nonced: maps.Clone(p.nonced),
+	}
+	for directive, sources := range p.values {
+		c.values[directive] = slices.Clone(sources)
+	}
+	return c
+}
+
+// Has reports whether the directive is set, with or without sources. A nil
+// policy sets nothing.
+func (p *Policy) Has(directive string) bool {
+	if p == nil {
+		return false
+	}
+	_, ok := p.values[directive]
+	return ok
 }
 
 // NonceIn marks the directives that carry the per-response nonce.

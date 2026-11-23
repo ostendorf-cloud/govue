@@ -307,6 +307,22 @@ not part of the markup. `useTheme` and `useToasts` keep module level state, so a
 raises no toast and all pages of one build share one theme. See `docs/concepts/govue.md` for the
 boundary.
 
+### Frontend server
+
+A site that runs its frontend and its API as two images builds the frontend image from the
+package `frontend`. It serves the Vite build with the prerendered pages, the assets, the
+favicon, the sitemap, `robots.txt`, the redirect at `/` and the legal aliases, with the security
+headers, and refuses to start without a 404 page or a legal page per language:
+
+```go
+s, err := frontend.New(frontend.Config{Build: dist, ThemeColor: "#0f766e", Logger: logger})
+if err != nil { /* ... */ }
+err = s.Run(ctx, ":8080", ":8081") // the probes and the metrics on the second address
+```
+
+`example frontend` runs the example this way. The Ingress, the API on another origin and the
+rules are in the section "Frontend server" of `docs/concepts/govue.md`.
+
 ### Legal pages
 
 govue gives the structure of the imprint, privacy and terms pages, never their text. A site adds
