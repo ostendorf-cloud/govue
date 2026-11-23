@@ -17,6 +17,7 @@ import { createGovueI18n } from '../src/i18n/plugin'
 import type { LocalizedRoute, RouteDef } from '../src/i18n/routes'
 import { localizedFiles, type PrerenderFile } from '../src/localizedFiles'
 import ContactPage from './ContactPage.vue'
+import HeroPage from './HeroPage.vue'
 import HomePage from './HomePage.vue'
 import PlaceholderLegalPage from './PlaceholderLegalPage.vue'
 
@@ -32,6 +33,7 @@ const pages: LegalPages<Component> = {
 export const routes: RouteDef[] = [
   { path: '/', public: true },
   { path: '/contact', public: true },
+  { path: '/hero', public: true },
   ...legalRouteDefs(pages),
 ]
 
@@ -41,6 +43,9 @@ const records = legalRoutes(pages)
 function componentFor(variant: LocalizedRoute): Component {
   if (variant.source === '/contact') {
     return ContactPage
+  }
+  if (variant.source === '/hero') {
+    return HeroPage
   }
   return records.find((record) => record.path === variant.path)?.component ?? HomePage
 }

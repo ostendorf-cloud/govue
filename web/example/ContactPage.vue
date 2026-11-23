@@ -8,6 +8,7 @@ import GovueFooter from '../src/components/GovueFooter.vue'
 import GovuePage from '../src/components/GovuePage.vue'
 import GovueSkipLink from '../src/components/GovueSkipLink.vue'
 import { useLanguage } from '../src/i18n/plugin'
+import ExampleHeader from './ExampleHeader.vue'
 
 // The example's contact page: the form against the routes of the Go contact
 // handlers, which a site mounts under its API prefix. The form is stateless, so
@@ -18,6 +19,7 @@ const { locale } = useLanguage()
 
 <template>
   <GovueSkipLink />
+  <ExampleHeader path="/contact" />
   <GovuePage title="govue example">
     <!-- govue ships no consent text: a site writes its own. This one is a
          placeholder of the example, like its legal pages. -->

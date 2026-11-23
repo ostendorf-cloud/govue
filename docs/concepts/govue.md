@@ -1948,6 +1948,82 @@ try {
   system again. The boot script is inline and imports nothing, so it holds a small copy of the
   same step, and a Vitest test runs both on the same page and compares the tags.
 
+### The header and the navigation
+
+- `GovueHeader` is the one banner landmark. Its ground is three role tokens, set in the theme
+  file only and never with a selector on govue's markup. A site that sets none keeps the look
+  the header always had.
+
+  | Token                   | Default                | What it styles                        |
+  | ----------------------- | ---------------------- | ------------------------------------- |
+  | `--color-header-bg`     | `var(--color-surface)` | the ground of the solid header        |
+  | `--color-header-border` | `var(--color-border)`  | the bottom border of the solid header |
+  | `--blur-header`         | `0px`                  | the backdrop blur of the solid header |
+
+  Every theme declares all three, and the generator writes them, so a theme file shows the whole
+  contract. `--color-header-bg` and `--color-header-border` follow `surface` and `border` through
+  `var()` until a theme gives them a value of their own. The blur is a Tailwind `--blur-*` token,
+  used as `backdrop-blur-header`.
+- `GovueHeader` props and slots:
+
+  | Name           | Type                           | Default   | Meaning                           |
+  | -------------- | ------------------------------ | --------- | --------------------------------- |
+  | `themeSwitch`  | `boolean`                      | `false`   | shows `GovueThemeSwitch`          |
+  | `overlay`      | `boolean`                      | `false`   | header out of the flow, see below |
+  | `navPlacement` | `'start' \| 'center' \| 'end'` | `'start'` | where the navigation sits         |
+  | slot `brand`   |                                |           | the brand, first in the row       |
+  | slot default   |                                |           | the navigation                    |
+  | slot `theme`   |                                |           | replaces the theme switch         |
+  | slot `actions` |                                |           | the actions, last in the row      |
+
+  `navPlacement` acts from 480px up. `start` keeps the navigation next to the brand, `end` puts
+  it next to the actions, `center` in the middle of the space between. Below 480px the
+  navigation is its own row, and the markup order never changes.
+- `overlay` takes the header out of the flow (`position: fixed`), so the page content starts
+  under it and nothing shifts when it turns solid: the row has the same height and border width
+  in both states. It is transparent, without border and blur, until the page has scrolled past a
+  small threshold (16 px), then takes the solid ground above. The state is `data-state` on the
+  header, `transparent` or `solid`, and `data-overlay="true"` marks the mode, so a site can hook
+  its own rules on them. Without `overlay` the header is `sticky` and always `solid`.
+- An open mobile menu always has the solid ground, as the menu lists links over whatever is
+  behind the header. `GovueNav` reports its open state to the header it sits in, which is the
+  only change the menu got. Reduced motion switches the ground without a transition
+  (`motion-reduce:transition-none`, and the global rule in `base.css`).
+- The scroll state is `useScrolled({ threshold?, active? })`, exported from the package. The
+  listener is passive, is attached only while `active` is true (the header passes `overlay`),
+  writes a ref that triggers nothing while the state stays the same and reads no layout. Before
+  mount and on the server the state is false, so a prerendered page is the transparent one, and
+  at mount the offset is read once.
+- What the host guarantees over the transparent state. The transparent header shows the dark mode
+  roles whatever the page mode is, through `color-scheme: dark` on the header, so text, icons,
+  the focus ring and the call to action keep their AA ratios on a dark ground. The hero behind
+  the header must therefore be dark: its relative luminance has to stay at or below
+  `(L + 0.05) / 4.5 - 0.05`, where `L` is the luminance of the dark `--color-text`. Dark `bg`
+  is inside that bound in every shipped theme. A hero on `bg-bg` with `[color-scheme:dark]` on
+  the section is dark in both modes, and a photograph needs a scrim. govue cannot check the
+  page behind the header, the contrast test checks the roles. A page that cannot guarantee a
+  dark hero uses the default header, which has a ground of its own.
+- A translucent ground, for example
+  `--color-header-bg: color-mix(in srgb, var(--color-surface) 95%, transparent)` with a
+  `--blur-header` of 12px, lets the page content show through, so the contrast depends on the
+  content. The contrast test checks it against the lightest (`#ffffff`) and the darkest
+  (`#000000`) content in every shipped theme and both modes. The alpha of the ground at which
+  text keeps 4.5:1 over both:
+
+  | Text role                                     | Minimum alpha |
+  | --------------------------------------------- | ------------- |
+  | `text`, the brand and nav items               | 0.85          |
+  | every text role (`text-muted`, `accent-text`) | 0.95          |
+
+  Use 0.95 or more. Below it a role can fall under 4.5:1 over the worst content, and the blur
+  does not help, because it only mixes content between the two extremes. The constants are
+  `TRANSLUCENT_ALPHA_TEXT` and `TRANSLUCENT_ALPHA_ALL_TEXT` in `web/src/styles/contrast.ts`.
+- A `NavItem` is `{ href, label, current?, variant? }`. `variant: 'cta'` renders the item as a
+  solid button from `accent-strong` and `accent-on` (hover `accent-strong-hover`), in the nav row
+  and in the open menu, with a 44 px target. It stays a link, keeps `aria-current` and shows the
+  current page with an underline as well as the fill. Mark one item at most. The pairs are in the
+  contrast test in both modes.
+
 ### The language layer
 
 - Every site built on govue is German and English, so the translation lives here once, not per
@@ -1966,6 +2042,22 @@ try {
   of languages is open ended, a select stays one control at any length, and the platform gives
   it keyboard handling, screen reader support and a touch picker. Focus stays on it after a
   change, and nothing navigates.
+- `GovueLanguageSwitch` has an opt-in link mode for a site whose languages have their own paths.
+  `linkFor: (code) => path` maps a language to the same page in that language, usually
+  `(code) => localizedPath(route.path, code)`. Each language is then a real `<a>` with `href`,
+  `hreflang` and `lang`, in a `role="group"` named like the select, and the current one has
+  `aria-current="true"`. A crawler and a visitor without script can follow the links, and a
+  screen reader announces links, not radios. Targets are 44 px, the styling is role tokens only.
+  Without `linkFor` the select is rendered and nothing changes.
+- A plain click in link mode sets the locale, stores the choice and emits `change`, as the
+  select does. Whether the page reloads is the router's decision. A site hands the path to its
+  router with the `navigate` prop, `(href, code) => boolean`, and returns true, for example
+  `(href) => { router.push(href); return true }`: govue then cancels the browser's navigation,
+  the locale is already updated and nothing reloads. Without `navigate`, or when it returns
+  anything else, the browser follows the link and the stored choice is there for the next page.
+  A click with a modifier key or a middle click is left to the browser and changes nothing.
+  The `link rel="alternate" hreflang` tags of the head stay `hreflangLinks` in "Language
+  routes".
 - Catalogues are TypeScript files, not JSON, so each carries the license header and no
   exception is needed. Only visitor-facing text is translated; developer errors stay English.
 - The choice is kept in `localStorage` by default. A cookie or an account callback serves
