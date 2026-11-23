@@ -112,6 +112,21 @@ describe('default texts', () => {
     })
   })
 
+  describe.each([
+    [
+      'de',
+      'Darstellung: Dem System folgen',
+      ['Dem System folgen', 'Heller Modus', 'Dunkler Modus'],
+    ],
+    ['en', 'Theme: Follow the system', ['Follow the system', 'Light mode', 'Dark mode']],
+  ])('compact theme switch in %s', (locale, group, names) => {
+    it('has its accessible names from the catalogue', () => {
+      render(GovueThemeSwitch, { ...withLocale(locale), props: { compact: true } })
+      expect(screen.getByRole('radiogroup', { name: group })).toBeVisible()
+      expect(screen.getAllByRole('radio').map((r) => r.getAttribute('aria-label'))).toEqual(names)
+    })
+  })
+
   it('theme switch props still override the catalogue', () => {
     render(GovueThemeSwitch, { ...withLocale('de'), props: { label: 'Look', darkLabel: 'Night' } })
     expect(screen.getByRole('radiogroup', { name: 'Look' })).toBeVisible()
