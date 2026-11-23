@@ -84,12 +84,14 @@ describe('example site', () => {
 
   it('prerenders the compact theme switch with icons, in both languages', () => {
     const en = page('en/index.html')
-    expect(en).toContain('aria-label="Theme: Follow the system"')
+    expect(en).toContain('aria-label="Theme"')
+    expect(en).toContain('aria-label="Follow the system"')
     expect(en).toContain('aria-label="Light mode"')
     expect(en).toContain('aria-label="Dark mode"')
     expect(en).toContain('aria-hidden="true"')
     const de = page('de/index.html')
-    expect(de).toContain('aria-label="Darstellung: Dem System folgen"')
+    expect(de).toContain('aria-label="Darstellung"')
+    expect(de).toContain('aria-label="Dem System folgen"')
     expect(de).toContain('aria-label="Heller Modus"')
     expect(de).toContain('aria-label="Dunkler Modus"')
   })

@@ -18,8 +18,9 @@ import { useGovueText } from '../i18n/plugin'
 // With compact set, each option is one inline SVG icon (a device for system, a
 // sun for light, a moon for dark) in a square target of 44px. The group is the
 // same radio group with the same keys. The options are named by the mode
-// ("Light mode") and the group name ends in the current mode ("Theme: Light
-// mode"), since an icon says nothing to a screen reader. The three targets
+// ("Light mode"), since an icon says nothing to a screen reader. The group
+// name stays static: the checked state already announces the current mode. The
+// three targets
 // take about 142px: 3 x 44px, two 4px gaps and the 1px border on both sides
 // (computed from the classes, jsdom has no layout), against the 328px of a
 // 360px phone header. The icons use currentColor, so the role tokens colour
@@ -30,7 +31,7 @@ import { useGovueText } from '../i18n/plugin'
 // useTheme({ ... }) in its setup before this component renders.
 const props = withDefaults(
   defineProps<{
-    /** The accessible name of the group. In the compact variant the current mode is appended. */
+    /** The accessible name of the group. */
     label?: string
     /** The name of an option: its text, or in the compact variant its accessible name. */
     systemLabel?: string
@@ -63,15 +64,6 @@ const options = (): Array<{ value: ColorMode; text: string }> =>
         { value: 'light', text: props.lightLabel ?? t('govue.theme.light') },
         { value: 'dark', text: props.darkLabel ?? t('govue.theme.dark') },
       ]
-
-const groupLabel = (): string => {
-  const base = props.label ?? t('govue.theme.label')
-  if (!props.compact) {
-    return base
-  }
-  const current = options().find((option) => option.value === mode.value)
-  return t('govue.theme.current', { label: base, mode: current?.text ?? '' })
-}
 
 const buttons = ref<HTMLButtonElement[]>([])
 
@@ -108,7 +100,7 @@ function onKeydown(event: KeyboardEvent, index: number): void {
 <template>
   <div
     role="radiogroup"
-    :aria-label="groupLabel()"
+    :aria-label="label ?? t('govue.theme.label')"
     class="inline-flex gap-1 rounded-md border border-border-strong bg-surface"
   >
     <button

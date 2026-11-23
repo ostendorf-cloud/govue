@@ -122,15 +122,14 @@ describe('GovueThemeSwitch', () => {
       expect(new Set(radios.map((r) => r.querySelector('svg')?.innerHTML)).size).toBe(3)
     })
 
-    it('states the current mode in the group name', async () => {
+    it('keeps the group name static and states the mode through the checked option', async () => {
       const user = userEvent.setup()
       render(GovueThemeSwitch, { props: { compact: true } })
 
-      expect(screen.getByRole('radiogroup', { name: 'Theme: Follow the system' })).toBeVisible()
+      expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeVisible()
       await user.click(screen.getByRole('radio', { name: 'Dark mode' }))
-      expect(screen.getByRole('radiogroup', { name: 'Theme: Dark mode' })).toBeVisible()
-      await user.click(screen.getByRole('radio', { name: 'Light mode' }))
-      expect(screen.getByRole('radiogroup', { name: 'Theme: Light mode' })).toBeVisible()
+      expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeVisible()
+      expect(screen.getByRole('radio', { name: 'Dark mode' })).toBeChecked()
     })
 
     it('applies and stores each mode', async () => {
@@ -203,7 +202,7 @@ describe('GovueThemeSwitch', () => {
         props: { compact: true, label: 'Design', darkLabel: 'Nacht' },
       })
 
-      expect(screen.getByRole('radiogroup', { name: 'Design: Follow the system' })).toBeVisible()
+      expect(screen.getByRole('radiogroup', { name: 'Design' })).toBeVisible()
       expect(screen.getByRole('radio', { name: 'Nacht' })).toBeVisible()
     })
   })

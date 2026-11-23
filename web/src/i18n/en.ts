@@ -45,7 +45,6 @@ const en: MessageTree = {
       system: 'System',
       light: 'Light',
       dark: 'Dark',
-      current: '{label}: {mode}',
       compact: {
         system: 'Follow the system',
         light: 'Light mode',
