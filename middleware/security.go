@@ -111,8 +111,12 @@ func (p *Policy) Clone() *Policy {
 	return c
 }
 
-// Has reports whether the directive is set, with or without sources.
+// Has reports whether the directive is set, with or without sources. A nil
+// policy sets nothing.
 func (p *Policy) Has(directive string) bool {
+	if p == nil {
+		return false
+	}
 	_, ok := p.values[directive]
 	return ok
 }

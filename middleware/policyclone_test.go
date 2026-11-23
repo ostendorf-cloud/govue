@@ -48,6 +48,13 @@ func TestPolicyCloneOfNilIsNil(t *testing.T) {
 	}
 }
 
+func TestPolicyHasOnNilIsFalse(t *testing.T) {
+	var p *Policy
+	if p.Has("script-src") {
+		t.Error("a nil policy reports a directive")
+	}
+}
+
 func TestPolicyHas(t *testing.T) {
 	p := NewPolicy().Set("script-src", "'self'").Set("upgrade-insecure-requests")
 	for directive, want := range map[string]bool{
