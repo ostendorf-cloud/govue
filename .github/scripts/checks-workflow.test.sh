@@ -28,7 +28,15 @@ has() { [[ $(q "$1") == *"$2"* ]]; }
 # GitHub expression context names are case insensitive, so lacks compares in lower case.
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 lacks() { [[ $(lower "$(q "$1")") != *"$(lower "$2")"* ]]; }
-hex40() { [[ $(q "$1") =~ @[0-9a-f]{40}$ ]]; }
+# pinned checks the FORM of an action pin, never its value: the expression $1 selects a uses
+# value that is exactly NAME@<40 hex digits> with a "# vX.Y.Z" version comment on the line.
+# Renovate rewrites digest and comment together, so neither is compared to a fixed value.
+pinned() {
+  local uses comment
+  uses=$(q "$1")
+  comment=$(q "$1 | line_comment")
+  [[ $uses =~ ^$2@[0-9a-f]{40}$ ]] && [[ $comment =~ ^v[0-9]+(\.[0-9]+){0,2}$ ]]
+}
 
 deps='.jobs["web-deps"]'
 comment='.jobs["web-deps-comment"]'
@@ -36,10 +44,6 @@ upload="$deps.steps[] | select(.uses != null and (.uses | test(\"upload-artifact
 action='ostendorf-cloud/workflows/.github/actions/pnpm-release-age-comment'
 mint="$comment.steps[0]"
 post="$comment.steps[1]"
-# The pin of actions/create-github-app-token in reusable-renovate.yaml of the workflows
-# repository. Keep both in step.
-mint_uses='actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510'
-mint_version='v3.3.0'
 secret="\${{ secrets.GH_APP_DEPENDENCIES_PRIVATE_KEY }}"
 
 # The workflow default stays read only. The secret never reaches a trigger that runs with
@@ -99,10 +103,10 @@ assert eq "$deps.env" null
 # with a default token. Each step has exactly the keys it needs, so none gains an env.
 assert eq "$deps | keys | sort | join(\",\")" permissions,runs-on,steps
 assert eq "$deps.steps | length" 4
-assert eq "$deps.steps[0].uses" 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
-assert eq "$deps.steps[1].uses" 'jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db'
+assert pinned "$deps.steps[0].uses" 'actions/checkout'
+assert pinned "$deps.steps[1].uses" 'jdx/mise-action'
 assert eq "$deps.steps[2].uses" null
-assert eq "$deps.steps[3].uses" 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9'
+assert pinned "$deps.steps[3].uses" 'actions/upload-artifact'
 assert eq "$deps.steps[0] | keys | sort | join(\",\")" uses,with
 assert eq "$deps.steps[0].with | keys | sort | join(\",\")" persist-credentials
 assert eq "$deps.steps[1] | keys | sort | join(\",\")" uses
@@ -116,7 +120,7 @@ install="$deps.steps[] | select(.name == \"Install the web dependencies and keep
 assert eq "$install" "set -o pipefail
 task web:deps 2>&1 | tee \"\$RUNNER_TEMP/install.log\""
 assert eq "$upload | .if" 'failure()'
-assert hex40 "$upload | .uses"
+assert pinned "$upload | .uses" 'actions/upload-artifact'
 assert eq "$upload | .with.path" "\${{ runner.temp }}/install.log"
 assert has "$upload | .with.name" 'github.run_attempt'
 
@@ -137,13 +141,11 @@ assert lacks "$comment | tojson" 'actions/checkout'
 assert eq "[$comment.steps[] | select(.run != null or .env != null)] | length" 0
 assert eq "[$comment.steps[] | select(.\"working-directory\" != null or .shell != null)] | length" 0
 
-# The token step is the app token action at the digest and version of reusable-renovate.yaml
-# in the workflows repository. Its keys are exactly id, uses and with.
+# The token step is the app token action, pinned by digest with a version comment. Its keys
+# are exactly id, uses and with.
 assert eq "$mint | keys | sort | join(\",\")" id,uses,with
 assert eq "$mint.id" app-token
-assert eq "$mint.uses" "$mint_uses"
-assert eq "$mint.uses | line_comment" "$mint_version"
-assert hex40 "$mint.uses"
+assert pinned "$mint.uses" 'actions/create-github-app-token'
 
 # Its inputs are the app id, the private key and one permission. No owner and no
 # repositories, so the token is scoped to this repository only. No other permission, no
