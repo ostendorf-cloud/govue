@@ -266,6 +266,162 @@ func TestSubmitUsesTheSiteSubjectAndBody(t *testing.T) {
 	}
 }
 
+// consentBody records the request the site's Body saw.
+func consentBody(seen *[]Request, mu *sync.Mutex) func(Request) string {
+	return func(r Request) string {
+		mu.Lock()
+		defer mu.Unlock()
+		*seen = append(*seen, r)
+		return DefaultBody(r)
+	}
+}
+
+func TestRequireConsent(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		require bool
+		consent any // nil leaves the key out
+		status  int
+		want    bool
+	}{
+		{"required and missing", true, nil, http.StatusBadRequest, false},
+		{"required and false", true, false, http.StatusBadRequest, false},
+		{"required and true", true, true, http.StatusOK, true},
+		{"not required and missing", false, nil, http.StatusOK, false},
+		{"not required and false", false, false, http.StatusOK, false},
+		{"not required and true", false, true, http.StatusOK, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var (
+				mu   sync.Mutex
+				seen []Request
+			)
+			e := newEnv(t, func(c *Config) {
+				c.RequireConsent = tc.require
+				c.Body = consentBody(&seen, &mu)
+			})
+			b := e.body(t)
+			if tc.consent != nil {
+				b["consent"] = tc.consent
+			}
+			w := e.post(t, b)
+			if w.Code != tc.status {
+				t.Fatalf("answer = %d %s", w.Code, w.Body)
+			}
+			if tc.status != http.StatusOK {
+				var got errorBody
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+					t.Fatal(err)
+				}
+				if got.Error.Code != "invalid_argument" || len(got.Error.Details) != 1 ||
+					got.Error.Details[FieldConsent] != CodeRequired {
+					t.Fatalf("answer = %s, want the field error consent: required", w.Body)
+				}
+				if e.sender.count() != 0 {
+					t.Fatal("a mail was sent without consent")
+				}
+				// The refusal came before the proof of work: the solution is
+				// still good once the box is ticked.
+				b["consent"] = true
+				if w := e.post(t, b); w.Code != http.StatusOK {
+					t.Fatalf("with the box ticked = %d %s", w.Code, w.Body)
+				}
+				return
+			}
+			if len(seen) != 1 || seen[0].Consent != tc.want {
+				t.Fatalf("Body saw %+v, want Consent %v", seen, tc.want)
+			}
+		})
+	}
+}
+
+func TestConsentErrorJoinsTheOtherFieldErrors(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, func(c *Config) { c.RequireConsent = true })
+	b := e.body(t)
+	b["name"] = ""
+	w := e.post(t, b)
+	var got errorBody
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusBadRequest || len(got.Error.Details) != 2 ||
+		got.Error.Details[FieldName] != CodeRequired || got.Error.Details[FieldConsent] != CodeRequired {
+		t.Fatalf("answer = %d %s", w.Code, w.Body)
+	}
+}
+
+func TestBodySeesTheServerReceiveTime(t *testing.T) {
+	t.Parallel()
+	var (
+		mu   sync.Mutex
+		seen []Request
+	)
+	e := newEnv(t, func(c *Config) { c.Body = consentBody(&seen, &mu) })
+	b := e.body(t)
+	b["consent"] = true
+	want := e.clock.now()
+	if w := e.post(t, b); w.Code != http.StatusOK {
+		t.Fatalf("answer = %d %s", w.Code, w.Body)
+	}
+	if len(seen) != 1 || !seen[0].Received.Equal(want) || !seen[0].Consent {
+		t.Fatalf("Body saw %+v, want Received %v and Consent", seen, want)
+	}
+	// The default body writes no consent line.
+	if m := e.sender.sent[0]; strings.Contains(strings.ToLower(m.Body), "consent") {
+		t.Fatalf("the default body mentions consent: %q", m.Body)
+	}
+}
+
+func TestReceivedTimeIsNeverMonotonic(t *testing.T) {
+	t.Parallel()
+	var (
+		mu   sync.Mutex
+		seen []Request
+	)
+	e := newEnv(t, func(c *Config) {
+		c.Body = consentBody(&seen, &mu)
+		c.Now = time.Now
+	})
+	if w := e.post(t, e.body(t)); w.Code != http.StatusOK {
+		t.Fatalf("answer = %d %s", w.Code, w.Body)
+	}
+	if got := seen[0].Received; got.IsZero() || got != got.Round(0) {
+		t.Fatalf("Received = %v, want a wall clock time without a monotonic reading", got)
+	}
+}
+
+func TestClientCannotSetTheReceiveTime(t *testing.T) {
+	t.Parallel()
+	for _, key := range []string{"received", "Received", "-"} {
+		e := newEnv(t, nil)
+		b := e.body(t)
+		b[key] = "2000-01-01T00:00:00Z"
+		w := e.post(t, b)
+		if w.Code != http.StatusBadRequest || code(t, w) != "invalid_argument" {
+			t.Fatalf("%s: answer = %d %s", key, w.Code, w.Body)
+		}
+		if e.sender.count() != 0 {
+			t.Fatalf("%s: a mail was sent", key)
+		}
+	}
+}
+
+func TestConsentMustBeABoolean(t *testing.T) {
+	t.Parallel()
+	for _, value := range []any{"true", 1, map[string]any{}, []any{true}} {
+		e := newEnv(t, func(c *Config) { c.RequireConsent = true })
+		b := e.body(t)
+		b["consent"] = value
+		w := e.post(t, b)
+		if w.Code != http.StatusBadRequest || code(t, w) != "invalid_argument" || e.sender.count() != 0 {
+			t.Fatalf("%v: answer = %d %s", value, w.Code, w.Body)
+		}
+	}
+}
+
 // envelopeKey sends a valid body with one extra envelope key.
 func envelopeKey(key, value string) func(t *testing.T, e *env) *httptest.ResponseRecorder {
 	return func(t *testing.T, e *env) *httptest.ResponseRecorder {

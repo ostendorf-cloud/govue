@@ -37,7 +37,10 @@ const props = withDefaults(
      * Show a consent checkbox that has to be ticked before the form is sent.
      * govue ships no consent text: the site supplies it through `consentLabel`
      * or the `consent` slot. Without one the form refuses to render, with a
-     * warning in development.
+     * warning in development. The request then carries `consent` with the
+     * state of the box, which the Go handler checks with
+     * `contact.Config.RequireConsent` and hands to the site's mail body. Set
+     * both together. Without this prop the request carries no `consent`.
      */
     requireConsent?: boolean
     /** The consent text, plain. The `consent` slot wins when both are set. */
@@ -168,8 +171,10 @@ const form = useForm({
           name: values.name,
           email: values.email,
           message: values.message,
-          // No consent: it stays in the browser. The server decodes with
-          // unknown fields refused, so one more key is a 400.
+          // The state of the box, only when the form shows one. The server
+          // records it as the client's claim (contact.Request.Consent) and,
+          // with RequireConsent, refuses a missing or false one.
+          ...(props.requireConsent ? { consent: values.consent } : {}),
           website: '',
           pow,
         },

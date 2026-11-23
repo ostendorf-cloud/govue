@@ -6,8 +6,11 @@
  * and pow/pow.go of the Go module, not from memory of what a server might do:
  *
  * - the body is decoded with unknown fields refused, and a refused body is
- *   400 invalid_argument with no details (so a client that sends `consent`
- *   fails here as it does against the real server),
+ *   400 invalid_argument with no details (so a client that sends a key the
+ *   server does not know, such as `received`, fails here as it does against
+ *   the real server),
+ * - `consent` is an optional boolean, and with `requireConsent` a missing or
+ *   false one is the field error `consent: required` next to the others,
  * - the content type has to be application/json (415),
  * - the honeypot answers 200 {"ok":true} before any limit or check,
  * - the order is honeypot, client limit, fields, proof of work, mail ceiling,
@@ -36,6 +39,8 @@ export interface FakeContactOptions {
   minAgeSeconds?: number
   /** The submissions one client may make. Default 5, as DefaultClientBurst. */
   clientLimit?: number
+  /** contact.Config.RequireConsent. Default false. */
+  requireConsent?: boolean
 }
 
 export interface FakeRequest {
@@ -49,7 +54,7 @@ export interface FakeRequest {
 
 const TEST_KEY = Buffer.from('0a1b'.repeat(16), 'hex')
 const AUDIENCE = 'example.test'
-const BODY_KEYS = ['name', 'email', 'message', 'website', 'pow']
+const BODY_KEYS = ['name', 'email', 'message', 'consent', 'website', 'pow']
 const POW_KEYS = ['algorithm', 'challenge', 'number', 'salt', 'signature']
 
 /** The limits of contact.Max*Runes. */
@@ -98,8 +103,10 @@ export class FakeContactServer {
   private readonly ttl: number
   private readonly minAge: number
   private readonly clientLimit: number
+  private readonly requireConsent: boolean
 
   constructor(options: FakeContactOptions = {}) {
+    this.requireConsent = options.requireConsent ?? false
     this.now = options.now ?? Date.now
     this.maxNumber = options.maxNumber ?? 50
     this.secret = options.secret
@@ -191,6 +198,9 @@ export class FakeContactServer {
         return notValid()
       }
     }
+    if ('consent' in sub && typeof sub.consent !== 'boolean') {
+      return notValid()
+    }
     const pow = sub.pow
     if (pow !== undefined && pow !== null) {
       if (
@@ -234,6 +244,9 @@ export class FakeContactServer {
           out[field] = 'invalid'
         }
       }
+    }
+    if (this.requireConsent && sub.consent !== true) {
+      out.consent = 'required'
     }
     return Object.keys(out).length > 0 ? out : undefined
   }

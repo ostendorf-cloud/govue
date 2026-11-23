@@ -301,7 +301,10 @@ describe('GovueContactForm sending', () => {
   })
 
   it('sends exactly the fields the server knows, and the server accepts them', async () => {
-    const { user, server } = setup({ requireConsent: true, consentLabel: CONSENT })
+    const { user, server } = setup(
+      { requireConsent: true, consentLabel: CONSENT },
+      { server: new FakeContactServer({ requireConsent: true }) },
+    )
     await fill(user)
     await user.click(screen.getByRole('checkbox'))
 
@@ -312,8 +315,9 @@ describe('GovueContactForm sending', () => {
     const post = server.submits[0]
     expect(post.url).toBe('/api/v1/contact')
     expect(post.headers['Content-Type']).toBe('application/json')
-    // consent stays in the browser: the server refuses an unknown field.
+    // The state of the box goes along, as a boolean.
     expect(Object.keys(post.body as object).sort()).toEqual([
+      'consent',
       'email',
       'message',
       'name',
@@ -324,6 +328,7 @@ describe('GovueContactForm sending', () => {
       name: 'Alice',
       email: 'alice@example.com',
       message: 'Hello there',
+      consent: true,
       website: '',
       pow: { algorithm: 'SHA-256', number: expect.any(Number) as number },
     })
@@ -335,6 +340,34 @@ describe('GovueContactForm sending', () => {
       'signature',
     ])
     expect(screen.getByRole('status')).toHaveTextContent('Thank you. Your message was sent.')
+  })
+
+  it('sends no consent key when the form shows no box', async () => {
+    const { user, server } = setup()
+    await fill(user)
+
+    await user.click(send())
+    await settle(() => thanks() !== null)
+
+    expect(server.submits).toHaveLength(1)
+    expect(Object.keys(server.submits[0].body as object)).not.toContain('consent')
+  })
+
+  it('puts a consent refusal of the server on the box with the consent text', async () => {
+    const { user, server } = setup({ requireConsent: true, consentLabel: CONSENT })
+    server.refuseNext(() =>
+      refusal(400, 'invalid_argument', 'some fields are invalid', { consent: 'required' }),
+    )
+    await fill(user)
+    await user.click(screen.getByRole('checkbox'))
+
+    await user.click(send())
+    await settle(() => screen.getByRole('checkbox').getAttribute('aria-invalid') === 'true')
+
+    const box = screen.getByRole('checkbox')
+    expect(box).toHaveAttribute('aria-invalid', 'true')
+    expect(box).toHaveAccessibleDescription('Please agree before sending.')
+    expect(thanks()).toBeNull()
   })
 
   it('shows success only after the server answered, emits sent and focuses the status', async () => {

@@ -6,6 +6,7 @@ package contact
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func valid() Request {
@@ -22,6 +23,22 @@ func TestNormalize(t *testing.T) {
 	// A control character is not repaired.
 	if got := Normalize(Request{Name: "a\x00b"}); got.Name != "a\x00b" {
 		t.Fatalf("Normalize repaired the name: %q", got.Name)
+	}
+	// The consent state and the receive time pass unchanged.
+	at := time.Date(2026, 11, 23, 9, 30, 0, 0, time.UTC)
+	if got := Normalize(Request{Name: " Ada ", Consent: true, Received: at}); !got.Consent || !got.Received.Equal(at) {
+		t.Fatalf("Normalize = %+v, lost Consent or Received", got)
+	}
+}
+
+func TestDefaultBodyHasNoConsentLine(t *testing.T) {
+	t.Parallel()
+	r := valid()
+	r.Consent = true
+	r.Received = time.Date(2026, 11, 23, 9, 30, 0, 0, time.UTC)
+	want := "Name: Ada Lovelace\nEmail: ada@example.org\n\nHello there.\n"
+	if got := DefaultBody(r); got != want {
+		t.Fatalf("DefaultBody = %q, want %q", got, want)
 	}
 }
 
