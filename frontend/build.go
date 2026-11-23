@@ -211,10 +211,19 @@ func loadSite(build fs.FS, languages []string, fallback string, opts []themeboot
 		s.notFound[code] = f
 	}
 	fail(s.loadAssets(build, sourceMaps))
-	for _, name := range append([]string{favicon.SVGFile, favicon.PNGFile, favicon.TouchFile}, publicFiles...) {
+	fixedFiles := []string{favicon.SVGFile, favicon.PNGFile, favicon.TouchFile}
+	for i, name := range append(fixedFiles, publicFiles...) {
 		body, err := readRegular(build, name)
-		if err != nil {
+		switch {
+		case err != nil && i < len(fixedFiles):
+			// A fixed name of the favicon package, not a configuration value.
 			fail(fmt.Errorf("frontend: public file %s: %w", name, err))
+			continue
+		case err != nil:
+			// A PublicFiles entry is a configuration value: the error gives its
+			// position and the kind only, and wraps no *fs.PathError.
+			fail(fmt.Errorf("frontend: Config.PublicFiles entry %d: %w (the value is not shown)",
+				i-len(fixedFiles)+1, fileKind(err)))
 			continue
 		}
 		s.public["/"+name] = newFile(body, contentTypes[strings.ToLower(path.Ext(name))], cacheDay)
@@ -226,15 +235,35 @@ func loadSite(build fs.FS, languages []string, fallback string, opts []themeboot
 	return s, nil
 }
 
+// errNotRegular is the kind of a build file that is a symbolic link, a
+// directory or anything else but a regular file.
+var errNotRegular = errors.New("not a regular file")
+
+// errNotReadable is the kind of any other failed read.
+var errNotReadable = errors.New("not readable")
+
+// fileKind reduces an error of readRegular to its kind, with no path in it,
+// for a file whose name is a configuration value. fs.ErrNotExist and
+// fs.ErrPermission stay matchable with errors.Is.
+func fileKind(err error) error {
+	for _, kind := range []error{fs.ErrNotExist, fs.ErrPermission, errNotRegular} {
+		if errors.Is(err, kind) {
+			return kind
+		}
+	}
+	return errNotReadable
+}
+
 // readRegular reads name, a regular file of build. A symbolic link, a
-// directory and anything else fail: the build tools write none of them.
+// directory and anything else fail: the build tools write none of them. An
+// error may name the file.
 func readRegular(build fs.FS, name string) ([]byte, error) {
 	info, err := fs.Lstat(build, name)
 	if err != nil {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, errors.New("not a regular file")
+		return nil, errNotRegular
 	}
 	return fs.ReadFile(build, name)
 }

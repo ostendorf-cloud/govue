@@ -5,6 +5,7 @@ package frontend_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"strings"
@@ -83,7 +84,7 @@ func TestNewRefusesAnIncompleteBuild(t *testing.T) {
 			b["sitemap.xml"] = &fstest.MapFile{Data: sitemapOf(origin+"/de/imprint", origin+"/de/imprint")}
 		}, "listed twice"},
 		{"no favicon", func(b fstest.MapFS) { delete(b, favicon.TouchFile) }, favicon.TouchFile},
-		{"public file missing", func(b fstest.MapFS) { delete(b, ogImage) }, "public file og-image.png"},
+		{"public file missing", func(b fstest.MapFS) { delete(b, ogImage) }, "Config.PublicFiles entry 1: file does not exist"},
 		{"asset with unknown extension", func(b fstest.MapFS) {
 			b["assets/page.html"] = &fstest.MapFile{Data: []byte("<html>")}
 		}, "asset assets/page.html has an extension that is not served"},
@@ -183,6 +184,44 @@ func TestNewNeverQuotesARefusedValue(t *testing.T) {
 			tt.change(&cfg)
 			_, err := frontend.New(cfg)
 			configtexttest.AssertHidden(t, err, secret, tt.want)
+		})
+	}
+}
+
+// TestNewRefusesAnUnusablePublicFileWithoutQuotingIt covers an entry that
+// passes the name check but is no regular file of the build. Neither the
+// error text nor any error under it, such as a *fs.PathError, may carry the
+// name.
+func TestNewRefusesAnUnusablePublicFileWithoutQuotingIt(t *testing.T) {
+	const name = "hunter2-secret.png"
+	tests := []struct {
+		name     string
+		change   func(fstest.MapFS)
+		want     string
+		notExist bool
+	}{
+		{"missing", func(fstest.MapFS) {}, "Config.PublicFiles entry 2: file does not exist", true},
+		{"directory", func(b fstest.MapFS) {
+			b[name+"/x.png"] = &fstest.MapFile{Data: []byte("x")}
+		}, "Config.PublicFiles entry 2: not a regular file", false},
+		{"symbolic link", func(b fstest.MapFS) {
+			b[name] = &fstest.MapFile{Data: []byte(ogImage), Mode: fs.ModeSymlink}
+		}, "Config.PublicFiles entry 2: not a regular file", false},
+		{"named pipe", func(b fstest.MapFS) {
+			b[name] = &fstest.MapFile{Mode: fs.ModeNamedPipe}
+		}, "Config.PublicFiles entry 2: not a regular file", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			build := buildOf(routes)
+			tt.change(build)
+			cfg := testConfig(build, io.Discard)
+			cfg.PublicFiles = []string{ogImage, name}
+			_, err := frontend.New(cfg)
+			configtexttest.AssertHidden(t, err, "hunter2", tt.want)
+			if errors.Is(err, fs.ErrNotExist) != tt.notExist {
+				t.Errorf("errors.Is(err, fs.ErrNotExist) = %v, want %v", !tt.notExist, tt.notExist)
+			}
 		})
 	}
 }
