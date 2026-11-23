@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.7.0](https://github.com/ostendorf-cloud/govue/compare/v0.6.0...v0.7.0) (2026-11-23)
+
+### Features
+
+- **frontend:** add a static frontend server package ([#236](https://github.com/ostendorf-cloud/govue/pull/236))
+
 ## [v0.6.0](https://github.com/ostendorf-cloud/govue/compare/v0.5.0...v0.6.0) (2026-11-21)
 
 ### Features
