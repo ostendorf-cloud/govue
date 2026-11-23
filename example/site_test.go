@@ -275,6 +275,9 @@ func TestPagesCarryTheBootScriptFaviconAndSecurityHeaders(t *testing.T) {
 	if !strings.Contains(csp, "nonce-") {
 		t.Fatalf("Content-Security-Policy = %q, want a nonce", csp)
 	}
+	if !strings.Contains(csp, "; worker-src 'self'; ") {
+		t.Errorf("Content-Security-Policy = %q, want worker-src 'self' for the contact form's solver", csp)
+	}
 	nonce := csp[strings.Index(csp, "nonce-")+len("nonce-"):]
 	nonce = nonce[:strings.IndexAny(nonce, "' ;")]
 	if !strings.Contains(body, "<script nonce=\""+nonce+"\"") {

@@ -16,14 +16,15 @@ import (
 	"github.com/ostendorf-cloud/govue/envconf"
 )
 
-// The environment variables LoadConfig reads. The password also has a
-// SMTP_PASSWORD_FILE twin.
+// The environment variables LoadConfig reads. The user name and the password
+// also have a _FILE twin, SMTP_USERNAME_FILE and SMTP_PASSWORD_FILE.
 const (
 	// EnvHost is the submission server's host name.
 	EnvHost = "SMTP_HOST"
 	// EnvPort is its port, 587 when unset.
 	EnvPort = "SMTP_PORT"
-	// EnvUsername is the AUTH user, empty for a server without AUTH.
+	// EnvUsername is the AUTH user, empty for a server without AUTH, or
+	// SMTP_USERNAME_FILE names a file that holds it.
 	EnvUsername = "SMTP_USERNAME"
 	// EnvPassword is the AUTH password, or SMTP_PASSWORD_FILE names a file.
 	EnvPassword = "SMTP_PASSWORD"
@@ -96,16 +97,24 @@ type Config struct {
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
-// LoadConfig reads SMTP_HOST, SMTP_PORT, SMTP_USERNAME and SMTP_PASSWORD or
-// SMTP_PASSWORD_FILE, and returns every problem in one error. Port 465 means
-// ImplicitTLS, every other port StartTLS. The environment never selects
-// Plain: that is a line of code in the consumer.
+// LoadConfig reads SMTP_HOST, SMTP_PORT, SMTP_USERNAME or SMTP_USERNAME_FILE
+// and SMTP_PASSWORD or SMTP_PASSWORD_FILE, and returns every problem in one
+// error. Port 465 means ImplicitTLS, every other port StartTLS. The
+// environment never selects Plain: that is a line of code in the consumer.
+//
+// A _FILE variable names a file whose content is the value, with surrounding
+// white space such as the trailing newline trimmed, the same rule as the
+// direct variable. Setting a variable and its _FILE twin together, an empty
+// file and a file that cannot be read are errors. An error names the
+// variables and never a value or a path.
 func LoadConfig(getenv func(string) string) (Config, error) {
 	l := envconf.New(getenv)
 	cfg := Config{
-		Host:     l.Required(EnvHost),
-		Port:     l.Int(EnvPort, DefaultPort, 1, 65535),
-		Username: l.String(EnvUsername, ""),
+		Host: l.Required(EnvHost),
+		Port: l.Int(EnvPort, DefaultPort, 1, 65535),
+		// The user name is not a secret, but it is half of the credentials
+		// and is mounted next to the password, so it reads the same way.
+		Username: l.SecretOrFile(EnvUsername),
 		Password: NewSecret(l.SecretOrFile(EnvPassword)),
 	}
 	if cfg.Port == ImplicitTLSPort {

@@ -51,6 +51,15 @@ func (f *fakeSender) Send(ctx context.Context, m mail.Message) error {
 	return nil
 }
 
+// contactBody is the default body plus one line that records the consent box
+// with the server's receive time. It is the example's wording, a placeholder
+// like its legal pages: a site writes its own. The line records what the
+// client claimed, not a proof that a person ticked a box.
+func contactBody(r contact.Request) string {
+	return contact.DefaultBody(r) + fmt.Sprintf("\nConsent box ticked: %t (as sent by the form), received %s\n",
+		r.Consent, r.Received.UTC().Format(time.RFC3339))
+}
+
 // buildContact wires the contact form. Without CONTACT_POW_KEY the handlers
 // are still built and answer 503 not_configured, so the example starts
 // without the key. The sender is the in memory fake above.
@@ -96,6 +105,10 @@ func (a *app) buildContact() error {
 		Logger:         a.logger,
 		SendTimeout:    contactSendTimeout,
 		Now:            a.cfg.now,
+		// The example's contact page shows the consent box (requireConsent),
+		// so the server requires it too, and the mail records it in one line.
+		RequireConsent: true,
+		Body:           contactBody,
 	})
 	if err != nil {
 		return fmt.Errorf("example: contact handlers: %w", err)

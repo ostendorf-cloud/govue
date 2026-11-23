@@ -126,14 +126,35 @@ type Config struct {
 	Logger *slog.Logger
 
 	// Subject and Body build the mail from a valid request. Nil means a fixed
-	// subject without the name and a body with the three fields. The subject
-	// goes through the mail package's checks, and so does everything else.
-	// Both run after the ceiling token is taken, so a refused message burns a
-	// token. They must not panic and must not put visitor input unchecked into
-	// a header. A panic is recovered here, logged by its type only, and answers
-	// 503 send_failed, because the value of a panic can hold visitor content.
+	// subject without the name and [DefaultBody], the three text fields. The
+	// subject goes through the mail package's checks, and so does everything
+	// else. Both run after the ceiling token is taken, so a refused message
+	// burns a token. They must not panic and must not put visitor input
+	// unchecked into a header. A panic is recovered here, logged by its type
+	// only, and answers 503 send_failed, because the value of a panic can hold
+	// visitor content.
+	//
+	// The request carries Consent and Received, so a Body can record the
+	// consent box in one line of its own wording, for example:
+	//
+	//	Body: func(r contact.Request) string {
+	//		at := r.Received.UTC().Format(time.RFC3339)
+	//		return contact.DefaultBody(r) +
+	//			fmt.Sprintf("\nConsent box: %t, received %s\n", r.Consent, at)
+	//	},
+	//
+	// The defaults write no consent line.
 	Subject func(Request) string
 	Body    func(Request) string
+
+	// RequireConsent refuses a submission whose consent box is missing or
+	// false, with the field error {"consent": "required"} next to the other
+	// field errors and before the proof of work, so the solution is not
+	// spent. Off by default: a submission is then accepted with or without
+	// the box. GovueContactForm sends the box only with requireConsent, so
+	// the two are set together. The check stops an honest client that skipped
+	// the box, never a modified one, which sends true: see Request.Consent.
+	RequireConsent bool
 
 	// MaxBodyBytes is the body cap. Zero means [DefaultMaxBodyBytes].
 	MaxBodyBytes int64
@@ -143,7 +164,8 @@ type Config struct {
 	// the answer can no longer be written. A send still running at shutdown can
 	// be cut off when the shutdown timeout (20 s by default) ends.
 	SendTimeout time.Duration
-	// Now is the clock of the warning throttle. Nil means time.Now.
+	// Now is the clock of the warning throttle and of Request.Received. Nil
+	// means time.Now.
 	Now func() time.Time
 }
 
@@ -163,6 +185,7 @@ type Handler struct {
 	maxBody    int64
 	timeout    time.Duration
 	now        func() time.Time
+	consent    bool
 	challenge  http.Handler
 	configured bool
 
@@ -188,6 +211,7 @@ func New(cfg Config) (*Handler, error) {
 		maxBody:  cfg.MaxBodyBytes,
 		timeout:  cfg.SendTimeout,
 		now:      cfg.Now,
+		consent:  cfg.RequireConsent,
 	}
 	if h.clients == nil {
 		h.clients = ratelimit.New(DefaultClientBurst, DefaultClientPer, MaxLimiterKeys)
@@ -206,7 +230,7 @@ func New(cfg Config) (*Handler, error) {
 		h.subject = func(Request) string { return "New message from the contact form" }
 	}
 	if h.body == nil {
-		h.body = defaultBody
+		h.body = DefaultBody
 	}
 	if h.maxBody <= 0 {
 		h.maxBody = DefaultMaxBodyBytes
@@ -261,8 +285,9 @@ func (h *Handler) Challenge() http.Handler { return h.challenge }
 
 // Submit returns the POST handler that validates a submission and sends the
 // mail. It checks, in this order: the origin, the configuration, the content
-// type and body cap, the honeypot, the per client limit, the fields, the
-// proof of work, the global mail ceiling, and then it sends.
+// type and body cap, the honeypot, the per client limit, the fields (with the
+// consent box under RequireConsent), the proof of work, the global mail
+// ceiling, and then it sends.
 func (h *Handler) Submit() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := h.submit(w, r); err != nil {
@@ -321,6 +346,9 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) error {
 	if err := api.DecodeLimit(r, &sub, h.maxBody); err != nil {
 		return decodeFailure(err)
 	}
+	// Received is the server's own time and never decoded: its field has no
+	// JSON name, so a body that sends one is refused above.
+	sub.Received = h.now().Round(0)
 	if sub.Website != "" {
 		// The honeypot answers like a success and does nothing. It is no signal.
 		return h.ok(w)
@@ -330,7 +358,14 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) error {
 		return api.TooManyRequests(wait)
 	}
 	req := Normalize(sub.Request)
-	if fields := Validate(req); fields != nil {
+	fields := Validate(req)
+	if h.consent && !req.Consent {
+		if fields == nil {
+			fields = map[string]string{}
+		}
+		fields[FieldConsent] = CodeRequired
+	}
+	if fields != nil {
 		details := make(map[string]any, len(fields))
 		for k, v := range fields {
 			details[k] = v
@@ -463,8 +498,10 @@ func coded(e *api.Error, code string) *api.Error {
 	return e
 }
 
-// defaultBody is the plain text body when Config.Body is nil.
-func defaultBody(r Request) string {
+// DefaultBody is the plain text body when Config.Body is nil: the name, the
+// address and the message. It writes nothing about consent. A site's own Body
+// can start from it and add lines.
+func DefaultBody(r Request) string {
 	return "Name: " + r.Name + "\nEmail: " + r.Email + "\n\n" + r.Message + "\n"
 }
 

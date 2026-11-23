@@ -155,6 +155,23 @@ describe('localizeContactError with the real codes', () => {
     expect(error.message).not.toContain('some fields')
   })
 
+  it('says to agree for a consent field the server refused, and keeps the other fields', () => {
+    const error = localizeContactError(
+      new ApiError({
+        code: 'invalid_argument',
+        message: 'some fields are invalid',
+        status: 400,
+        details: { consent: 'required', name: 'required' },
+      }),
+      t,
+      fields,
+    )
+    expect(error.details).toEqual({
+      consent: '[govue.contact.error.consentRequired{"max":0}]',
+      name: '[govue.contact.error.required{"max":200}]',
+    })
+  })
+
   it('treats a field code it does not know as invalid', () => {
     const error = localizeContactError(
       new ApiError({ code: 'invalid_argument', message: 'x', details: { name: 'new_code' } }),

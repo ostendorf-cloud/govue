@@ -16,6 +16,12 @@
 // error is a code under details, as {field: code}. No log line holds a name,
 // an address or message text, in any path.
 //
+// A submission can carry the state of the form's consent box. With
+// Config.RequireConsent a missing or false box is a field error. The state is
+// what the client claims, never a proof, and govue writes no consent text
+// into the mail: a site's Body adds its own line from Request.Consent and
+// Request.Received if it wants a record.
+//
 // The limits and the replay set are per process. With several replicas the
 // budgets multiply. This package imports no session package.
 //
@@ -31,6 +37,7 @@ package contact
 import (
 	"net/mail"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -53,35 +60,52 @@ const (
 	CodeInvalid       = "invalid"
 )
 
-// The field names used in [Validate] and in the JSON body.
+// The field names used in [Validate] and in the JSON body. FieldConsent is
+// reported by [Handler.Submit] only, with [Config.RequireConsent].
 const (
 	FieldName    = "name"
 	FieldEmail   = "email"
 	FieldMessage = "message"
+	FieldConsent = "consent"
 )
 
-// Request is what the visitor wrote.
+// Request is what the visitor wrote, plus the time the server received it.
 type Request struct {
 	Name    string `json:"name"`
 	Email   string `json:"email"`
 	Message string `json:"message"`
+
+	// Consent is the state of the form's consent box as the client sent it.
+	// A missing key decodes as false. It records a claim of the client, not
+	// a proof: a modified client sends true without showing a box. A site
+	// that wants a trail puts it into the mail through Config.Body, together
+	// with Received. GovueContactForm sends it when it shows the box.
+	Consent bool `json:"consent"`
+
+	// Received is the server's clock (Config.Now) when Submit decoded the
+	// request, without a monotonic reading. It never comes from the client:
+	// a body that carries it is refused as an unknown field. It is the zero
+	// time outside Submit.
+	Received time.Time `json:"-"`
 }
 
-// Normalize trims white space around every field and turns CRLF and CR in the
-// message into LF. It changes nothing else: a control character stays and is
-// refused by [Validate], never repaired.
+// Normalize trims white space around every text field and turns CRLF and CR
+// in the message into LF. It changes nothing else: a control character stays
+// and is refused by [Validate], never repaired, and Consent and Received are
+// kept as they are.
 func Normalize(r Request) Request {
 	msg := strings.ReplaceAll(r.Message, "\r\n", "\n")
 	msg = strings.ReplaceAll(msg, "\r", "\n")
-	return Request{
-		Name:    strings.TrimSpace(r.Name),
-		Email:   strings.TrimSpace(r.Email),
-		Message: strings.TrimSpace(msg),
-	}
+	r.Name = strings.TrimSpace(r.Name)
+	r.Email = strings.TrimSpace(r.Email)
+	r.Message = strings.TrimSpace(msg)
+	return r
 }
 
 // Validate returns a code per field that fails, or nil when the request is
-// valid. Call [Normalize] first. A value never appears in the result.
+// valid. Call [Normalize] first. A value never appears in the result. It
+// checks the three text fields only: whether consent is required is the
+// handler's option, [Config.RequireConsent].
 func Validate(r Request) map[string]string {
 	errs := map[string]string{}
 	if code := checkName(r.Name); code != "" {

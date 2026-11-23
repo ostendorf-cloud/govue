@@ -56,9 +56,15 @@ func NewPolicy() *Policy {
 }
 
 // DefaultPolicy denies by default and allows only same-origin scripts,
-// styles, images (plus data: URIs), fonts and requests. Inline script and
-// style run only with the response's own nonce, so a tag an attacker
-// injected does not.
+// styles, images (plus data: URIs), fonts, requests and workers. Inline
+// script and style run only with the response's own nonce, so a tag an
+// attacker injected does not.
+//
+// worker-src 'self' lets a page start a Worker from a script file of its own
+// origin, such as the proof of work solver of the contact form, and nothing
+// else: no blob: or data: worker. It is set explicitly because the fallback
+// of a missing worker-src differs between CSP levels, script-src in CSP 3
+// and child-src, then default-src 'none', in CSP 2.
 func DefaultPolicy() *Policy {
 	return NewPolicy().
 		Set("default-src", "'none'").
@@ -67,6 +73,7 @@ func DefaultPolicy() *Policy {
 		Set("img-src", "'self'", "data:").
 		Set("font-src", "'self'").
 		Set("connect-src", "'self'").
+		Set("worker-src", "'self'").
 		Set("form-action", "'self'").
 		Set("frame-ancestors", "'none'").
 		Set("base-uri", "'none'").

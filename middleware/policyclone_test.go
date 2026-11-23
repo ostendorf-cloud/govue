@@ -10,14 +10,14 @@ func TestPolicyCloneLeavesTheOriginalUnchanged(t *testing.T) {
 	before := original.Header("n")
 
 	clone := original.Clone()
-	clone.Add("script-src", "'sha256-abc'").Set("img-src", "'self'").Add("worker-src", "'self'").NonceIn("img-src")
+	clone.Add("script-src", "'sha256-abc'").Set("img-src", "'self'").Add("manifest-src", "'self'").NonceIn("img-src")
 
 	if got := original.Header("n"); got != before {
 		t.Errorf("the original changed with its clone:\n got %s\nwant %s", got, before)
 	}
 	want := "default-src 'none'; script-src 'self' 'sha256-abc' 'nonce-n'; style-src 'self' 'nonce-n'; " +
-		"img-src 'self' 'nonce-n'; font-src 'self'; connect-src 'self'; form-action 'self'; " +
-		"frame-ancestors 'none'; base-uri 'none'; object-src 'none'; worker-src 'self'"
+		"img-src 'self' 'nonce-n'; font-src 'self'; connect-src 'self'; worker-src 'self'; form-action 'self'; " +
+		"frame-ancestors 'none'; base-uri 'none'; object-src 'none'; manifest-src 'self'"
 	if got := clone.Header("n"); got != want {
 		t.Errorf("clone:\n got %s\nwant %s", got, want)
 	}

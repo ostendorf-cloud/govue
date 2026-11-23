@@ -189,6 +189,11 @@ func TestEveryResponseCarriesTheSecurityHeadersAndNoCookie(t *testing.T) {
 		if !strings.HasPrefix(csp, "default-src 'none'; script-src 'self' "+themeboot.Hash()+" 'nonce-") {
 			t.Errorf("%s %s: CSP = %q", tt.method, tt.target, csp)
 		}
+		// The proof of work solver of the contact form runs in a same
+		// origin worker.
+		if !strings.Contains(csp, "; worker-src 'self'; ") {
+			t.Errorf("%s %s: CSP lacks worker-src 'self': %q", tt.method, tt.target, csp)
+		}
 		if res.Header.Get("Set-Cookie") != "" {
 			t.Errorf("%s %s sets a cookie", tt.method, tt.target)
 		}

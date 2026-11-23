@@ -51,11 +51,17 @@ repeated here.
   only: govue never ships an imprint, privacy or terms text. The same holds for the consent text
   of `GovueContactForm`: there is no catalogue default. With `requireConsent` the site sets
   `consentLabel` or fills the `consent` slot, and without one the form renders nothing and warns
-  in development. The consent state is never part of the request body.
+  in development. With `requireConsent` the request carries `consent`, the state of the box, and
+  without it no `consent` key. German has a formal catalogue, `deFormal.ts`, with the keys of
+  `de.ts`. `createGovueI18n({ formality: 'formal' })` loads it under the locale `de`, so it is
+  never a second language in `catalogues.ts` or the switch. A test fails on a missing key in
+  either and on "du" in the formal one.
 - `web/example/` is the example site: the placeholder legal pages, the contact page, the start
   page with the compact theme switch in its header,
   prerendered and checked by its own tests, the consumer build test of the worker bundle and the
-  fake of the contact handlers that the component tests use. It is not shipped.
+  fake of the contact handlers that the component tests use, which knows `consent` and
+  `requireConsent`. It is not shipped. The Go example requires the consent box like its contact
+  page shows it, and its mail body adds a placeholder consent line with the receive time.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
@@ -84,7 +90,10 @@ repeated here.
 - `pow` issues and verifies stateless proof of work challenges, the ALTCHA shape, signed with
   HMAC-SHA-256 over a domain separator and the site name. Keys are at least 32 bytes, the first
   signs and all verify. Replay is limited by the expiry plus a single use `Seen`, by default a
-  bounded in memory set that is per process and refuses with `ErrBusy` rather than forget.
+  bounded in memory set that is per process and refuses with `ErrBusy` rather than forget. Every
+  `Use` of it first drops the expired entries through a min-heap by expiry, amortized O(log n),
+  with no goroutine, so an entry outlives its expiry only until the next checked solution. A
+  single `Use` can drop every expired entry while it holds the lock.
   Proof of work is a speed bump, the rate limits are the control. It sets no cookie and stores
   nothing about a visitor. `pow/testdata/vectors.json` is shared with the Vue solver. It imports
   no other govue package.
@@ -97,9 +106,10 @@ repeated here.
   leaves), `ImplicitTLS` is an option, `Plain` is for a local test sink and refuses
   credentials, AUTH PLAIN or LOGIN runs inside TLS only, TLS is 1.2 or newer, there are no
   retries, `Config.Timeout` and the context are one deadline over dial and conversation, and
-  `Sender` is the interface consumers fake. `LoadConfig` reads `SMTP_HOST`,
-  `SMTP_PORT`, `SMTP_USERNAME` and `SMTP_PASSWORD` or `SMTP_PASSWORD_FILE`, the password is a
-  `mail.Secret`, and the environment never selects `Plain`. `*mail.Error` carries the reply for a
+  `Sender` is the interface consumers fake. `LoadConfig` reads `SMTP_HOST`, `SMTP_PORT`,
+  `SMTP_USERNAME` or `SMTP_USERNAME_FILE` and `SMTP_PASSWORD` or `SMTP_PASSWORD_FILE`, a
+  variable and its twin together are a startup error, the password is a `mail.Secret`, and the
+  environment never selects `Plain`. `*mail.Error` carries the reply for a
   log, its `Error()` text never holds an address or the password. It imports `envconf` only.
   Its tests run the SMTP dialogue over `net.Pipe`, through `Config.DialContext`, with no socket.
 - `contact` is the stateless contact form: `Normalize` and `Validate` with the stable field codes
@@ -111,6 +121,10 @@ repeated here.
   (the same 200 as a success), the per client limit, validation, proof of work, the global mail
   ceiling (never refunded) and the send, in that order. From and To are fixed by the site, the
   visitor's address is only in Reply-To, and the mail holds no client address and no user agent.
+  `Request.Consent` is the consent box as the client sent it, a claim and never a proof, and
+  `Request.Received` the server time at decode, which a body cannot set. `RequireConsent` refuses
+  a missing or false box as the field error `consent: required`, off by default. govue writes no
+  consent text into the mail: a site's `Body` adds a line, starting from `DefaultBody`.
   Missing keys or a missing sender answer 503 `not_configured` and the process still starts. A
   log line holds codes, and for a send failure the allowed stage and code of a `mail.Error` or
   the Go type name of another error, never a name, an address or message text. A panic of a

@@ -27,6 +27,15 @@ export const CONTACT_FIELD_CODES = {
 } as const
 
 /**
+ * A field whose code needs its own text: the consent box is not a field to
+ * fill in, so its required code says to agree, as the form's own check does.
+ * contact.FieldConsent with contact.CodeRequired, under RequireConsent.
+ */
+export const CONTACT_FIELD_KEYS = {
+  consent: { required: 'govue.contact.error.consentRequired' },
+} as const
+
+/**
  * The codes of the top level error of a refusal, each with the catalogue key
  * of its text. The first block is contact.Code* in contact/handler.go, the
  * second the codes of the api package that the contact handlers also answer
@@ -135,7 +144,9 @@ export function localizeContactError(
   for (const [field, code] of Object.entries(caught.details)) {
     if (fields.includes(field)) {
       const key =
-        (CONTACT_FIELD_CODES as Record<string, string>)[code] ?? CONTACT_FIELD_CODES.invalid
+        (CONTACT_FIELD_KEYS as Record<string, Record<string, string>>)[field]?.[code] ??
+        (CONTACT_FIELD_CODES as Record<string, string>)[code] ??
+        CONTACT_FIELD_CODES.invalid
       const max = (CONTACT_LIMITS as Record<string, number>)[field] ?? 0
       details[field] = t(key, { max })
     }

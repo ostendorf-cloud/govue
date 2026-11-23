@@ -130,6 +130,14 @@ The design of the library and the reasoning behind it.
 - The nonce, not a hash or an allow-listed `'unsafe-inline'`, is what lets this library's own
   inline script and style run under the default policy: a tag an attacker injects carries no
   nonce, so it does not run even once it is in the page.
+- `DefaultPolicy` sets `worker-src 'self'`, because the proof of work solver of
+  `GovueContactForm` runs in a module worker loaded from a script file of the page's own origin.
+  A missing `worker-src` falls back to `script-src` in CSP 3, but to `child-src` and then
+  `default-src 'none'` in CSP 2, so the directive is explicit and does not depend on which level
+  a browser follows. It allows no `blob:` or `data:` worker and carries no nonce. Every
+  `DefaultSecurity` response carries it, so do the pages of `frontend`, which clones the policy.
+  A site that builds its own policy with `NewPolicy` and runs the contact form adds the
+  directive itself.
 - Weakening one header is the consuming application's decision, made through a field on
   `Security`, never a change to the default here. A zero-value `Security`, unlike
   `session.Config` or `oidc.Config`, applies no defaults of its own: an application has to call
@@ -1963,6 +1971,18 @@ try {
 - The choice is kept in `localStorage` by default. A cookie or an account callback serves
   signed in areas that need no path prefix. A test compares the key sets and the named
   placeholders of all catalogues, so a missing key fails the build.
+- German has two registers. `de.ts` says "du", `deFormal.ts` says "Sie" with exactly the same
+  keys, and a text that addresses nobody is the same in both. `createGovueI18n({ formality:
+  'formal' })` loads the formal one under the locale `de`. The register is a site's tone, not a
+  language: a code such as `de-formal` would have shown a second German in the switch, set
+  `lang` to a tag no browser reads, needed its own routes under `/de-formal/`, its own legal
+  pages and its own stored choice. The option changes none of these. The default stays
+  informal, so no existing site changes. English has one register and is the same either way.
+  `formalCatalogues` lists the variants and is not part of `catalogues`. A test fails when a key
+  is missing in either German catalogue, when a placeholder differs, when a formal text says
+  "du" or an informal imperative, and when a text that says "du" was not changed. A site
+  installs the option in the browser and in the prerender, so both say the same. Before it a
+  site overrode each contact text that says "du" by hand.
 - The redirect at `/` and prerendering are routing and are not part of this layer.
   Prerendering is the render entry described below. The route helper is described in the next
   section.
@@ -2344,7 +2364,7 @@ try {
 
   | Header | Value |
   | --- | --- |
-  | `Content-Security-Policy` | `default-src 'none'; script-src 'self' '<themeboot.Hash>' 'nonce-…'; …` |
+  | `Content-Security-Policy` | `default-src 'none'; script-src 'self' '<themeboot.Hash>' 'nonce-…'; …; worker-src 'self'; …` |
   | `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` |
   | `X-Content-Type-Options` | `nosniff` |
   | `X-Frame-Options` | `DENY` |
@@ -2836,17 +2856,27 @@ try {
   replicas a solution can be used once per replica until it expires. A consumer that needs one
   global answer passes its own `Seen`. Statelessness is the owner decision: nothing about an
   issued challenge is stored.
-- `MemorySeen` scans the whole map while it is full, so each `Use` is O(n) then: about 674
-  microseconds at 100000 entries. `ErrBusy` is a global fail closed lockout, because a full set
-  refuses every solution until entries expire. `Verify` therefore runs behind the consumer's per
-  client rate limit, so one client cannot fill the set.
+- `MemorySeen` keeps a min-heap by expiry next to its map. Every `Use` first drops each entry
+  whose expiry has passed, then checks and records. A `Use` costs amortized O(log n). A single
+  `Use` can drop every expired entry, up to the size of the set, while it holds the lock: 100000
+  entries that expire together took one `Use` about 34 ms in a review probe, where the old full
+  scan took 0.7 ms. An entry stays past its expiry only until the next solution reaches the
+  replay check, or until the process ends: on an idle site that can be long. There is no
+  background goroutine and nothing to close. The other choices were a sweep goroutine, which
+  needs a `Close` that every consumer has to call, and a first in first out queue, which is O(1)
+  but lets an entry with a late expiry hold back the ones behind it, so the documentation could
+  not say when an entry goes. `ErrBusy` is a global fail closed lockout, because a full set holds
+  only unexpired entries and refuses every solution until one expires. `Verify` therefore runs
+  behind the consumer's per client rate limit, so one client cannot fill the set.
 - Limits. Proof of work is a speed bump: native code solves 300000 hashes in tens of
   milliseconds, so it only slows a naive script. The rate limits of the route and a global
   ceiling are the real control. There is no binding to an address or a session, because mobile
   clients change networks. The challenge route is unauthenticated and costs the server one HMAC.
 - Privacy facts a consumer's page can quote: the server stores no challenge and nothing about
-  the visitor, the single use record holds one hash until expiry and is not linked to a person,
-  no cookie is set, no browser storage is used and no third party is called.
+  the visitor, the single use record holds one hash of a solved challenge in process memory and
+  is not linked to a person, no cookie is set, no browser storage is used and no third party is
+  called. With `MemorySeen` the hash goes with the first solution checked after the challenge
+  expired, 10 minutes by default, or with the process, whichever comes first.
 - `pow/testdata/vectors.json` is the shared contract with the browser solver (#198): a fixed
   key, audience, clock and challenge, hash vectors and verify cases with the expected outcome.
   The Go test reads it, and `go test ./pow -run TestVectors -update` rewrites it.
@@ -2898,6 +2928,13 @@ try {
   two timers fired first.
 - `Config.Validate` takes a bare host name: a colon, a slash, white space and the URL characters
   are refused.
+- `LoadConfig` reads `SMTP_HOST`, `SMTP_PORT` (587 by default, 465 means implicit TLS),
+  `SMTP_USERNAME` or `SMTP_USERNAME_FILE`, and `SMTP_PASSWORD` or `SMTP_PASSWORD_FILE`. A
+  `_FILE` variable names a file mounted from a secret store, and its content is trimmed of
+  surrounding white space like the direct value. The user name is not a secret, but it sits next
+  to the password in the same secret, so it has the same twin. A variable and its twin together,
+  an empty file and an unreadable file are startup errors that name the variables, never a value
+  or a path.
 - `Error` splits the reply from the text. `Error()` holds the stage and the code. `Reply` holds
   the server's text for the log, with the password removed, also its base64 form and the base64
   AUTH PLAIN string a server may echo. It can echo an address, so it never goes to a client.
@@ -2926,7 +2963,8 @@ try {
   5. The per client limit, 5 per 10 minutes, keyed by `clientip` with trusted proxies only.
      Every attempt counts, a refused one included.
   6. Validation with stable codes. Every failing field is reported as `{field: code}` under
-     `details`, and a value is never echoed.
+     `details`, and a value is never echoed. With `RequireConsent` a missing or false consent
+     box is `consent: required` here.
   7. Proof of work through `pow`. It runs after validation, so a typo does not burn the solution.
      The challenge is signed, bound to the site name, expires and is used once. The codes are
      `pow_required`, `pow_invalid`, `pow_expired`, `pow_too_fast`, `pow_replay` and `pow_busy`.
@@ -2943,6 +2981,23 @@ try {
   only in Reply-To, as a bare address. The name goes into the body, not into a header. The mail
   carries `Auto-Submitted: auto-generated`, no client address and no user agent. The subject and
   body are functions of the site. The defaults use a fixed subject without the name.
+- Consent. `Request.Consent` is the state of the form's consent box as the client sent it, a
+  missing key is false. `Request.Received` is the server's clock when `Submit` decoded the
+  request, without a monotonic reading. It has no JSON name, so a body that carries it is
+  refused as an unknown field. `Config.RequireConsent` refuses a missing or false box with the
+  field error `consent: required`, next to the other field errors and before the proof of work,
+  so the solution is not spent. It is off by default, and then a submission passes with or
+  without the box. `GovueContactForm` sends `consent` only with `requireConsent`, so a site sets
+  both together. A `contact` handler older than this change refuses the unknown key with 400
+  `invalid_argument`, so `requireConsent` needs the Go handler of the same release: the Go
+  module and the Vue package share one version.
+- The consent field records a claim, never a proof. A modified client sends `true` without
+  showing a box, and nothing on the server can tell. The owner wants the record for a clean
+  trail of what the form sent, not as evidence against a tampering client. govue writes no
+  consent text and no legal wording into the mail: the default body is unchanged, and
+  `DefaultBody` is exported so a site's `Body` adds one line of its own wording from
+  `Consent` and `Received`. The example does that with a placeholder line. The consent text the
+  visitor sees is the site's as well, see the component.
 - Header injection: a CR, LF or other control character in the name or the address is a
   validation error with `invalid_chars`, never repaired. The address is checked by the mail
   builder itself, so a value that passes cannot be refused at send time. Whatever a site puts in
@@ -2993,10 +3048,12 @@ try {
 - Stays per site: the recipient and sender addresses, the subject and body text, the privacy
   text, the frontend and its worker (#198) and the translation of the codes.
 - `example/` wires the handlers outside the session and CSRF chain with a fake sender that keeps
-  the last message in memory and opens no socket. `CONTACT_POW_KEY` or `CONTACT_POW_KEY_FILE`,
-  `CONTACT_FROM` and `CONTACT_TO` configure it. The routes have a CORS handler of their own,
-  because `TrustedOrigins` comes from `ALLOWED_ORIGINS`: a cross origin page that may send mail
-  can also read the answer and does not retry into a duplicate mail. It lists the web origins
+  the last message in memory and opens no socket. It sets `RequireConsent`, because its contact
+  page shows the box, and a `Body` that adds a placeholder consent line with the receive time.
+  `CONTACT_POW_KEY` or `CONTACT_POW_KEY_FILE`, `CONTACT_FROM` and `CONTACT_TO` configure it.
+  The routes have a CORS handler of their own, because `TrustedOrigins` comes from
+  `ALLOWED_ORIGINS`: a cross origin page that may send mail can also read the answer and does
+  not retry into a duplicate mail. It lists the web origins
   only, serves GET and POST, sends no `Access-Control-Allow-Credentials`, exposes `Retry-After`
   through `ExposeHeaders` so a page reads the wait of a 429, and has explicit
   OPTIONS routes, so a preflight is answered by it and not by the catch-all. A page of another
@@ -3009,9 +3066,11 @@ try {
   timeout. The example sets 10 seconds as well, and a test pins the value and the sums.
 - Privacy facts, for the privacy text of a site. The package persists nothing. In process memory
   it holds the limiter keys, which are the IPv4 address or the IPv6 /64 of a client, up to 100000
-  keys, kept until the bucket refills, and the replay set of the proof of work. The visitor's
-  name, address and message leave the process only through the mail. A site's privacy text needs
-  to say so. This is a statement of fact, not legal advice.
+  keys, kept until the bucket refills, and the replay set of the proof of work, one hash per
+  solved challenge, dropped by the first solution checked after it expired or with the process.
+  The visitor's name, address and message, and with a site's `Body` the consent state and the
+  receive time, leave the process only through the mail. A site's privacy text needs to say so.
+  This is a statement of fact, not legal advice.
 - Deploy: behind a reverse proxy, `TRUSTED_PROXIES` (or the site's own `clientip.Resolver` in
   `Config.ClientIP`) must name the proxy. Without it every visitor shares the proxy's address and
   one bucket, which fails closed: 5 submissions per 10 minutes for the whole site.

@@ -245,3 +245,67 @@ describe('createGovueI18n', () => {
     expect(() => app.use(plugin)).not.toThrow()
   })
 })
+
+describe('createGovueI18n formality', () => {
+  it('says du in German by default', () => {
+    const { language } = createGovueI18n({ locale: 'de' })
+    expect(language.t('govue.contact.sending')).toBe('Deine Nachricht wird gesendet')
+    expect(language.t('govue.contact.error.required')).toBe('Bitte fülle dieses Feld aus.')
+  })
+
+  it('says Sie in German with the formal register, under the locale de', () => {
+    const { language } = createGovueI18n({ locale: 'de', formality: 'formal' })
+    expect(language.locale.value).toBe('de')
+    expect(document.documentElement.lang).toBe('de')
+    expect(language.t('govue.contact.sending')).toBe('Ihre Nachricht wird gesendet')
+    expect(language.t('govue.contact.error.required')).toBe('Bitte füllen Sie dieses Feld aus.')
+    expect(language.t('govue.contact.error.rateLimitedWait', { wait: 'in etwa 5 Minuten' })).toBe(
+      'Zu viele Nachrichten. Bitte versuchen Sie es in etwa 5 Minuten erneut.',
+    )
+    // A neutral text is the same in both registers.
+    expect(language.t('govue.contact.submit')).toBe('Nachricht senden')
+  })
+
+  it('is no second German in the language list', () => {
+    expect(createGovueI18n({ formality: 'formal' }).language.locales).toEqual([
+      { code: 'de', name: 'Deutsch' },
+      { code: 'en', name: 'English' },
+    ])
+  })
+
+  it('keeps English as it is', () => {
+    const { language } = createGovueI18n({ locale: 'en', formality: 'formal' })
+    expect(language.t('govue.contact.sending')).toBe(
+      createGovueI18n({ locale: 'en' }).language.t('govue.contact.sending'),
+    )
+  })
+
+  it('stays formal after a switch to English and back', () => {
+    const { language } = createGovueI18n({ locale: 'de', formality: 'formal' })
+    language.setLocale('en', { persist: false })
+    language.setLocale('de', { persist: false })
+    expect(language.t('govue.contact.success')).toBe('Danke. Ihre Nachricht wurde gesendet.')
+  })
+
+  it('lets the app messages override a formal text', () => {
+    const { language } = createGovueI18n({
+      locale: 'de',
+      formality: 'formal',
+      messages: { de: { govue: { contact: { success: 'Vielen Dank.' } } } },
+    })
+    expect(language.t('govue.contact.success')).toBe('Vielen Dank.')
+    expect(language.t('govue.contact.sending')).toBe('Ihre Nachricht wird gesendet')
+  })
+
+  it('loads the formal register into a shared instance', () => {
+    const existing = createI18n({ legacy: false, locale: 'de', messages: { de: {}, en: {} } })
+    createGovueI18n({ i18n: existing, formality: 'formal' })
+    expect(existing.global.t('govue.contact.sending')).toBe('Ihre Nachricht wird gesendet')
+  })
+
+  it('refuses an unknown register', () => {
+    expect(() => createGovueI18n({ formality: 'polite' as unknown as 'formal' })).toThrow(
+      /formality/,
+    )
+  })
+})

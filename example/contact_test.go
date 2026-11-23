@@ -76,7 +76,7 @@ func TestContactFormSendsThroughTheFakeSender(t *testing.T) {
 	a, clock, logs := newContactApp(t, true)
 	body, err := json.Marshal(map[string]any{
 		"name": "Zora Quillfeather", "email": "zora@example.org", "message": "Hello from the test.",
-		"pow": solveContact(t, a, clock),
+		"consent": true, "pow": solveContact(t, a, clock),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -97,6 +97,38 @@ func TestContactFormSendsThroughTheFakeSender(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "Quillfeather") || strings.Contains(logs.String(), "zora@") {
 		t.Fatalf("log holds the content:\n%s", logs)
+	}
+	// The example's body records the box with the server's receive time,
+	// the clock of the app, never a time from the request.
+	want := "\nConsent box ticked: true (as sent by the form), received " +
+		clock.Now().UTC().Format(time.RFC3339) + "\n"
+	if !strings.HasSuffix(a.contactSender.last.Body, want) {
+		t.Fatalf("body = %q, want the consent line %q", a.contactSender.last.Body, want)
+	}
+}
+
+// The example's page shows the consent box, so the server requires it.
+func TestContactFormRequiresTheConsentBox(t *testing.T) {
+	t.Parallel()
+	a, clock, _ := newContactApp(t, true)
+	for _, consent := range []any{nil, false} {
+		fields := map[string]any{
+			"name": "Zora", "email": "zora@example.org", "message": "Hi", "pow": solveContact(t, a, clock),
+		}
+		if consent != nil {
+			fields["consent"] = consent
+		}
+		body, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := contactDo(t, a, http.MethodPost, contactPrefix, string(body), nil)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"consent":"required"`) {
+			t.Fatalf("consent %v: submit = %d %s", consent, w.Code, w.Body)
+		}
+	}
+	if a.contactSender.n != 0 {
+		t.Fatalf("sent %d mails without consent", a.contactSender.n)
 	}
 }
 
@@ -128,7 +160,7 @@ func TestContactRoutesAnswerCORSForAnAllowedOrigin(t *testing.T) {
 	challengeHeader := w.Header().Clone()
 
 	body, _ := json.Marshal(map[string]any{
-		"name": "Zora", "email": "zora@example.org", "message": "Hi", "pow": solveContact(t, a, clock),
+		"name": "Zora", "email": "zora@example.org", "message": "Hi", "consent": true, "pow": solveContact(t, a, clock),
 	})
 	w = contactDo(t, a, http.MethodPost, contactPrefix, string(body), cross)
 	if w.Code != http.StatusOK || w.Header().Get("Access-Control-Allow-Origin") != origin {
@@ -204,7 +236,7 @@ func TestContactRoutesRefuseAnUnlistedOrigin(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(map[string]any{
-		"name": "Zora", "email": "zora@example.org", "message": "Hi", "pow": solveContact(t, a, clock),
+		"name": "Zora", "email": "zora@example.org", "message": "Hi", "consent": true, "pow": solveContact(t, a, clock),
 	})
 	w = contactDo(t, a, http.MethodPost, contactPrefix, string(body), cross)
 	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "cross_origin") || hasACHeader(w) ||
@@ -230,7 +262,7 @@ func TestContactFormRefusesACrossSitePost(t *testing.T) {
 	t.Parallel()
 	a, clock, _ := newContactApp(t, true)
 	body, _ := json.Marshal(map[string]any{
-		"name": "Zora", "email": "zora@example.org", "message": "Hi", "pow": solveContact(t, a, clock),
+		"name": "Zora", "email": "zora@example.org", "message": "Hi", "consent": true, "pow": solveContact(t, a, clock),
 	})
 	w := contactDo(t, a, http.MethodPost, contactPrefix, string(body), func(r *http.Request) {
 		r.Header.Set("Sec-Fetch-Site", "cross-site")
