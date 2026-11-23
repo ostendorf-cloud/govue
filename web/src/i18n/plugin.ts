@@ -5,10 +5,12 @@ import { computed, inject, watch, type App, type ComputedRef, type InjectionKey 
 import { createI18n } from 'vue-i18n'
 
 import {
+  catalogueFor,
   catalogues,
   DEFAULT_LOCALE,
   isLocaleCode,
   localeCodes,
+  type Formality,
   type LocaleCode,
 } from './catalogues'
 import {
@@ -70,6 +72,15 @@ export interface GovueI18nOptions {
   storage?: LanguageStorageOption
   /** The app's own messages, merged after govue's, so a key can be overridden. */
   messages?: Partial<Record<string, MessageTree>>
+  /**
+   * How govue's texts address the visitor. Default 'informal' (German "du").
+   * 'formal' loads the formal variant of each language that has one, today
+   * German ("Sie"), under the language's own code: the switch, lang and the
+   * routes stay de. A language with one register, English, is the same
+   * either way. Install it the same way in the browser and in the prerender,
+   * so both say the same.
+   */
+  formality?: Formality
 }
 
 export interface GovueI18n {
@@ -126,8 +137,12 @@ export function createGovueI18n(options: GovueI18nOptions = {}): GovueI18n {
   const composer = i18n.global
   const storage: LanguageStorage = createLanguageStorage(options.storage)
 
+  const formality = options.formality ?? 'informal'
+  if (formality !== 'informal' && formality !== 'formal') {
+    throw new Error("govue: createGovueI18n formality must be 'informal' or 'formal'")
+  }
   for (const code of localeCodes) {
-    composer.mergeLocaleMessage(code, catalogues[code].messages)
+    composer.mergeLocaleMessage(code, catalogueFor(code, formality))
   }
   for (const [code, messages] of Object.entries(options.messages ?? {})) {
     if (messages) {

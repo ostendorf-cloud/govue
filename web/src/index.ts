@@ -82,8 +82,15 @@ export type {
   LanguageState,
   NamedValues,
 } from './i18n/plugin'
-export { catalogues, DEFAULT_LOCALE, isLocaleCode, localeCodes } from './i18n/catalogues'
-export type { LocaleCode } from './i18n/catalogues'
+export {
+  catalogueFor,
+  catalogues,
+  DEFAULT_LOCALE,
+  formalCatalogues,
+  isLocaleCode,
+  localeCodes,
+} from './i18n/catalogues'
+export type { Formality, LocaleCode } from './i18n/catalogues'
 export type { MessageTree } from './i18n/messages'
 export {
   hreflangLinks,
