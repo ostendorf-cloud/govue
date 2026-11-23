@@ -32,7 +32,7 @@ func checkRedirectSources(redirects []Redirect) error {
 		case !redirectSourceOK(r.From):
 			problems = append(problems, fmt.Errorf("frontend: Config.Redirects entry %d: the source must be an "+
 				"absolute path of plain segments, no empty, dot, percent, backslash, brace, space or control "+
-				"segment, a trailing slash allowed, and not / (the value is not shown)", i+1))
+				"segment, no ? or #, a trailing slash allowed, and not / (the value is not shown)", i+1))
 		case seen[r.From] > 0:
 			problems = append(problems, fmt.Errorf("frontend: Config.Redirects entry %d repeats the source of "+
 				"entry %d (the value is not shown)", i+1, seen[r.From]))
@@ -47,7 +47,9 @@ func checkRedirectSources(redirects []Redirect) error {
 // ServeMux pattern syntax: every segment is plain, only the last one may be
 // empty, and / itself is the language redirect.
 func redirectSourceOK(from string) bool {
-	if len(from) < 2 || from[0] != '/' || !utf8.ValidString(from) {
+	// A ? or # would never match: a request carries them in its query or
+	// fragment, never in its path.
+	if len(from) < 2 || from[0] != '/' || !utf8.ValidString(from) || strings.ContainsAny(from, "?#") {
 		return false
 	}
 	segments := strings.Split(from[1:], "/")

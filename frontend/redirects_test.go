@@ -163,6 +163,13 @@ func TestNewRefusesABadRedirectWithoutQuotingIt(t *testing.T) {
 			frontend.Redirect{From: "/de/" + marker + "\xff", To: "/de/terms"},
 			"entry 2: the source must be",
 		},
+		{"source query", frontend.Redirect{From: "/de/agb?" + marker, To: "/de/terms"}, "entry 2: the source must be"},
+		{
+			"source bare question mark",
+			frontend.Redirect{From: "/de/" + marker + "?", To: "/de/terms"},
+			"entry 2: the source must be",
+		},
+		{"source fragment", frontend.Redirect{From: "/de/agb#" + marker, To: "/de/terms"}, "entry 2: the source must be"},
 		{"source repeated", frontend.Redirect{From: "/de/agb-" + marker, To: "/de/terms"}, "entry 2 repeats the source of entry 1"},
 	}
 	for _, tt := range tests {
