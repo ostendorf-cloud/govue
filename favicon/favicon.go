@@ -86,6 +86,30 @@ func (e *FileError) Unwrap() error { return e.Err }
 // Load or LoadDir.
 type Icons struct {
 	themeColor string
+	// darkColor is the theme colour of the dark mode, empty for one colour
+	// in both modes.
+	darkColor string
+}
+
+// Media queries of the two theme-color tags, the ones the theme boot script
+// matches to pin the colour of a stored mode.
+const (
+	MediaLight = "(prefers-color-scheme: light)"
+	MediaDark  = "(prefers-color-scheme: dark)"
+)
+
+// WithDarkThemeColor returns the icons with a theme colour of its own for the
+// dark mode, a #rgb or #rrggbb value like the one Load took, which then
+// becomes the light one. Links writes one theme-color tag per mode, each with
+// its media query, so the browser follows the system mode, and the theme
+// boot script of themeboot pins both tags to the colour of a stored mode. A
+// colour of another form returns ErrThemeColor, without the value.
+func (i Icons) WithDarkThemeColor(color string) (Icons, error) {
+	if !colorPattern.MatchString(color) {
+		return Icons{}, fmt.Errorf("favicon: dark theme colour: %w (the value is not shown)", ErrThemeColor)
+	}
+	i.darkColor = color
+	return i, nil
 }
 
 // Load checks that the three icon files exist in the root of fsys, are not
@@ -148,14 +172,20 @@ func checkFile(fsys fs.FS, dir, name string) error {
 }
 
 // Links returns the head markup: the SVG icon, the PNG fallback, the Apple
-// touch icon and the theme colour meta tag. It holds no script, so it needs
-// no nonce. The links are root absolute, so a page in any language and at
-// any depth resolves them the same way.
+// touch icon and the theme colour meta tag, or one per mode with
+// WithDarkThemeColor. It holds no script, so it needs no nonce. The links are
+// root absolute, so a page in any language and at any depth resolves them the
+// same way.
 func (i Icons) Links() string {
-	return `<link rel="icon" href="/` + SVGFile + `" type="image/svg+xml">` +
+	links := `<link rel="icon" href="/` + SVGFile + `" type="image/svg+xml">` +
 		`<link rel="icon" href="/` + PNGFile + `" type="image/png" sizes="32x32">` +
-		`<link rel="apple-touch-icon" href="/` + TouchFile + `">` +
-		`<meta name="theme-color" content="` + html.EscapeString(i.themeColor) + `">`
+		`<link rel="apple-touch-icon" href="/` + TouchFile + `">`
+	if i.darkColor == "" {
+		return links + `<meta name="theme-color" content="` + html.EscapeString(i.themeColor) + `">`
+	}
+	return links +
+		`<meta name="theme-color" content="` + html.EscapeString(i.themeColor) + `" media="` + MediaLight + `">` +
+		`<meta name="theme-color" content="` + html.EscapeString(i.darkColor) + `" media="` + MediaDark + `">`
 }
 
 // publicPath turns a root absolute href into a path inside the public

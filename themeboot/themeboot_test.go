@@ -186,11 +186,11 @@ func TestWithFavicon(t *testing.T) {
 			if err := favicon.CheckPage(rec.Body.Bytes(), public); err != nil {
 				t.Errorf("the served page fails the favicon check: %v", err)
 			}
-			scriptEnd := strings.Index(body, "</script>")
-			iconAt := strings.Index(body, `<link rel="icon"`)
+			headEnd := strings.Index(body, "<head>") + len("<head>")
+			scriptAt := strings.Index(body, "<script")
 			styleAt := strings.Index(body, `<link rel="stylesheet"`)
-			if scriptEnd < 0 || iconAt != scriptEnd+len("</script>") || styleAt < iconAt {
-				t.Errorf("the icon links do not follow the boot script ahead of the stylesheet: %s", body)
+			if !strings.HasPrefix(body[headEnd:], icons.Links()+"<script") || styleAt < scriptAt {
+				t.Errorf("the icon links do not lead the boot script ahead of the stylesheet: %s", body)
 			}
 		})
 	}
@@ -245,7 +245,9 @@ func TestInjectLeavesAPageWithoutHeadWithoutIcons(t *testing.T) {
 
 func TestInjectWithoutFaviconAddsNoIconLinks(t *testing.T) {
 	got := string(themeboot.Inject([]byte(page), "abc"))
-	if strings.Contains(got, `rel="icon"`) || strings.Contains(got, "theme-color") {
+	// The script itself names theme-color in its selector, so the check
+	// looks for the tag.
+	if strings.Contains(got, `rel="icon"`) || strings.Contains(got, `<meta name="theme-color"`) {
 		t.Errorf("icon markup without WithFavicon: %s", got)
 	}
 }

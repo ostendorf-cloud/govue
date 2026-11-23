@@ -72,8 +72,9 @@ func WithStorageKey(key string) Option {
 }
 
 // WithFavicon makes Inject and Shell write the favicon links and the theme
-// colour meta tag into the head, right behind the boot script, so every page
-// they serve carries them, in every language. icons comes from favicon.Load,
+// colour meta tag into the head, right ahead of the boot script, so every
+// page they serve carries them, in every language, and the script sees the
+// theme-color tags it pins to a stored mode. icons comes from favicon.Load,
 // which has already failed for a missing file. Tag and Script are not
 // affected, they only ever carry the script. The page must not carry the
 // links itself.
@@ -111,7 +112,8 @@ func Tag(nonce string, opts ...Option) string {
 
 // Inject returns page with the boot script placed right after the opening
 // head tag, ahead of every stylesheet, so the attributes are set before the
-// first paint. With WithFavicon the icon links follow the script. Only a
+// first paint. With WithFavicon the icon links come first, right ahead of
+// the script, so the script can read the theme-color tags. Only a
 // real head tag counts: not a header element and not a tag inside a comment.
 // A page without a head element is returned unchanged.
 // An empty nonce panics, see Tag.
@@ -138,10 +140,13 @@ func InjectStatic(page []byte, opts ...Option) []byte {
 	return insert(page, at, "<script>"+Script(opts...)+"</script>", opts)
 }
 
-// insert places tag, and with WithFavicon the icon links behind it, at at.
+// insert places tag at at, and with WithFavicon the icon links and the
+// theme-color tags ahead of it: the script runs while the head is parsed and
+// sees only the elements above it, and it pins the theme-color tags to a
+// stored mode. Both still come before every stylesheet of the page.
 func insert(page []byte, at int, tag string, opts []Option) []byte {
 	if c := build(opts); c.icons != nil {
-		tag += c.icons.Links()
+		tag = c.icons.Links() + tag
 	}
 	return []byte(string(page[:at]) + tag + string(page[at:]))
 }

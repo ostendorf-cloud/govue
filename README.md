@@ -362,7 +362,9 @@ What govue does:
   bad file with the path it expected, so a site cannot start without them. A symbolic link is
   accepted, the file system decides what it resolves to.
 - `themeboot.WithFavicon(icons)` makes `Shell` and `Inject` write the icon links and the
-  `theme-color` meta tag right behind the boot script, on every page and so in every language.
+  `theme-color` meta tag right ahead of the boot script, on every page and so in every language.
+  `icons.WithDarkThemeColor("#0b1f1c")` writes one `theme-color` tag per mode, and the boot
+  script pins both to the colour of a stored mode.
   The links are root absolute, so the frontend build must copy `web/public` to the root of the
   served files. `Shell` panics when it is built, at startup, for a page without a head element
   or one that already carries icon links or a `theme-color` tag, because either would serve no

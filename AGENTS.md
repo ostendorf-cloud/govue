@@ -69,6 +69,9 @@ repeated here.
   through `themeboot.InjectStatic`, and `script-src` carries `themeboot.Hash`. It has no
   session, no cookie and no API route. `Config.Redirects` answers exact old paths with a 301 to
   a page of the sitemap, and refuses a source that is already a route or fails the path rules.
+  `Config.ThemeColorDark` writes one `theme-color` tag per mode through
+  `favicon.Icons.WithDarkThemeColor`, ahead of the boot script, which pins both tags to a
+  stored mode, so the hash never depends on a colour.
   "Frontend server" in the concept doc is the spec.
 - `pow` issues and verifies stateless proof of work challenges, the ALTCHA shape, signed with
   HMAC-SHA-256 over a domain separator and the site name. Keys are at least 32 bytes, the first

@@ -1908,6 +1908,15 @@ try {
   test instead of showing up as a flash.
 - With nothing stored the script leaves `data-mode` off, because the stylesheet already follows
   the system setting through `light-dark()` and an explicit value would only pin it.
+- The browser bar follows the mode too. `favicon.Icons.WithDarkThemeColor` writes one
+  `theme-color` tag per mode, with the media query `(prefers-color-scheme: light)` or `dark`, so
+  the browser picks the system's one with no script at all. Media queries alone cannot follow a
+  stored mode that differs from the system, so for a stored light or dark mode the script copies
+  the colour of that mode's tag into every `theme-color` tag above it. The tags therefore come
+  ahead of the script in the head, both still ahead of every stylesheet. The colours live in the
+  tags and not in the script, so `themeboot.Hash` does not change with them and one hash covers
+  every site. A site with one colour keeps one tag without a media query, which the script
+  leaves alone. Switching the mode at run time does not touch the tags, the next page load does.
 
 ### The language layer
 
@@ -2363,7 +2372,8 @@ try {
   - no `sitemap.xml`, one that is a symbolic link or not a regular file, or one of the shapes
     `example/site.go` refuses, see "Language routes". A favicon file that is a link is refused
     the same way.
-  - a page or a 404 page without a head element, or one that carries icon links already.
+  - a page or a 404 page without a head element, or one that carries icon links or a
+    `theme-color` tag already.
   - a missing favicon file or `PublicFiles` entry, an invalid theme colour, an invalid language
     configuration. A refused configuration value is never quoted. A `PublicFiles` entry that is
     missing, a directory, a link or another non regular file is named by its position and the
@@ -2375,6 +2385,20 @@ try {
   - an asset that is a symbolic link, not a regular file, has a name outside letters, digits,
     `.`, `_` and `-`, or an extension outside the table. A file or directory under `assets/`
     whose name starts with a dot is skipped and never served.
+- The browser bar colour: `Config.ThemeColor` alone writes one `theme-color` tag for both
+  modes. With `Config.ThemeColorDark` it is the light colour, and every page carries one tag
+  per mode, which the boot script pins to a stored mode, see "The theme switch and its boot
+  script". An invalid dark colour is refused, by field and never by value.
+- Migration of a site's prerender. `frontend` writes the head markup itself, so a page that
+  already carries it is refused. Before a site moves its pages into the frontend image, its
+  prerender stops writing:
+  - the icon links, `rel="icon"` and `rel="apple-touch-icon"`. The favicon files stay at the root
+    of the build.
+  - every `theme-color` meta tag. The colours move to `Config.ThemeColor` and
+    `Config.ThemeColorDark`.
+  - its own theme boot script, inline or as a file. A script of its own would also need its own
+    hash in the policy. A site with its own `localStorage` key passes
+    `themeboot.WithStorageKey` in `Config.ThemeBoot`.
 - No session, no cookie, no API route, no CORS. Every method but `GET` and `HEAD` answers 405
   with `Allow: GET, HEAD`. A bare `OPTIONS *` reaches the handler under `Run`, because
   `httpserver` sets `DisableGeneralOptionsHandler`, and answers the 404 page with every header.
@@ -2445,8 +2469,8 @@ try {
   SVG, a 32 pixel PNG fallback and a 180 pixel Apple touch icon. `favicon.Load` fails at startup
   naming the file and the path it expected. A web manifest stays optional and is not generated.
 - The links are written by `themeboot.Inject`, through `themeboot.WithFavicon`, in the same step
-  as the boot script. A second injection point would have been a second place to forget. The
-  links hold no script, so they need no nonce.
+  as the boot script, right ahead of it. A second injection point would have been a second place
+  to forget. The links hold no script, so they need no nonce.
 - The PNG files are generated from the one source SVG by the `favicon:generate` task target with
   ImageMagick, pinned in `mise.toml`, and committed. Output depends on the tool version, so the
   pin matters. A site brings its own artwork. A site without a brand mark gets a placeholder SVG,

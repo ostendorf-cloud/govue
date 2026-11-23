@@ -79,6 +79,11 @@ type Config struct {
 	// value, see favicon.Load. The three favicon files must sit at the root
 	// of Build.
 	ThemeColor string
+	// ThemeColorDark, when set, is the theme colour of the dark mode, and
+	// ThemeColor that of the light mode. Every page then carries one
+	// theme-color tag per mode, and the boot script pins both to the colour
+	// of a stored mode. Empty keeps one tag for both modes.
+	ThemeColorDark string
 	// ThemeBoot holds the options of the theme boot script, such as
 	// themeboot.WithStorageKey. The favicon links are added by New.
 	ThemeBoot []themeboot.Option
@@ -166,6 +171,12 @@ func New(cfg Config) (*Server, error) {
 		icons, err = favicon.Load(cfg.Build, cfg.ThemeColor)
 		if err != nil {
 			problems = append(problems, fmt.Errorf("frontend: Config.Build and Config.ThemeColor: %w", err))
+		}
+	}
+	if cfg.ThemeColorDark != "" {
+		icons, err = icons.WithDarkThemeColor(cfg.ThemeColorDark)
+		if err != nil {
+			problems = append(problems, fmt.Errorf("frontend: Config.ThemeColorDark: %w", err))
 		}
 	}
 	if err := errors.Join(problems...); err != nil {
