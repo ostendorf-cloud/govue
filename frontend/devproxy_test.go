@@ -158,6 +158,17 @@ func TestDevAPIProxyRefusesATargetWithoutQuotingIt(t *testing.T) {
 		"http://-hunter2-/x",
 		"http://hunter2_api/x",
 		"http://local host/hunter2",
+		// Numbers a resolver may read as an IPv4 address.
+		"http://167772161/hunter2",
+		"http://2130706433/hunter2",
+		"http://0x0a000001/hunter2",
+		"http://0X7F000001/hunter2",
+		"http://0x/hunter2",
+		"http://0177/hunter2",
+		"http://0x7f.1/hunter2",
+		"http://0177.1/hunter2",
+		"http://127.1/hunter2",
+		"http://10.1/hunter2",
 	} {
 		t.Run(raw, func(t *testing.T) {
 			cfg := testConfig(buildOf(routes), io.Discard)
@@ -174,6 +185,8 @@ func TestDevAPIProxyAcceptsLoopbackAndASingleLabel(t *testing.T) {
 		"http://localhost:8081", "http://LOCALHOST", "http://127.0.0.1:8081", "http://127.0.0.2",
 		"http://[::1]:8081", "https://api", "http://api:8081", "http://site-api:8081/prefix",
 		"http://api:8081/", "http://[::ffff:127.0.0.1]:8081",
+		// A name with digits or a 0x prefix is still a name.
+		"http://api2:8081", "http://0xapi:8081", "http://1api", "http://deadbeef",
 	} {
 		cfg := testConfig(buildOf(routes), io.Discard)
 		cfg.Development = true
@@ -233,6 +246,7 @@ func TestDevAPIProxyNeverForwardsASpoofedClient(t *testing.T) {
 		"X-Forwarded-Proto": {"https"},
 		"Forwarded":         {"for=6.6.6.6;host=evil.example;proto=https"},
 		"X-Real-Ip":         {"6.6.6.6"},
+		"Via":               {"1.1 evil.example"},
 	}
 	t.Run("no trusted proxy", func(t *testing.T) {
 		up := &upstream{}
@@ -265,7 +279,7 @@ func assertForwarded(t *testing.T, req *http.Request, client string) {
 	if got := req.Header.Get("X-Forwarded-Proto"); got != "http" {
 		t.Errorf("X-Forwarded-Proto = %q, want http", got)
 	}
-	for _, name := range []string{"Forwarded", "X-Real-Ip"} {
+	for _, name := range []string{"Forwarded", "X-Real-Ip", "Via"} {
 		if req.Header.Get(name) != "" {
 			t.Errorf("%s reached the API: %q", name, req.Header.Get(name))
 		}

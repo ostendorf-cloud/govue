@@ -97,7 +97,24 @@ func devHostOK(host string) bool {
 	if addr, err := netip.ParseAddr(host); err == nil {
 		return addr.Unmap().IsLoopback() && addr.Zone() == ""
 	}
-	return singleLabel.MatchString(host)
+	return singleLabel.MatchString(host) && !numericLabel(host)
+}
+
+// numericLabel reports whether a label is a number some resolvers read as an
+// IPv4 address: all decimal digits, which covers octal with a leading 0, or
+// 0x followed by hex digits only. The macOS resolver turns 167772161 and
+// 0x0a000001 into 10.0.0.1 and 2130706433 into 127.0.0.1. Dotted forms such
+// as 0x7f.1 hold a dot and fail the single label rule already.
+func numericLabel(label string) bool {
+	isDigit := func(r rune) bool { return r >= '0' && r <= '9' }
+	isHex := func(r rune) bool { return isDigit(r) || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') }
+	if strings.IndexFunc(label, func(r rune) bool { return !isDigit(r) }) < 0 {
+		return true
+	}
+	if rest, ok := strings.CutPrefix(strings.ToLower(label), "0x"); ok {
+		return strings.IndexFunc(rest, func(r rune) bool { return !isHex(r) }) < 0
+	}
+	return false
 }
 
 // devPrefixOK reports whether an escaped path is empty, / or plain segments
@@ -145,6 +162,7 @@ func newDevAPIProxy(target *url.URL, transport http.RoundTripper, resolver *clie
 			h := pr.Out.Header
 			h.Del("Forwarded")
 			h.Del("X-Real-Ip")
+			h.Del("Via")
 			if addr := resolver.Resolve(pr.In); addr.IsValid() {
 				h.Set("X-Forwarded-For", addr.String())
 			}
