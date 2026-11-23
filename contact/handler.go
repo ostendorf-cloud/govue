@@ -138,8 +138,9 @@ type Config struct {
 	// consent box in one line of its own wording, for example:
 	//
 	//	Body: func(r contact.Request) string {
-	//		return contact.DefaultBody(r) + fmt.Sprintf("\nConsent box: %t, received %s\n",
-	//			r.Consent, r.Received.UTC().Format(time.RFC3339))
+	//		at := r.Received.UTC().Format(time.RFC3339)
+	//		return contact.DefaultBody(r) +
+	//			fmt.Sprintf("\nConsent box: %t, received %s\n", r.Consent, at)
 	//	},
 	//
 	// The defaults write no consent line.

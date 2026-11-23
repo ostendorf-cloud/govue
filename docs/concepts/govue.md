@@ -2857,15 +2857,17 @@ try {
   global answer passes its own `Seen`. Statelessness is the owner decision: nothing about an
   issued challenge is stored.
 - `MemorySeen` keeps a min-heap by expiry next to its map. Every `Use` first drops each entry
-  whose expiry has passed, then checks and records, so a `Use` costs O(log n) and never scans the
-  set. An entry stays past its expiry only until the next solution reaches the replay check, or
-  until the process ends: on an idle site that can be long. There is no background goroutine and
-  nothing to close. The other choices were a sweep goroutine, which needs a `Close` that every
-  consumer has to call, and a first in first out queue, which is O(1) but lets an entry with a
-  late expiry hold back the ones behind it, so the documentation could not say when an entry
-  goes. `ErrBusy` is a global fail closed lockout, because a full set holds only unexpired
-  entries and refuses every solution until one expires. `Verify` therefore runs behind the
-  consumer's per client rate limit, so one client cannot fill the set.
+  whose expiry has passed, then checks and records. A `Use` costs amortized O(log n). A single
+  `Use` can drop every expired entry, up to the size of the set, while it holds the lock: 100000
+  entries that expire together took one `Use` about 34 ms in a review probe, where the old full
+  scan took 0.7 ms. An entry stays past its expiry only until the next solution reaches the
+  replay check, or until the process ends: on an idle site that can be long. There is no
+  background goroutine and nothing to close. The other choices were a sweep goroutine, which
+  needs a `Close` that every consumer has to call, and a first in first out queue, which is O(1)
+  but lets an entry with a late expiry hold back the ones behind it, so the documentation could
+  not say when an entry goes. `ErrBusy` is a global fail closed lockout, because a full set holds
+  only unexpired entries and refuses every solution until one expires. `Verify` therefore runs
+  behind the consumer's per client rate limit, so one client cannot fill the set.
 - Limits. Proof of work is a speed bump: native code solves 300000 hashes in tens of
   milliseconds, so it only slows a naive script. The rate limits of the route and a global
   ceiling are the real control. There is no binding to an address or a session, because mobile
@@ -2986,7 +2988,9 @@ try {
   field error `consent: required`, next to the other field errors and before the proof of work,
   so the solution is not spent. It is off by default, and then a submission passes with or
   without the box. `GovueContactForm` sends `consent` only with `requireConsent`, so a site sets
-  both together.
+  both together. A `contact` handler older than this change refuses the unknown key with 400
+  `invalid_argument`, so `requireConsent` needs the Go handler of the same release: the Go
+  module and the Vue package share one version.
 - The consent field records a claim, never a proof. A modified client sends `true` without
   showing a box, and nothing on the server can tell. The owner wants the record for a clean
   trail of what the form sent, not as evidence against a tampering client. govue writes no

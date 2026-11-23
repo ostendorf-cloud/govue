@@ -35,10 +35,12 @@
 // refuses with [ErrBusy], it never forgets an unexpired entry.
 //
 // [MemorySeen] drops every expired entry at the start of each use, through a
-// min-heap by expiry, so a [Service.Verify] costs O(log n) in the set and
-// never scans it. [ErrBusy] is a global fail closed lockout: while the set is
-// full of unexpired entries every solution is refused. Run Verify behind a
-// per client rate limit so that one client cannot fill the set.
+// min-heap by expiry, so a [Service.Verify] costs amortized O(log n) in the
+// set. A single Verify can drop every expired entry, up to the size of the
+// set, while it holds the lock. [ErrBusy] is a global fail closed lockout:
+// while the set is full of unexpired entries every solution is refused. Run
+// Verify behind a per client rate limit so that one client cannot fill the
+// set.
 //
 // Privacy facts a consumer's page can quote, all true of this package:
 //
@@ -374,11 +376,15 @@ func (s *Service) Verify(sol Solution) error {
 //
 // Every [MemorySeen.Use] first drops every entry whose expiry is not after
 // the now it is given, then checks and records. An entry therefore stays in
-// memory past its expiry only until the next Use, which [Service.Verify] makes
-// for every solution that passed all other checks, or until the process ends. There is no background goroutine and
-// nothing to close. A Use costs O(log n) in the number of entries: the
-// entries sit in a min-heap by expiry next to the map, so a sweep touches
-// only expired entries and never scans the whole set.
+// memory past its expiry only until the next Use, which [Service.Verify]
+// makes for every solution that passed all other checks, or until the
+// process ends. There is no background goroutine and nothing to close.
+//
+// The entries sit in a min-heap by expiry next to the map, so a sweep
+// touches only expired entries. A Use costs amortized O(log n). A single Use
+// can drop every expired entry, up to the size of the set, while it holds
+// the lock: 100000 entries that expire together take one Use tens of
+// milliseconds.
 type MemorySeen struct {
 	mu    sync.Mutex
 	max   int

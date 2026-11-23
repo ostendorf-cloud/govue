@@ -41,6 +41,9 @@ const props = withDefaults(
      * state of the box, which the Go handler checks with
      * `contact.Config.RequireConsent` and hands to the site's mail body. Set
      * both together. Without this prop the request carries no `consent`.
+     * A Go `contact` handler older than this release refuses the key with 400
+     * `invalid_argument`, so this prop needs the Go handler of the same
+     * release: the Go module and this package share one version.
      */
     requireConsent?: boolean
     /** The consent text, plain. The `consent` slot wins when both are set. */
