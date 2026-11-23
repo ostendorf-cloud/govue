@@ -35,7 +35,8 @@ export interface ScrolledOptions {
  * event inside the same state costs one comparison and no render.
  *
  * Nothing runs on the server or before mount, so the state is false there and
- * a prerendered page hydrates in the state it was rendered in. At mount the
+ * a prerendered page starts in the state it was rendered in, until the client
+ * app replaces the markup and reads the offset. At mount the
  * offset is read once, so a reload in the middle of a page starts in the right
  * state. The listener is removed with the component.
  *

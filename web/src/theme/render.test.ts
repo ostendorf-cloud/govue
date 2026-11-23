@@ -69,7 +69,7 @@ describe('renderTheme', () => {
   it('declares the header roles, following the surface and the border', () => {
     expect(css).toContain('--color-header-bg: var(--color-surface);')
     expect(css).toContain('--color-header-border: var(--color-border);')
-    expect(css).toContain('--blur-header: 0px;')
+    expect(css).toContain('--header-backdrop: none;')
     // The alias resolves, so the header ground is checked like any other pair.
     expect(tokens(css).light['header-bg']).toBe(result.light.surface)
     expect(tokens(css).dark['header-bg']).toBe(result.dark.surface)

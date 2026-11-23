@@ -25,7 +25,7 @@
 
   --color-header-bg: var(--color-surface);
   --color-header-border: var(--color-border);
-  --blur-header: 0px;
+  --header-backdrop: none;
 
   --color-text: light-dark(#3c223f, #e1c4e8);
   --color-text-muted: light-dark(#614568, #bca3c2);

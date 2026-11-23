@@ -12,6 +12,8 @@ import {
   failures,
   HEADER_NON_TEXT_PAIRS,
   HEADER_TEXT_PAIRS,
+  HERO_MAX_LUMINANCE,
+  HERO_ROLES,
   LIGHTEST_CONTENT,
   luminance,
   maxBackdropLuminance,
@@ -154,8 +156,29 @@ describe.each([
   // under the header: its luminance bound is what the docs state.
   it('keeps the transparent overlay state legible on the dark hero it promises', () => {
     const dark = palettes.dark
-    const bound = maxBackdropLuminance(dark.text)
+    const bound = maxBackdropLuminance(dark)
     expect(luminance(dark.bg)).toBeLessThanOrEqual(bound)
+    // The one number the docs promise holds in this theme.
+    expect(bound).toBeGreaterThanOrEqual(HERO_MAX_LUMINANCE)
+    expect(luminance('#3f3f3f')).toBeLessThanOrEqual(HERO_MAX_LUMINANCE)
+
+    // The bound is tight and holds for every role that sits on the hero: the
+    // lightest grey under it passes, the next one fails a role. This is the
+    // number the docs state.
+    const grey = (value: number) => `#${value.toString(16).padStart(2, '0').repeat(3)}`
+    let lightest = 0
+    while (lightest < 255 && luminance(grey(lightest + 1)) <= bound) {
+      lightest++
+    }
+    const pairs = HERO_ROLES.map(([role]): [string, string] => [role, 'hero'])
+    for (const [role, minimum] of HERO_ROLES) {
+      expect(failures({ ...dark, hero: grey(lightest) }, [[role, 'hero']], minimum)).toEqual([])
+    }
+    const failing = HERO_ROLES.flatMap(([role, minimum]) =>
+      failures({ ...dark, hero: grey(lightest + 1) }, [[role, 'hero']], minimum),
+    )
+    expect(pairs).toHaveLength(HERO_ROLES.length)
+    expect(failing).not.toEqual([])
     expect(luminance(DARKEST_CONTENT)).toBeLessThanOrEqual(bound)
     expect(luminance(LIGHTEST_CONTENT)).toBeGreaterThan(bound)
     expect(

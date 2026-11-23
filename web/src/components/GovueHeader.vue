@@ -53,7 +53,7 @@ const solid = computed(() => !props.overlay || scrolled.value || menuOpen.value)
 // ones made for a dark ground, whatever mode the page is in.
 const ground = computed(() =>
   solid.value
-    ? 'border-header-border bg-header-bg backdrop-blur-header'
+    ? 'border-header-border bg-header-bg [-webkit-backdrop-filter:var(--header-backdrop)] [backdrop-filter:var(--header-backdrop)]'
     : 'border-transparent bg-transparent [color-scheme:dark]',
 )
 
@@ -69,12 +69,13 @@ const placements: Record<NavPlacement, string> = {
        from anywhere on a long page. The border keeps its width in every
        state, so the header never changes size when it turns solid. A site
        styles it through the --color-header-bg, --color-header-border and
-       --blur-header tokens. data-state is the hook for a site's own rules. -->
+       --header-backdrop tokens. The default backdrop is none, so the header is
+       no containing block for fixed descendants. data-state is the hook for a site's own rules. -->
   <header
     :data-state="solid ? 'solid' : 'transparent'"
     :data-overlay="overlay ? 'true' : undefined"
     :class="[
-      'inset-x-0 top-0 z-10 border-b transition-colors motion-reduce:transition-none',
+      'inset-x-0 top-0 z-10 border-b text-text transition-colors motion-reduce:transition-none',
       overlay ? 'fixed' : 'sticky',
       ground,
     ]"

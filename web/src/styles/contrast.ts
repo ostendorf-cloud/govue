@@ -100,12 +100,30 @@ export function composite(foreground: string, alpha: number, background: string)
   return `#${parts.join('')}`
 }
 
-/** maxBackdropLuminance is the relative luminance of the brightest ground a
- *  text colour keeps 4.5:1 on. It is what a host guarantees about a hero under
- *  a transparent header: the transparent state shows the dark-mode roles, so
- *  the hero has to stay at or below this luminance for the dark `text`. */
-export function maxBackdropLuminance(text: string, minimum = TEXT_MINIMUM): number {
-  return (luminance(text) + 0.05) / minimum - 0.05
+// The roles that sit straight on the hero in the transparent state, with the
+// ratio each needs: the brand and the nav items (`text`), quiet text such as
+// the theme switch (`text-muted`) and the focus ring. The current-language link
+// and the nav button have a ground of their own, so they are not here.
+export const HERO_ROLES: Array<[role: string, minimum: number]> = [
+  ['text', TEXT_MINIMUM],
+  ['text-muted', TEXT_MINIMUM],
+  ['focus', NON_TEXT_MINIMUM],
+]
+
+/** The hero luminance the docs promise for every shipped theme. The smallest
+ *  bound of the shipped themes is 0.0517, so 0.05 holds in all of them. A hero
+ *  at or under it is about #3f3f3f or darker. */
+export const HERO_MAX_LUMINANCE = 0.05
+
+/** maxBackdropLuminance is the relative luminance of the brightest ground that
+ *  keeps every role on the hero at its ratio, the smallest bound of
+ *  HERO_ROLES. It is what a host guarantees about a hero under a transparent
+ *  header: the transparent state shows the dark-mode roles, so a theme passes
+ *  its dark palette. */
+export function maxBackdropLuminance(palette: Palette): number {
+  return Math.min(
+    ...HERO_ROLES.map(([role, minimum]) => (luminance(palette[role]) + 0.05) / minimum - 0.05),
+  )
 }
 
 export type Palette = Record<string, string>

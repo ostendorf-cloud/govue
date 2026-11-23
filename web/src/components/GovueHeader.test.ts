@@ -117,6 +117,23 @@ describe('GovueHeader', () => {
       expect(screen.getByRole('banner').className).not.toMatch(/#|rgb|bg-surface|border-border\b/)
     })
 
+    it('emits no blur of its own, so the default is no backdrop filter', () => {
+      renderHeader()
+
+      const className = screen.getByRole('banner').className
+      // The filter comes from the token alone, and the token's default is
+      // none (checked in tokens.test.ts). A blur(0px) would still make the
+      // header the containing block of fixed descendants.
+      expect(className).not.toMatch(/backdrop-blur|blur\(/)
+      expect(className).toContain('[backdrop-filter:var(--header-backdrop)]')
+    })
+
+    it('sets the text colour, so slot content without its own follows the scheme', () => {
+      renderHeader()
+
+      expect(screen.getByRole('banner')).toHaveClass('text-text')
+    })
+
     it('does not listen to the scroll unless it overlays', () => {
       const add = vi.spyOn(window, 'addEventListener')
       renderHeader()
@@ -153,7 +170,7 @@ describe('GovueHeader', () => {
       )
       expect(header).not.toHaveClass('sticky')
       expect(header).not.toHaveClass('bg-header-bg')
-      expect(header).not.toHaveClass('backdrop-blur-header')
+      expect(header.className).not.toContain('backdrop-filter')
       expect(header).toHaveAttribute('data-state', 'transparent')
       expect(header).toHaveAttribute('data-overlay', 'true')
     })
@@ -171,7 +188,8 @@ describe('GovueHeader', () => {
       setScroll(200)
       await nextTick()
       expect(header).toHaveAttribute('data-state', 'solid')
-      expect(header).toHaveClass('bg-header-bg', 'border-header-border', 'backdrop-blur-header')
+      expect(header).toHaveClass('bg-header-bg', 'border-header-border')
+      expect(header.className).toContain('[backdrop-filter:var(--header-backdrop)]')
       expect(header).not.toHaveClass('bg-transparent')
       expect(header.className).not.toContain('[color-scheme:dark]')
 

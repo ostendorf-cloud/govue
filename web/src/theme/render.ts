@@ -96,7 +96,7 @@ export function renderTheme({ name, light, dark, ink }: RenderInput): string {
     // otherwise, which is the look of base.css.
     '  --color-header-bg: var(--color-surface);',
     '  --color-header-border: var(--color-border);',
-    '  --blur-header: 0px;',
+    '  --header-backdrop: none;',
     '',
     lines.slice(6, 9).join('\n'),
     '',

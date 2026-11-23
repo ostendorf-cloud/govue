@@ -1958,12 +1958,21 @@ try {
   | ----------------------- | ---------------------- | ------------------------------------- |
   | `--color-header-bg`     | `var(--color-surface)` | the ground of the solid header        |
   | `--color-header-border` | `var(--color-border)`  | the bottom border of the solid header |
-  | `--blur-header`         | `0px`                  | the backdrop blur of the solid header |
+  | `--header-backdrop`     | `none`                 | the backdrop filter of the solid one  |
 
   Every theme declares all three, and the generator writes them, so a theme file shows the whole
   contract. `--color-header-bg` and `--color-header-border` follow `surface` and `border` through
-  `var()` until a theme gives them a value of their own. The blur is a Tailwind `--blur-*` token,
-  used as `backdrop-blur-header`.
+  `var()` until a theme gives them a value of their own. `--header-backdrop` is a whole
+  `backdrop-filter` value such as `blur(12px)`, not a length. Its default is `none` and not
+  `blur(0px)` on purpose: any filter other than `none` makes the header the containing block of
+  its `position: fixed` descendants, so the default header must not carry one.
+- The header and the page scroll. `base.css` sets `scroll-padding-top` on `html`, 7rem below
+  480px and `--spacing-header` from there, so a skip link target or a Tab target scrolled into
+  view is not hidden under a fixed or sticky header (WCAG 2.4.11). That is the same for the
+  sticky default and for `overlay`.
+- The header is one row of `--spacing-header` (56 px) from 480px up. Below 480px the three parts
+  take two rows, about 109 px. A hero that pads itself with `pt-header` therefore loses about
+  50 px on a phone, and a host that needs the exact height pads with more there.
 - `GovueHeader` props and slots:
 
   | Name           | Type                           | Default   | Meaning                           |
@@ -1992,23 +2001,30 @@ try {
 - The scroll state is `useScrolled({ threshold?, active? })`, exported from the package. The
   listener is passive, is attached only while `active` is true (the header passes `overlay`),
   writes a ref that triggers nothing while the state stays the same and reads no layout. Before
-  mount and on the server the state is false, so a prerendered page is the transparent one, and
-  at mount the offset is read once.
+  mount and on the server the state is false, so a prerendered page is the transparent one. The
+  client app replaces the prerendered markup and reads the offset once at mount, so a reload in
+  the middle of a page shows the transparent state for a moment before it turns solid.
 - What the host guarantees over the transparent state. The transparent header shows the dark mode
   roles whatever the page mode is, through `color-scheme: dark` on the header, so text, icons,
   the focus ring and the call to action keep their AA ratios on a dark ground. The hero behind
-  the header must therefore be dark: its relative luminance has to stay at or below
-  `(L + 0.05) / 4.5 - 0.05`, where `L` is the luminance of the dark `--color-text`. Dark `bg`
-  is inside that bound in every shipped theme. A hero on `bg-bg` with `[color-scheme:dark]` on
-  the section is dark in both modes, and a photograph needs a scrim. govue cannot check the
-  page behind the header, the contrast test checks the roles. A page that cannot guarantee a
-  dark hero uses the default header, which has a ground of its own.
+  the header must therefore be dark. Three roles sit straight on it: `text` (brand, nav items)
+  and `text-muted` at 4.5:1, and the focus ring at 3:1. The current language link, the menu
+  button and the call to action have a ground of their own. The bound is the smallest of
+  `(L + 0.05) / ratio - 0.05` over those three, `L` being the luminance of the dark role. It is
+  `maxBackdropLuminance` in `web/src/styles/contrast.ts`. The bound is 0.0557 in the default,
+  0.0517 in `sample` and 0.0551 in `sample-contrast`, so the promise for every shipped theme is
+  a hero luminance of at most 0.05 (about `#3f3f3f` or darker), `HERO_MAX_LUMINANCE`. A theme
+  of your own computes its bound with the same function. Dark `bg` is inside it in every
+  shipped theme, so a hero on `bg-bg` with `[color-scheme:dark]` on the section is dark in both
+  modes, and a photograph needs a scrim. govue cannot check the page behind the header, the
+  contrast test checks the roles. A page that cannot guarantee a dark hero uses the default
+  header, which has a ground of its own.
 - A translucent ground, for example
   `--color-header-bg: color-mix(in srgb, var(--color-surface) 95%, transparent)` with a
-  `--blur-header` of 12px, lets the page content show through, so the contrast depends on the
-  content. The contrast test checks it against the lightest (`#ffffff`) and the darkest
-  (`#000000`) content in every shipped theme and both modes. The alpha of the ground at which
-  text keeps 4.5:1 over both:
+  `--header-backdrop` of `blur(12px)`, lets the page content show through, so the contrast
+  depends on the content. The contrast test checks it against the lightest (`#ffffff`) and the
+  darkest (`#000000`) content in every shipped theme and both modes. The alpha of the ground at
+  which text keeps 4.5:1 over both:
 
   | Text role                                     | Minimum alpha |
   | --------------------------------------------- | ------------- |

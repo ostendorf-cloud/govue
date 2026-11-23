@@ -43,7 +43,7 @@ repeated here.
   must say which, with no default, and `'none'` needs a storage. The types and `createClient`
   refuse anything else.
 - `GovueHeader` takes its ground from the tokens `--color-header-bg`, `--color-header-border` and
-  `--blur-header`, set in the theme file and filled by every theme and the generator. The prop
+  `--header-backdrop`, set in the theme file and filled by every theme and the generator. The prop
   `overlay` takes it out of the flow, transparent over a dark hero until `useScrolled` reports a
   scroll, with `data-state` and `data-overlay` as the hooks, and `navPlacement` is `start`
   (default), `center` or `end`. An open `GovueNav` menu keeps it solid. `NavItem.variant: 'cta'`
