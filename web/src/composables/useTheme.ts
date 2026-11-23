@@ -3,6 +3,7 @@
 
 import { computed, readonly, ref, watch, type ComputedRef, type Ref } from 'vue'
 
+import { pinThemeColor } from './themeColor'
 import { THEME_STORAGE_KEY } from './themeStorage'
 
 /**
@@ -113,6 +114,9 @@ function apply(): void {
   } else {
     root.dataset.mode = mode.value
   }
+  // The browser bar follows the mode too, the boot script only pins it at
+  // load.
+  pinThemeColor(mode.value)
 }
 
 function watchSystem(): void {
