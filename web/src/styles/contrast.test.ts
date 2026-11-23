@@ -166,6 +166,9 @@ describe.each([
           ['text-muted', 'bg'],
           ['text-faint', 'bg'],
           ['accent-text', 'bg'],
+          // The call to action of the nav, in its hover state too.
+          ['accent-on', 'accent-strong'],
+          ['accent-on', 'accent-strong-hover'],
         ],
         TEXT_MINIMUM,
       ),
