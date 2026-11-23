@@ -175,17 +175,24 @@ func TestNewNeverQuotesARefusedValue(t *testing.T) {
 	}
 }
 
-func TestNewRefusesAPublicFileServedAlready(t *testing.T) {
-	cfg := testConfig(buildOf(routes), io.Discard)
-	cfg.PublicFiles = []string{favicon.SVGFile, ogImage, ogImage}
-	_, err := frontend.New(cfg)
-	if err == nil {
-		t.Fatal("New accepted the list")
+func TestNewRefusesAPublicFileServedAlreadyWithoutQuotingIt(t *testing.T) {
+	tests := []struct {
+		name  string
+		files []string
+		value string
+		want  string
+	}{
+		{"favicon", []string{ogImage, favicon.SVGFile}, favicon.SVGFile, "Config.PublicFiles entry 2 names a file that is served already"},
+		{"sitemap", []string{"sitemap.xml"}, "sitemap.xml", "Config.PublicFiles entry 1 names a file that is served already"},
+		{"twice", []string{ogImage, "a.txt", ogImage}, ogImage, "Config.PublicFiles entry 3 repeats entry 1"},
 	}
-	for _, want := range []string{"entry 1 is \"favicon.svg\", which is served already", "entry 3: \"og-image.png\" is listed twice"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error does not say %q: %v", want, err)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfig(buildOf(routes), io.Discard)
+			cfg.PublicFiles = tt.files
+			_, err := frontend.New(cfg)
+			configtexttest.AssertHidden(t, err, tt.value, tt.want)
+		})
 	}
 }
 

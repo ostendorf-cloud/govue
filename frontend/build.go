@@ -145,7 +145,7 @@ type site struct {
 func checkPublicFiles(names []string) ([]string, error) {
 	fixed := []string{favicon.SVGFile, favicon.PNGFile, favicon.TouchFile, sitemapFile, robotsFile}
 	var problems []error
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	for i, name := range names {
 		_, typed := contentTypes[strings.ToLower(path.Ext(name))]
 		switch {
@@ -154,12 +154,13 @@ func checkPublicFiles(names []string) ([]string, error) {
 				"letters, digits, '.', '_' and '-', not starting with a dot, with a known extension that is not "+
 				"HTML (the value is not shown)", i+1))
 		case slices.Contains(fixed, name):
-			problems = append(problems, fmt.Errorf("frontend: Config.PublicFiles entry %d is %q, which is served already",
-				i+1, name))
-		case seen[name]:
-			problems = append(problems, fmt.Errorf("frontend: Config.PublicFiles entry %d: %q is listed twice", i+1, name))
+			problems = append(problems, fmt.Errorf("frontend: Config.PublicFiles entry %d names a file that is "+
+				"served already, a favicon file, the sitemap or robots.txt (the value is not shown)", i+1))
+		case seen[name] > 0:
+			problems = append(problems, fmt.Errorf("frontend: Config.PublicFiles entry %d repeats entry %d "+
+				"(the value is not shown)", i+1, seen[name]))
 		default:
-			seen[name] = true
+			seen[name] = i + 1
 		}
 	}
 	return names, errors.Join(problems...)
