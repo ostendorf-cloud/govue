@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.10.0](https://github.com/ostendorf-cloud/govue/compare/v0.9.0...v0.10.0) (2026-11-24)
+
+### Features
+
+- **contact:** localise the labels of the default mail body ([#260](https://github.com/ostendorf-cloud/govue/pull/260))
+- **web:** add a cycle theme button and othersOnly language links ([#258](https://github.com/ostendorf-cloud/govue/pull/258))
+
 ## [v0.9.0](https://github.com/ostendorf-cloud/govue/compare/v0.8.0...v0.9.0) (2026-11-24)
 
 ### Features
