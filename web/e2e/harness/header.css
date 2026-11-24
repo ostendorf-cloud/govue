@@ -1,0 +1,9 @@
+/*
+ * The header page measures layout, so unlike the other harness pages it needs
+ * the real token classes: the package's base layer and Tailwind over the
+ * components and this harness.
+ */
+@import '../../src/styles/base.css';
+
+@source '../../src/components';
+@source './';

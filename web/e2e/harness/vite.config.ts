@@ -3,17 +3,19 @@
 
 import { fileURLToPath, URL } from 'node:url'
 
+import tailwindcss from '@tailwindcss/vite'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 
-// A standalone dev server for the Playwright harness page. It shares the
+// A standalone dev server for the Playwright harness pages. It shares the
 // package's pinned Vue and Vite versions but is otherwise unrelated to the
-// library build in ../../vite.config.ts: no Tailwind plugin, since the
-// harness only needs the components to render, not their token classes to
-// resolve to anything.
+// library build in ../../vite.config.ts. Most pages import no stylesheet:
+// they only need the components to render, not their token classes to
+// resolve to anything. The header page measures layout, so it imports
+// header.css, which the Tailwind plugin builds from the real classes.
 export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
-  plugins: [vue()],
+  plugins: [vue(), tailwindcss()],
   server: {
     port: 4173,
     strictPort: true,
