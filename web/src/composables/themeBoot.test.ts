@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
 import { MODE_ATTRIBUTE, THEME_ATTRIBUTE, THEME_STORAGE_KEY } from './themeStorage'
-import { resetThemeForTests, useTheme } from './useTheme'
+import { resetThemeForTests, useTheme, type ColorMode } from './useTheme'
 
 // The script the Go package themeboot injects into the page. It is read from
 // the file the Go side embeds, so this tests the shipped script itself.
@@ -163,6 +163,98 @@ describe('the theme boot script', () => {
       expect(tags.map((t) => t.content)).toEqual([LIGHT, DARK])
     })
   })
+
+  // The scripts themeboot.WithDefaultMode writes, kept in themeboot/testdata
+  // by the Go golden test. The file names carry the mode names, so a mode
+  // renamed in Go or in ColorMode fails here.
+  describe.each(['light', 'dark'] as const satisfies readonly ColorMode[])(
+    'with the default mode %s',
+    (defaultMode) => {
+      const other = defaultMode === 'dark' ? 'light' : 'dark'
+      const source = readFileSync(
+        resolve(import.meta.dirname, `../../../themeboot/testdata/boot-${defaultMode}.js`),
+        'utf8',
+      )
+      const bootWithDefault = (): void => {
+        runInThisContext(source)
+      }
+
+      it('sets the default when nothing is stored, whatever the system prefers', () => {
+        const matchMedia = vi.fn(() => ({ matches: defaultMode === 'light' }))
+        vi.stubGlobal('matchMedia', matchMedia)
+
+        bootWithDefault()
+
+        expect(root.getAttribute(MODE_ATTRIBUTE)).toBe(defaultMode)
+        expect(matchMedia).not.toHaveBeenCalled()
+      })
+
+      it('keeps a prerendered mode that matches the default', () => {
+        root.setAttribute(MODE_ATTRIBUTE, defaultMode)
+
+        bootWithDefault()
+
+        expect(root.getAttribute(MODE_ATTRIBUTE)).toBe(defaultMode)
+      })
+
+      it('lets a stored mode win', () => {
+        localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify({ theme: 'sample', mode: other }))
+
+        bootWithDefault()
+
+        expect(root.getAttribute(MODE_ATTRIBUTE)).toBe(other)
+      })
+
+      it('lets a stored system choice win over the default', () => {
+        root.setAttribute(MODE_ATTRIBUTE, defaultMode)
+        localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify({ theme: 'sample', mode: 'system' }))
+
+        bootWithDefault()
+
+        expect(root.hasAttribute(MODE_ATTRIBUTE)).toBe(false)
+      })
+
+      it('falls back to the default on nonsense and blocked storage', () => {
+        localStorage.setItem(THEME_STORAGE_KEY, '{not json')
+        bootWithDefault()
+        expect(root.getAttribute(MODE_ATTRIBUTE)).toBe(defaultMode)
+
+        vi.stubGlobal('localStorage', {
+          getItem: () => {
+            throw new Error('blocked')
+          },
+        })
+        root.removeAttribute(MODE_ATTRIBUTE)
+        bootWithDefault()
+        expect(root.getAttribute(MODE_ATTRIBUTE)).toBe(defaultMode)
+      })
+
+      it('pins the theme-color tags to the default', () => {
+        document.head.innerHTML =
+          '<meta name="theme-color" content="#111111" media="(prefers-color-scheme: light)">' +
+          '<meta name="theme-color" content="#222222" media="(prefers-color-scheme: dark)">'
+        const want = defaultMode === 'dark' ? '#222222' : '#111111'
+
+        bootWithDefault()
+
+        const tags = Array.from(document.head.querySelectorAll('meta'))
+        expect(tags.map((t) => t.content)).toEqual([want, want])
+        document.head.innerHTML = ''
+      })
+
+      it('agrees with useTheme given the same mode', async () => {
+        useTheme({ mode: defaultMode })
+        await nextTick()
+        const applied = root.getAttribute(MODE_ATTRIBUTE)
+
+        root.removeAttribute(MODE_ATTRIBUTE)
+        bootWithDefault()
+
+        expect(applied).toBe(defaultMode)
+        expect(root.getAttribute(MODE_ATTRIBUTE)).toBe(applied)
+      })
+    },
+  )
 
   it('agrees with what useTheme stores and applies', async () => {
     const first = useTheme({ theme: 'sample-contrast' })
