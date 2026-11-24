@@ -50,6 +50,9 @@ const en: MessageTree = {
         light: 'Light mode',
         dark: 'Dark mode',
       },
+      // The name of the cycle button: the group label, the current mode and
+      // the one a press moves to, each a compact name.
+      cycle: '{label}: {current}. Next: {next}',
     },
     language: {
       label: 'Language',

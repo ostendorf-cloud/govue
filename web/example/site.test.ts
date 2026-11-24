@@ -98,6 +98,21 @@ describe('example site', () => {
     expect(de).toContain('aria-label="Dunkler Modus"')
   })
 
+  it('prerenders the narrow parts below 1024px and the wide ones from there', () => {
+    const en = page('en/index.html')
+    expect(en).toContain('aria-label="Theme: Follow the system. Next: Light mode"')
+    expect(en).toMatch(
+      /<span class="contents lg:hidden"><button type="button" aria-label="Theme: Follow/,
+    )
+    expect(en).toMatch(/<span class="hidden lg:contents"><div role="radiogroup"/)
+    // The narrow language part links German only, the wide one both.
+    const narrow = en.match(/<span class="contents lg:hidden">\s*<div role="group".*?<\/div>/s)
+    expect(narrow?.[0]).toContain('hreflang="de"')
+    expect(narrow?.[0]).not.toContain('hreflang="en"')
+    const de = page('de/index.html')
+    expect(de).toContain('aria-label="Darstellung: Dem System folgen. Als Nächstes: Heller Modus"')
+  })
+
   it('shows the solid sticky header on the start page, with the nav at the end', () => {
     const html = page('en/index.html')
 

@@ -56,6 +56,8 @@ const deFormal: MessageTree = {
         light: 'Heller Modus',
         dark: 'Dunkler Modus',
       },
+      // Addresses nobody, so it is the text of de.ts.
+      cycle: '{label}: {current}. Als Nächstes: {next}',
     },
     language: {
       label: 'Sprache',

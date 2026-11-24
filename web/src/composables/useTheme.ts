@@ -85,11 +85,20 @@ export function useTheme(options: ThemeOptions = {}): ThemeState {
       persist()
     },
     cycleMode: () => {
-      const order: ColorMode[] = ['light', 'dark', 'system']
-      mode.value = order[(order.indexOf(mode.value) + 1) % order.length]
+      mode.value = nextMode(mode.value)
       persist()
     },
   }
+}
+
+/**
+ * nextMode is the mode cycleMode moves to: light, dark, system, then light
+ * again. A control that names the next mode reads it here, so the name and
+ * the step cannot drift apart.
+ */
+export function nextMode(current: ColorMode): ColorMode {
+  const order: ColorMode[] = ['light', 'dark', 'system']
+  return order[(order.indexOf(current) + 1) % order.length]
 }
 
 /** resetThemeForTests drops the shared state. Tests only. */

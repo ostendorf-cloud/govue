@@ -19,7 +19,11 @@ import { localizedPath } from '../src/i18n/routes'
 // - navPlacement: the navigation sits at the end of the row, next to the
 //   actions.
 // - a NavItem with variant 'cta': the contact link.
-// - the compact theme switch in the theme slot: three icons that fit a phone.
+// - the narrow setup below 1024px: the cycle theme button and only the link to
+//   the other language, so the row stays one row on a phone. From 1024px the
+//   compact theme switch with its three icons and every language link.
+//   display: none (hidden) takes the part of the other width out of the
+//   accessibility tree as well, so a screen reader meets one of each.
 // - GovueLanguageSwitch with linkFor: each language is a real link to this
 //   page in that language, so it works without script and a crawler follows it.
 //   A site with a router passes navigate as well, see the concept doc.
@@ -58,10 +62,14 @@ function linkFor(code: string): string {
     </template>
     <GovueNav :items="items" />
     <template #theme>
-      <GovueThemeSwitch compact />
+      <span class="contents lg:hidden"><GovueThemeSwitch cycle /></span>
+      <span class="hidden lg:contents"><GovueThemeSwitch compact /></span>
     </template>
     <template #actions>
-      <GovueLanguageSwitch :link-for="linkFor" />
+      <span class="contents lg:hidden">
+        <GovueLanguageSwitch :link-for="linkFor" others-only />
+      </span>
+      <span class="hidden lg:contents"><GovueLanguageSwitch :link-for="linkFor" /></span>
     </template>
   </GovueHeader>
 </template>

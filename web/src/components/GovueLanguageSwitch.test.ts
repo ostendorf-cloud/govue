@@ -248,6 +248,93 @@ describe('GovueLanguageSwitch', () => {
     })
   })
 
+  describe('link mode with othersOnly', () => {
+    const linkFor = (code: string) => `/${code}/about`
+
+    it('renders only the other language, with href, hreflang and lang', () => {
+      mount({ locale: 'en' }, { linkFor, othersOnly: true })
+
+      const links = screen.getAllByRole('link')
+      expect(links).toHaveLength(1)
+      expect(links[0]).toHaveAccessibleName('Deutsch')
+      expect(links[0]).toHaveAttribute('href', '/de/about')
+      expect(links[0]).toHaveAttribute('hreflang', 'de')
+      expect(links[0]).toHaveAttribute('lang', 'de')
+      expect(links[0]).not.toHaveAttribute('aria-current')
+      expect(screen.queryByRole('link', { name: 'English' })).not.toBeInTheDocument()
+    })
+
+    it('renders the other language from German too', () => {
+      mount({ locale: 'de' }, { linkFor, othersOnly: true })
+
+      expect(screen.getAllByRole('link').map((l) => l.getAttribute('hreflang'))).toEqual(['en'])
+      expect(screen.getByRole('link', { name: 'English' })).toHaveAttribute('href', '/en/about')
+    })
+
+    it('keeps the named group and the 44px target', () => {
+      mount({ locale: 'de' }, { linkFor, othersOnly: true })
+
+      expect(screen.getByRole('group', { name: 'Sprache' })).toBeVisible()
+      expect(screen.getByRole('link')).toHaveClass('min-h-11', 'min-w-11')
+    })
+
+    it('hands a click to navigate, then offers the language left behind, keeping focus', async () => {
+      const user = userEvent.setup()
+      const navigate = vi.fn(() => true)
+      const view = mount({ locale: 'en' }, { linkFor, navigate, othersOnly: true })
+
+      await user.tab()
+      expect(screen.getByRole('link', { name: 'Deutsch' })).toHaveFocus()
+      await user.keyboard('{Enter}')
+
+      expect(navigate).toHaveBeenCalledWith('/de/about', 'de')
+      expect(view.emitted('change')).toEqual([['de']])
+      expect(document.documentElement.lang).toBe('de')
+      const link = screen.getByRole('link')
+      expect(link).toHaveAccessibleName('English')
+      expect(link).toHaveAttribute('href', '/en/about')
+      expect(link).toHaveAttribute('hreflang', 'en')
+      expect(link).toHaveAttribute('lang', 'en')
+      expect(link).toHaveFocus()
+    })
+
+    it('leaves the select alone', () => {
+      mount({}, { othersOnly: true })
+
+      expect(screen.getAllByRole('option')).toHaveLength(2)
+      expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    })
+  })
+
+  // The markup of the select and of the link mode as released in v0.9.0. The
+  // othersOnly setting must not change a byte of either.
+  describe('pinned markup', () => {
+    /** One element per line, so a change shows as a readable diff. */
+    const lines = (html: string) => html.replaceAll('><', '>\n<')
+
+    it('keeps the select', () => {
+      const { container } = mount()
+
+      expect(lines(container.innerHTML)).toMatchInlineSnapshot(`
+        "<select aria-label="Language" class="min-h-11 min-w-11 rounded-md border border-border-strong bg-surface px-3 text-base text-text transition-colors hover:bg-surface-hover" value="en">
+        <option lang="de" value="de">Deutsch</option>
+        <option lang="en" selected="" value="en">English</option>
+        </select>"
+      `)
+    })
+
+    it('keeps the link mode', () => {
+      const { container } = mount({}, { linkFor: (code: string) => `/${code}/about` })
+
+      expect(lines(container.innerHTML)).toMatchInlineSnapshot(`
+        "<div role="group" aria-label="Language" class="inline-flex flex-wrap items-center gap-1">
+        <a href="/de/about" hreflang="de" lang="de" class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md px-3 text-base transition-colors text-text hover:bg-surface-hover">Deutsch</a>
+        <a href="/en/about" hreflang="en" lang="en" aria-current="true" class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md px-3 text-base transition-colors bg-accent-subtle font-semibold text-accent-text underline decoration-2 underline-offset-4">English</a>
+        </div>"
+      `)
+    })
+  })
+
   it('renders no link and no group without linkFor', () => {
     mount()
 
