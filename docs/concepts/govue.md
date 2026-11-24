@@ -1932,6 +1932,20 @@ try {
   test instead of showing up as a flash.
 - With nothing stored the script leaves `data-mode` off, because the stylesheet already follows
   the system setting through `light-dark()` and an explicit value would only pin it.
+- A site that is dark or light by default, and prerenders `data-mode` with that mode, passes
+  `themeboot.WithDefaultMode` with `ModeDark` or `ModeLight`. On a first visit the script then
+  sets that mode and pins the `theme-color` tags to it, without reading the system preference,
+  so a matching prerendered `data-mode` stays. A stored mode wins, a stored system choice
+  included. The default is `ModeSystem`, the script of before byte for byte, so an existing site
+  keeps its hash, and a Go test holds that hash. Any other mode panics at startup, like an
+  invalid storage key.
+- `useTheme` has its own default, the `mode` option. The site sets both to the same mode, or the
+  page flashes when the bundle starts. The Go modes carry the names of `ColorMode`. The Go test
+  writes the scripts of the light and dark defaults to `themeboot/testdata/boot-<mode>.js`, and
+  the Vitest test runs each against `useTheme` with that mode, so a renamed mode or a changed
+  script fails one of the two.
+- The script text changes with the default mode, so `themeboot.Hash` takes the same options as
+  `InjectStatic`, and a test fails when the two differ.
 - The browser bar follows the mode too. `favicon.Icons.WithDarkThemeColor` writes one
   `theme-color` tag per mode, with the media query `(prefers-color-scheme: light)` or `dark`, so
   the browser picks the system's one with no script at all. Media queries alone cannot follow a
@@ -2550,7 +2564,9 @@ try {
     `Config.ThemeColorDark`.
   - its own theme boot script, inline or as a file. A script of its own would also need its own
     hash in the policy. A site with its own `localStorage` key passes
-    `themeboot.WithStorageKey` in `Config.ThemeBoot`.
+    `themeboot.WithStorageKey` in `Config.ThemeBoot`. A site that prerenders a pinned mode
+    passes `themeboot.WithDefaultMode` there, and `New` puts the hash of that script into
+    `script-src`.
 - No session, no cookie, no API route, no CORS. Every method but `GET` and `HEAD` answers 405
   with `Allow: GET, HEAD`. A bare `OPTIONS *` reaches the handler under `Run`, because
   `httpserver` sets `DisableGeneralOptionsHandler`, and answers the 404 page with every header.

@@ -10,7 +10,9 @@
 // very script and checks the key and the attribute names against the
 // composable's constants, so the two halves cannot drift apart. An
 // application that gives useTheme its own storageKey passes the same key
-// here with WithStorageKey.
+// here with WithStorageKey, and one that gives useTheme a mode passes the
+// same mode with WithDefaultMode. The scripts of the pinned default modes
+// are kept in testdata, and the same test runs them as well.
 //
 // A page whose Content-Security-Policy carries a nonce runs the script only
 // when the tag carries that nonce. Tag and Shell take it from the caller and
@@ -51,9 +53,29 @@ var script string
 // could end the JavaScript string it is placed in or the script element.
 var keyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
 
+// Mode is a colour mode, with the names the ColorMode type of useTheme uses.
+type Mode string
+
+// The three modes. ModeSystem follows the operating system and leaves
+// ModeAttribute off, ModeLight and ModeDark pin the mode.
+const (
+	ModeSystem Mode = "system"
+	ModeLight  Mode = "light"
+	ModeDark   Mode = "dark"
+)
+
+// The two places of boot.js that WithDefaultMode changes. The script with
+// ModeSystem is boot.js unchanged, so its text and its Hash are the same as
+// before the option existed.
+const (
+	defaultModeLine = "var mode = 'system';"
+	storedModeTest  = "stored.mode === 'light' || stored.mode === 'dark'"
+)
+
 type config struct {
-	storageKey string
-	icons      *favicon.Icons
+	storageKey  string
+	defaultMode Mode
+	icons       *favicon.Icons
 }
 
 // Option changes how the script is built.
@@ -71,6 +93,24 @@ func WithStorageKey(key string) Option {
 	return func(c *config) { c.storageKey = key }
 }
 
+// WithDefaultMode sets the mode the script applies when nothing is stored.
+// It must equal the mode given to useTheme, and the data-mode a prerendered
+// page carries. The default is ModeSystem: ModeAttribute is removed and the
+// stylesheet follows the operating system. ModeLight and ModeDark set
+// ModeAttribute to that mode and pin the theme-color tags to it, without
+// reading the system preference, so a prerendered data-mode="dark" stays.
+// A stored mode always wins, a stored system included. Any other mode
+// panics, because a wrong one is a programming error found at startup, not
+// at request time.
+func WithDefaultMode(mode Mode) Option {
+	switch mode {
+	case ModeSystem, ModeLight, ModeDark:
+	default:
+		panic("themeboot: invalid default mode, want light, dark or system")
+	}
+	return func(c *config) { c.defaultMode = mode }
+}
+
 // WithFavicon makes Inject and Shell write the favicon links and the theme
 // colour meta tag into the head, right ahead of the boot script, so every
 // page they serve carries them, in every language, and the script sees the
@@ -83,7 +123,7 @@ func WithFavicon(icons favicon.Icons) Option {
 }
 
 func build(opts []Option) config {
-	c := config{storageKey: StorageKey}
+	c := config{storageKey: StorageKey, defaultMode: ModeSystem}
 	for _, opt := range opts {
 		opt(&c)
 	}
@@ -94,10 +134,17 @@ func build(opts []Option) config {
 // tag around it.
 func Script(opts ...Option) string {
 	c := build(opts)
-	if c.storageKey == StorageKey {
-		return script
+	src := script
+	if c.storageKey != StorageKey {
+		src = strings.Replace(src, "'"+StorageKey+"'", "'"+c.storageKey+"'", 1)
 	}
-	return strings.Replace(script, "'"+StorageKey+"'", "'"+c.storageKey+"'", 1)
+	if c.defaultMode != ModeSystem {
+		// With a pinned default, a stored system is a choice of its own
+		// that must win over the default, so the script accepts it too.
+		src = strings.Replace(src, defaultModeLine, "var mode = '"+string(c.defaultMode)+"';", 1)
+		src = strings.Replace(src, storedModeTest, storedModeTest+" || stored.mode === 'system'", 1)
+	}
+	return src
 }
 
 // Tag returns the inline script element carrying nonce. An empty nonce

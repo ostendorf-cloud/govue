@@ -87,7 +87,9 @@ type Config struct {
 	// of a stored mode. Empty keeps one tag for both modes.
 	ThemeColorDark string
 	// ThemeBoot holds the options of the theme boot script, such as
-	// themeboot.WithStorageKey. The favicon links are added by New.
+	// themeboot.WithStorageKey or themeboot.WithDefaultMode for a site
+	// that prerenders a pinned mode. The hash in script-src follows them.
+	// The favicon links are added by New.
 	ThemeBoot []themeboot.Option
 	// PublicFiles names further files at the root of Build that are served
 	// at /<name>, such as og-image.png. Each is a plain file name of letters,

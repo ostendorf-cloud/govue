@@ -130,6 +130,38 @@ func TestThemeBootOptionsReachScriptAndHash(t *testing.T) {
 	}
 }
 
+func TestDefaultModeReachesScriptAndHash(t *testing.T) {
+	cfg := testConfig(buildOf(routes), io.Discard)
+	cfg.ThemeBoot = []themeboot.Option{themeboot.WithDefaultMode(themeboot.ModeDark)}
+	s, err := frontend.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"/de/", "/de/missing"} {
+		res := do(t, s.Handler(), http.MethodGet, target, nil)
+		page := body(t, res)
+		const open = `<meta name="theme-color" content="` + themeColor + `"><script>`
+		start := strings.Index(page, open)
+		end := strings.Index(page, "</script>")
+		if start < 0 || end < start {
+			t.Fatalf("%s: no boot script after the icon links: %s", target, page)
+		}
+		script := page[start+len(open) : end]
+		if script != themeboot.Script(themeboot.WithDefaultMode(themeboot.ModeDark)) {
+			t.Errorf("%s: the served script is not the one with the dark default:\n%s", target, script)
+		}
+		sum := sha256.Sum256([]byte(script))
+		source := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+		csp := res.Header.Get("Content-Security-Policy")
+		if !strings.Contains(csp, "script-src 'self' "+source) {
+			t.Errorf("%s: script-src does not allow the served script %s: %s", target, source, csp)
+		}
+		if strings.Contains(csp, themeboot.Hash()) {
+			t.Errorf("%s: the policy still carries the hash of the system default: %s", target, csp)
+		}
+	}
+}
+
 func TestConfiguredSecurityIsNotChanged(t *testing.T) {
 	security := middleware.DefaultSecurity()
 	security.HSTS = 0
