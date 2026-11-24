@@ -2,6 +2,8 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
+import { computed } from 'vue'
+
 import { useLanguage, useGovueText } from '../i18n/plugin'
 
 // Two modes.
@@ -20,6 +22,13 @@ import { useLanguage, useGovueText } from '../i18n/plugin'
 // aria-current, and a link is announced as a link, never as a radio. A plain
 // click follows the href. When the app's router handles the path, navigate
 // takes the click over: the locale changes and the page does not reload.
+//
+// With othersOnly, link mode leaves the current language out and renders only
+// the links of the others: with two languages one link, which fits a narrow
+// header. The links stay what they are, with hreflang, lang, linkFor and
+// navigate, inside the same named group. A link is reused in place rather
+// than replaced when the language changes, so a keyboard visitor who followed
+// it through the router keeps focus on it.
 //
 // Each option is written in its own language and carries its own lang
 // attribute, so a screen reader pronounces "Deutsch" in German. The group name
@@ -43,14 +52,29 @@ const props = withDefaults(
      * anything else, or leave it out, and the browser follows the link.
      */
     navigate?: (href: string, code: string) => boolean | void
+    /**
+     * Link mode only. Renders the links of the other languages and leaves
+     * the current one out. Off by default. The select ignores it.
+     */
+    othersOnly?: boolean
   }>(),
-  { label: undefined, linkFor: undefined, navigate: undefined },
+  { label: undefined, linkFor: undefined, navigate: undefined, othersOnly: false },
 )
 
 const emit = defineEmits<{ change: [code: string] }>()
 
 const { locale, locales, setLocale } = useLanguage()
 const { t } = useGovueText()
+
+const links = computed(() =>
+  props.othersOnly ? locales.filter((entry) => entry.code !== locale.value) : locales,
+)
+
+/** The key of a link. With othersOnly it is the position, so the element is
+ *  patched in place when the language changes and keeps focus. */
+function linkKey(code: string, index: number): string {
+  return props.othersOnly ? `other-${index}` : code
+}
 
 function onChange(event: Event): void {
   const code = (event.target as HTMLSelectElement).value
@@ -92,8 +116,8 @@ function onLink(event: MouseEvent, code: string, href: string): void {
     class="inline-flex flex-wrap items-center gap-1"
   >
     <a
-      v-for="entry in locales"
-      :key="entry.code"
+      v-for="(entry, index) in links"
+      :key="linkKey(entry.code, index)"
       :href="linkFor(entry.code)"
       :hreflang="entry.code"
       :lang="entry.code"
