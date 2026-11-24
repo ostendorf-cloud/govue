@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.8.0](https://github.com/ostendorf-cloud/govue/compare/v0.7.0...v0.8.0) (2026-11-24)
+
+### Features
+
+- **web:** header overlay mode, tokens, CTA nav item and language links ([#250](https://github.com/ostendorf-cloud/govue/pull/250))
+- **contact:** consent record, formal German, replay set sweep, worker-src ([#252](https://github.com/ostendorf-cloud/govue/pull/252))
+- **web:** add a compact icon variant to GovueThemeSwitch ([#249](https://github.com/ostendorf-cloud/govue/pull/249))
+- **frontend:** page view counting, redirects, theme colour modes, dev proxy ([#243](https://github.com/ostendorf-cloud/govue/pull/243))
+
 ## [v0.7.0](https://github.com/ostendorf-cloud/govue/compare/v0.6.0...v0.7.0) (2026-11-23)
 
 ### Features
