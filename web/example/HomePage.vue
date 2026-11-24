@@ -3,24 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import GovueFooter from '../src/components/GovueFooter.vue'
-import GovueHeader from '../src/components/GovueHeader.vue'
 import GovuePage from '../src/components/GovuePage.vue'
 import GovueSkipLink from '../src/components/GovueSkipLink.vue'
-import GovueThemeSwitch from '../src/components/GovueThemeSwitch.vue'
+import ExampleHeader from './ExampleHeader.vue'
 
-// The example's start page. It shows the footer, which links the legal pages
-// in the visitor's language, and the compact theme switch in the header: three
-// icons of 44px, about 142px in all, which fit a 360px phone next to a brand.
+// The example's start page: the solid sticky header and the footer. The header
+// carries the compact theme switch, three icons of 44px, about 142px in all,
+// which fit a 360px phone next to a brand. The footer links the legal pages in
+// the visitor's language.
 </script>
 
 <template>
   <GovueSkipLink />
-  <GovueHeader>
-    <template #brand>govue example</template>
-    <template #theme>
-      <GovueThemeSwitch compact />
-    </template>
-  </GovueHeader>
+  <ExampleHeader path="/" />
   <GovuePage title="govue example">
     <p class="text-base text-text">Placeholder start page.</p>
   </GovuePage>

@@ -42,6 +42,14 @@ repeated here.
   (`auth.rotation: 'owner'`), every other one is `'none'`. A client with its own `auth.storage`
   must say which, with no default, and `'none'` needs a storage. The types and `createClient`
   refuse anything else.
+- `GovueHeader` takes its ground from the tokens `--color-header-bg`, `--color-header-border` and
+  `--header-backdrop`, set in the theme file and filled by every theme and the generator. The prop
+  `overlay` takes it out of the flow, transparent over a dark hero until `useScrolled` reports a
+  scroll, with `data-state` and `data-overlay` as the hooks, and `navPlacement` is `start`
+  (default), `center` or `end`. An open `GovueNav` menu keeps it solid. `NavItem.variant: 'cta'`
+  is the call to action. The contrast test covers the header ground and a translucent one: keep
+  the alpha at 0.95 or more. `GovueLanguageSwitch` renders links with `linkFor` and hands a
+  click to the router through `navigate`. "The header and the navigation" is the spec.
 - `web/src/i18n/` holds the language layer: the `createGovueI18n` plugin, the German and
   English catalogues and `catalogues.ts`, the one list of languages. `GovueLanguageSwitch`
   lives in `web/src/components/` with the other components.
@@ -56,12 +64,14 @@ repeated here.
   `de.ts`. `createGovueI18n({ formality: 'formal' })` loads it under the locale `de`, so it is
   never a second language in `catalogues.ts` or the switch. A test fails on a missing key in
   either and on "du" in the formal one.
-- `web/example/` is the example site: the placeholder legal pages, the contact page, the start
-  page with the compact theme switch in its header,
-  prerendered and checked by its own tests, the consumer build test of the worker bundle and the
-  fake of the contact handlers that the component tests use, which knows `consent` and
-  `requireConsent`. It is not shipped. The Go example requires the consent box like its contact
-  page shows it, and its mail body adds a placeholder consent line with the receive time.
+- `web/example/` is the example site: the placeholder legal pages, the contact page, and the
+  start and hero pages that show the solid and the overlay header. Its shared header has the
+  compact theme switch in the theme slot, the nav at the end with a call to action, and the
+  language links. It is prerendered and checked by its own tests, the consumer build test of
+  the worker bundle and the fake of the contact handlers that the component tests use, which
+  knows `consent` and `requireConsent`. It is not shipped. The Go example requires the consent
+  box like its contact page shows it, and its mail body adds a placeholder consent line with
+  the receive time.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.

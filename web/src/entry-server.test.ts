@@ -54,6 +54,28 @@ describe('render', () => {
     expect(html).toContain('<select')
   })
 
+  it('renders the overlay header transparent and the language links without script', async () => {
+    const Page = defineComponent({
+      setup: () => () => [
+        h(GovueHeader, { overlay: true, navPlacement: 'end' }, { brand: () => 'Brand' }),
+        h(GovueLanguageSwitch, { linkFor: (code: string) => `/${code}/about` }),
+      ],
+    })
+    const html = await render(Page, {
+      setup: (app) => {
+        app.use(createGovueI18n({ locale: 'en' }))
+      },
+    })
+
+    // No window on the server, so the state is the top of the page.
+    expect(html).toContain('data-state="transparent"')
+    expect(html).toContain('data-overlay="true"')
+    expect(html).toContain('href="/de/about"')
+    expect(html).toContain('hreflang="de"')
+    expect(html).toContain('aria-current="true"')
+    expect(html).not.toContain('<select')
+  })
+
   it('renders a composed page with the theme switch and the language layer', async () => {
     const Page = defineComponent({
       setup() {

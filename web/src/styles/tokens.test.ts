@@ -240,6 +240,24 @@ describe('the token contract', () => {
     expect([...base].filter((token) => !theme.has(token))).toEqual([])
   })
 
+  // The header backdrop is not a colour, so the colour check above never sees
+  // it. None is the default: a blur(0px) would still make the header the
+  // containing block of fixed descendants.
+  it.each(themeFiles())('%s fills the header backdrop base.css declares', (name) => {
+    const value = (file: string) =>
+      /--header-backdrop:\s*([^;]+);/.exec(readFileSync(file, 'utf8'))?.[1]
+    expect(value(resolve(stylesDir, 'base.css'))).toBe('none')
+    expect(value(resolve(themesDir, name))).toBe('none')
+  })
+
+  it('keeps a skipped-to or tabbed-to element out from under a fixed header', () => {
+    const css = readFileSync(resolve(stylesDir, 'base.css'), 'utf8')
+    expect(css).toMatch(/html\s*\{[^}]*scroll-padding-top:\s*7rem/)
+    expect(css).toMatch(
+      /@media \(min-width: 480px\)\s*\{\s*scroll-padding-top:\s*var\(--spacing-header\)/,
+    )
+  })
+
   // themeNames cannot discover the directory itself: it ships in the browser
   // bundle, where there is no filesystem. This case is what keeps the one list
   // a consumer reads in step with the files on disk. Its order is the order an

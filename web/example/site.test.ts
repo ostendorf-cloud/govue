@@ -46,11 +46,13 @@ describe('example site', () => {
   it('prerenders the start page and the three legal pages in both languages', () => {
     expect(built.map((f) => f.path).sort()).toEqual([
       'de/contact/index.html',
+      'de/hero/index.html',
       'de/imprint/index.html',
       'de/index.html',
       'de/privacy/index.html',
       'de/terms/index.html',
       'en/contact/index.html',
+      'en/hero/index.html',
       'en/imprint/index.html',
       'en/index.html',
       'en/privacy/index.html',
@@ -94,6 +96,40 @@ describe('example site', () => {
     expect(de).toContain('aria-label="Dem System folgen"')
     expect(de).toContain('aria-label="Heller Modus"')
     expect(de).toContain('aria-label="Dunkler Modus"')
+  })
+
+  it('shows the solid sticky header on the start page, with the nav at the end', () => {
+    const html = page('en/index.html')
+
+    expect(html).toContain('data-state="solid"')
+    expect(html).toContain('sticky')
+    expect(html).not.toContain('data-overlay')
+    expect(html).toContain('min-[480px]:justify-end')
+  })
+
+  it('shows the overlay header over the hero, transparent at the top', () => {
+    const html = page('en/hero/index.html')
+
+    expect(html).toContain('data-state="transparent"')
+    expect(html).toContain('data-overlay="true"')
+    expect(html).toContain('fixed')
+    // The hero is dark in both page modes, which the transparent header needs.
+    expect(html).toContain('[color-scheme:dark]')
+  })
+
+  it('marks the contact link as the call to action and the current page', () => {
+    const html = page('en/contact/index.html')
+
+    expect(html).toMatch(/<a href="\/en\/contact" aria-current="page" data-variant="cta"/)
+  })
+
+  it('offers every language as a real link to the same page, with hreflang', () => {
+    const html = page('en/hero/index.html')
+
+    expect(html).toContain('href="/de/hero"')
+    expect(html).toContain('hreflang="de"')
+    expect(html).toContain('href="/en/hero"')
+    expect(page('de/contact/index.html')).toContain('href="/en/contact"')
   })
 
   it('links the legal pages from every page in its language', () => {

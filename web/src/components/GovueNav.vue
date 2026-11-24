@@ -2,15 +2,40 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { ref, useId } from 'vue'
+import { inject, onBeforeUnmount, ref, useId, watch } from 'vue'
 
 import { useGovueText } from '../i18n/plugin'
+import { headerContextKey } from './headerContext'
 
 export interface NavItem {
   href: string
   label: string
   /** The page the visitor is on. At most one item carries it. */
   current?: boolean
+  /**
+   * `cta` renders the item as a solid button, the call to action of the
+   * row, in the nav row and in the open menu. It stays a link: it navigates.
+   * Mark one item at most, or nothing stands out.
+   */
+  variant?: 'cta'
+}
+
+/** The classes of one item. Whole names, so Tailwind finds them. */
+function itemClasses(item: NavItem): string[] {
+  if (item.variant === 'cta') {
+    return [
+      'inline-flex min-h-11 w-full items-center justify-center rounded-md px-4 text-base font-medium transition-colors sm:w-auto',
+      'bg-accent-strong text-accent-on hover:bg-accent-strong-hover',
+      // The page is also said by aria-current, not by the fill alone.
+      item.current ? 'underline decoration-2 underline-offset-4' : '',
+    ]
+  }
+  return [
+    'inline-flex min-h-11 w-full items-center rounded-md px-3 text-base transition-colors sm:w-auto',
+    item.current
+      ? 'bg-accent-subtle font-semibold text-accent-text underline decoration-2 underline-offset-4'
+      : 'text-text hover:bg-surface-hover',
+  ]
 }
 
 withDefaults(
@@ -29,6 +54,13 @@ const { t } = useGovueText()
 const listId = useId()
 const open = ref(false)
 const toggle = ref<HTMLButtonElement | null>(null)
+
+// Inside a GovueHeader the header learns whether the list is open, so an
+// overlay header can give the open menu a solid ground. Outside one this is
+// a no-op.
+const header = inject(headerContextKey, null)
+watch(open, (value) => header?.setMenuOpen(value))
+onBeforeUnmount(() => header?.setMenuOpen(false))
 
 /** close returns focus to the toggle, so Escape does not drop the visitor at
  *  the top of the page. */
@@ -78,12 +110,8 @@ function close(): void {
         <a
           :href="item.href"
           :aria-current="item.current ? 'page' : undefined"
-          :class="[
-            'inline-flex min-h-11 w-full items-center rounded-md px-3 text-base transition-colors sm:w-auto',
-            item.current
-              ? 'bg-accent-subtle font-semibold text-accent-text underline decoration-2 underline-offset-4'
-              : 'text-text hover:bg-surface-hover',
-          ]"
+          :data-variant="item.variant"
+          :class="itemClasses(item)"
           @click="close"
         >
           {{ item.label }}

@@ -92,6 +92,12 @@ export function renderTheme({ name, light, dark, ink }: RenderInput): string {
     '',
     lines.slice(4, 6).join('\n'),
     '',
+    // The header roles follow the surface and the border until the site says
+    // otherwise, which is the look of base.css.
+    '  --color-header-bg: var(--color-surface);',
+    '  --color-header-border: var(--color-border);',
+    '  --header-backdrop: none;',
+    '',
     lines.slice(6, 9).join('\n'),
     '',
     lines.slice(9, 16).join('\n'),

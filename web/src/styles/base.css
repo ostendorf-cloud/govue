@@ -115,6 +115,17 @@
   --color-border: light-dark(#d3bbce, #513d4e);
   --color-border-strong: light-dark(#82647d, #977892);
 
+  /* The header. Its ground, its bottom border and the backdrop behind it are
+     roles of their own, so a site restyles the header in its theme file and
+     never with a selector on govue's markup. The defaults are the look the
+     header always had: the surface and the decorative border. A ground with
+     alpha, such as color-mix(in srgb, var(--color-surface) 95%, transparent),
+     keeps text at 4.5:1 only from the alpha the concept doc names. The
+     backdrop token, --header-backdrop, is declared under :root below: it is
+     a whole backdrop-filter value and not a theme variable of Tailwind. */
+  --color-header-bg: var(--color-surface);
+  --color-header-border: var(--color-border);
+
   /* Text. */
   --color-text: light-dark(#3f223b, #e4c8df);
   --color-text-muted: light-dark(#664761, #bca9b9);
@@ -160,7 +171,22 @@
 }
 
 @layer base {
+  html {
+    /* A fixed or sticky header lies over the top of the window, so a skip link
+       or a Tab target scrolled into view would sit under it (WCAG 2.4.11).
+       The header is one row of --spacing-header from 480px up and two rows
+       below, about 7rem. */
+    scroll-padding-top: 7rem;
+    @media (min-width: 480px) {
+      scroll-padding-top: var(--spacing-header);
+    }
+  }
+
   :root {
+    /* The backdrop-filter of the solid header, a whole value such as
+       blur(12px). None is the default, so the header is not a containing block
+       for fixed descendants. */
+    --header-backdrop: none;
     /* Without data-mode the system setting decides, which is what makes
        light-dark() resolve. */
     color-scheme: light dark;

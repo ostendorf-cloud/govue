@@ -99,6 +99,75 @@ describe('GovueNav', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
   })
 
+  describe('call to action', () => {
+    const withCta = [
+      { href: '#projects', label: 'Projects' },
+      { href: '#contact', label: 'Contact me', variant: 'cta' as const },
+    ]
+
+    it('renders the item as a button from the role tokens, still a link', () => {
+      renderNav({ items: withCta })
+
+      const cta = screen.getByRole('link', { name: 'Contact me' })
+      expect(cta).toHaveAttribute('href', '#contact')
+      expect(cta).toHaveClass('bg-accent-strong', 'text-accent-on', 'hover:bg-accent-strong-hover')
+      expect(cta).toHaveAttribute('data-variant', 'cta')
+      // A plain item next to it is untouched.
+      const plain = screen.getByRole('link', { name: 'Projects' })
+      expect(plain).not.toHaveClass('bg-accent-strong')
+      expect(plain).not.toHaveAttribute('data-variant')
+    })
+
+    it('has a 44px target in the row and in the open menu', async () => {
+      renderNav({ items: withCta })
+
+      const cta = screen.getByRole('link', { name: 'Contact me' })
+      expect(cta).toHaveClass('min-h-11')
+      // The same element is the menu entry below sm: full width, same height.
+      expect(cta).toHaveClass('w-full', 'sm:w-auto')
+      await fireEvent.click(screen.getByRole('button', { name: 'Menu' }))
+      expect(screen.getByRole('list').className).not.toContain('hidden')
+      expect(screen.getByRole('link', { name: 'Contact me' })).toHaveClass('min-h-11')
+    })
+
+    it('names no colour and no focus ring of its own', () => {
+      renderNav({ items: withCta })
+
+      const className = screen.getByRole('link', { name: 'Contact me' }).className
+      expect(className).not.toMatch(/#[0-9a-f]{3,6}|rgb|outline|ring/i)
+    })
+
+    it('says the current page by aria-current and an underline, not by the fill', () => {
+      renderNav({ items: [{ href: '#c', label: 'Contact', variant: 'cta', current: true }] })
+
+      const cta = screen.getByRole('link', { name: 'Contact' })
+      expect(cta).toHaveAttribute('aria-current', 'page')
+      expect(cta).toHaveClass('underline')
+      expect(cta).toHaveClass('bg-accent-strong')
+    })
+
+    it('is reachable and closes the open menu when followed', async () => {
+      renderNav({ items: withCta })
+      const toggle = screen.getByRole('button', { name: 'Menu' })
+
+      await fireEvent.click(toggle)
+      const cta = screen.getByRole('link', { name: 'Contact me' })
+      cta.focus()
+      expect(cta).toHaveFocus()
+      await fireEvent.click(cta)
+
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    })
+
+    it('leaves the look of an item without a variant unchanged', () => {
+      renderNav()
+
+      expect(screen.getByRole('link', { name: 'Projects' }).className).toBe(
+        'inline-flex min-h-11 w-full items-center rounded-md px-3 text-base transition-colors sm:w-auto text-text hover:bg-surface-hover',
+      )
+    })
+  })
+
   it('takes its own label for the toggle', () => {
     renderNav({ toggleLabel: 'Sections' })
 
