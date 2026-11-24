@@ -161,7 +161,9 @@ The three name props override those names:
 ```
 
 For a phone, `cycle` is one 44px button with the icon of the current mode. A click, Enter or
-Space moves to the next mode: system, light, dark, then system again. Its accessible name says the
+Space moves to the next mode: system, light, dark, then system again. With a site default of dark
+and nothing stored, the button shows the moon and the first press goes to system, so on a dark
+operating system nothing visibly changes on that press. Its accessible name says the
 current mode and the next one ("Theme: Light mode. Next: Dark mode"), from the catalogue key
 `govue.theme.cycle`, with `label` and the three name props as overrides. `cycle` wins over
 `compact`:

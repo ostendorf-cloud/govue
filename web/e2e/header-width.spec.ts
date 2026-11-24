@@ -8,15 +8,17 @@
 //
 // GovueHeader puts the navigation on a row of its own below 480px, its
 // documented layout, and from 480px the header is one row of 56px with no
-// wrapping at all. So the spec asks, per width:
+// wrapping at all. Issue 257 asked for no second row at 360px. The owner
+// accepted two rows below 480px, the brand row and the navigation row, and
+// one row from 480px. So the spec asks, per width:
 //
-// - nothing sticks out of the viewport and the page does not scroll sideways;
-// - the brand, the theme button and the language link share one row;
-// - from 480px the visible navigation control (the menu button below 640px,
-//   the call to action from 640px) shares that row too, and the header is
-//   exactly one row high;
-// - below 480px the header is the brand row plus the navigation row, nothing
-//   more.
+// - Nothing sticks out of the viewport, and the page does not scroll sideways.
+// - The brand, the theme button and the language link share one row.
+// - From 480px the visible navigation control shares that row too. It is the
+//   menu button below 640px and the call to action from 640px. The header is
+//   exactly one row high.
+// - Below 480px the header is the brand row plus the navigation row, and
+//   nothing more.
 import { expect, test, type Page } from '@playwright/test'
 
 interface Box {

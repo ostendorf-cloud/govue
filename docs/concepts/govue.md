@@ -1915,7 +1915,9 @@ try {
   transition is dropped by the global reduced motion rule, and focus is the global ring.
 - The `cycle` prop makes the switch one native `<button type="button">` of 44 by 44 px with the
   icon of the current mode, the same icons as `compact`. A click, Enter or Space calls
-  `cycleMode` of `useTheme`: system, light, dark, then system again. It is no radio group, since
+  `cycleMode` of `useTheme`: system, light, dark, then system again. With a site default of dark
+  and nothing stored, the button shows the moon, and the first press goes to system. On a dark
+  operating system nothing visibly changes on that press. It is no radio group, since
   there is one control and one action. Its accessible name says the current mode and the next
   one, `govue.theme.cycle` with the placeholders `label`, `current` and `next` ("Theme: Light
   mode. Next: Dark mode"). The mode names are the compact ones, so the name props override them,
@@ -2038,6 +2040,8 @@ try {
   part from the accessibility tree, so a screen reader and the Tab key meet one theme control
   and one language control. `contents` keeps the visible part a flex item of the header row.
   The example site's header is this setup.
+- Issue 257 asked for no second row at 360 px. The owner accepted two rows below 480 px, the
+  brand row and the navigation row of `GovueHeader`, and one row from 480 px.
 - The Playwright spec `web/e2e/header-width.spec.ts` mounts the header with a brand, a
   navigation with a call to action, the cycle button and the other language link, and measures
   it at 360, 480 and 640 px. It fails when a part leaves the viewport, the page scrolls sideways,
