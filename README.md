@@ -20,7 +20,8 @@ Two halves, one repository, one version:
   Plain text mail goes out over SMTP submission with STARTTLS required and a message builder
   that refuses header injection (`mail`, see [Mail](docs/concepts/govue.md#mail)).
   A stateless contact form sends one plain text mail per submission, with no cookie and no
-  session (`contact`, see [Contact form](docs/concepts/govue.md#contact-form)).
+  session (`contact`, see [Contact form](docs/concepts/govue.md#contact-form)). The labels of
+  its default mail body follow the page language, English and German built in.
   Signed, single use proof of work challenges that slow bots down, with no cookie and nothing
   stored about a visitor (`pow`).
   Every package is importable on its own.

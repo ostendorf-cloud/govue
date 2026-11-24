@@ -3119,10 +3119,27 @@ try {
 - The consent field records a claim, never a proof. A modified client sends `true` without
   showing a box, and nothing on the server can tell. The owner wants the record for a clean
   trail of what the form sent, not as evidence against a tampering client. govue writes no
-  consent text and no legal wording into the mail: the default body is unchanged, and
+  consent text and no legal wording into the mail: the default body has no consent label, and
   `DefaultBody` is exported so a site's `Body` adds one line of its own wording from
   `Consent` and `Received`. The example does that with a placeholder line. The consent text the
   visitor sees is the site's as well, see the component.
+- Labels of the default body. The body writes `Name:`, `Email:` and, after a blank line,
+  `Message:` and the message. `Request.Language` is the page language as a hint: the optional
+  JSON key `language`, which `GovueContactForm` fills from govue's locale (the code its own texts
+  use) whenever the language layer is installed. `Normalize` keeps it only when it has the shape
+  of a tag (ASCII letters and hyphens, at most 8 bytes) and lower cases it, anything else becomes
+  empty, never an error. `LabelsFor` knows `en` and `de` (a region after a hyphen is ignored),
+  and any other value, an empty one included, gets the English labels. German reads `Name:`,
+  `E-Mail:` and `Nachricht:`. The three words need no formal or informal form. The language
+  itself never enters the mail. A site passes its own words through `Config.Labels`, a function
+  from the language to a `Labels` (`Name`, `Email`, `Message`, the colon is added by
+  `Labels.Body`), or writes its own `Body`, which wins over `Labels`. Labels are fixed strings of
+  the site or of the package: the name and the address cannot hold a line break (see below), and
+  the message sits after its own label and a blank line, so no visitor value can start a label
+  line of its own. Unknown keys other than `language` are still refused. A `contact` handler
+  older than this release refuses `language` with 400 `invalid_argument`, so the Vue package and
+  the Go module of one release go together. The English body gained the `Message:` label with
+  this change: before it, the message followed a blank line with no label.
 - Header injection: a CR, LF or other control character in the name or the address is a
   validation error with `invalid_chars`, never repaired. The address is checked by the mail
   builder itself, so a value that passes cannot be refused at send time. Whatever a site puts in
