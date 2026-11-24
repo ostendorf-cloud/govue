@@ -22,6 +22,12 @@
 // into the mail: a site's Body adds its own line from Request.Consent and
 // Request.Received if it wants a record.
 //
+// The labels of the default mail body (Name, Email, Message) follow the
+// optional Request.Language, the page language the client sends as a hint:
+// English and German are built in, see [LabelsFor], and Config.Labels
+// replaces them. An unknown or malformed language gives English, never an
+// error, and the value never enters the mail.
+//
 // The limits and the replay set are per process. With several replicas the
 // budgets multiply. This package imports no session package.
 //
@@ -82,6 +88,14 @@ type Request struct {
 	// with Received. GovueContactForm sends it when it shows the box.
 	Consent bool `json:"consent"`
 
+	// Language is the language of the page the visitor wrote on, a hint that
+	// picks the labels of [DefaultBody]. It is optional: a missing key is the
+	// empty string, and [Normalize] turns a value that is not a language tag
+	// shape (ASCII letters and hyphens, at most [MaxLanguageLen] bytes) into
+	// the empty string, never into an error. An unknown or empty language
+	// selects the English labels. The value is never written into the mail.
+	Language string `json:"language"`
+
 	// Received is the server's clock (Config.Now) when Submit decoded the
 	// request, without a monotonic reading. It never comes from the client:
 	// a body that carries it is refused as an unknown field. It is the zero
@@ -90,10 +104,12 @@ type Request struct {
 }
 
 // Normalize trims white space around every text field and turns CRLF and CR
-// in the message into LF. It changes nothing else: a control character stays
-// and is refused by [Validate], never repaired, and Consent and Received are
-// kept as they are.
+// in the message into LF. A Language that is not a language tag shape becomes
+// empty and otherwise is lower cased. It changes nothing else: a control
+// character stays and is refused by [Validate], never repaired, and Consent
+// and Received are kept as they are.
 func Normalize(r Request) Request {
+	r.Language = cleanLanguage(r.Language)
 	msg := strings.ReplaceAll(r.Message, "\r\n", "\n")
 	msg = strings.ReplaceAll(msg, "\r", "\n")
 	r.Name = strings.TrimSpace(r.Name)

@@ -36,7 +36,7 @@ func TestDefaultBodyHasNoConsentLine(t *testing.T) {
 	r := valid()
 	r.Consent = true
 	r.Received = time.Date(2026, 11, 23, 9, 30, 0, 0, time.UTC)
-	want := "Name: Ada Lovelace\nEmail: ada@example.org\n\nHello there.\n"
+	want := "Name: Ada Lovelace\nEmail: ada@example.org\n\nMessage:\nHello there.\n"
 	if got := DefaultBody(r); got != want {
 		t.Fatalf("DefaultBody = %q, want %q", got, want)
 	}

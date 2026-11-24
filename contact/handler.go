@@ -147,6 +147,15 @@ type Config struct {
 	Subject func(Request) string
 	Body    func(Request) string
 
+	// Labels picks the labels of the default body from Request.Language. Nil
+	// means [LabelsFor]: English and German, English for any other language.
+	// A site passes its own function for other words or another language,
+	// for example one that answers "fr" with French labels and defers to
+	// [LabelsFor] for the rest. It is used only when Body is nil: a site's own
+	// Body writes its own text. The language is a hint of the client and may
+	// be empty. A panic of Labels is recovered like one of Body.
+	Labels func(language string) Labels
+
 	// RequireConsent refuses a submission whose consent box is missing or
 	// false, with the field error {"consent": "required"} next to the other
 	// field errors and before the proof of work, so the solution is not
@@ -230,7 +239,11 @@ func New(cfg Config) (*Handler, error) {
 		h.subject = func(Request) string { return "New message from the contact form" }
 	}
 	if h.body == nil {
-		h.body = DefaultBody
+		labels := cfg.Labels
+		if labels == nil {
+			labels = LabelsFor
+		}
+		h.body = func(r Request) string { return labels(r.Language).Body(r) }
 	}
 	if h.maxBody <= 0 {
 		h.maxBody = DefaultMaxBodyBytes
@@ -499,10 +512,13 @@ func coded(e *api.Error, code string) *api.Error {
 }
 
 // DefaultBody is the plain text body when Config.Body is nil: the name, the
-// address and the message. It writes nothing about consent. A site's own Body
-// can start from it and add lines.
+// address and the message, each with a label in the language of
+// Request.Language, taken from [LabelsFor] or [Config.Labels]. An unknown or
+// empty language gets English labels. It
+// writes nothing about consent. A site's own Body can start from it and add
+// lines, or use [Labels.Body] with labels of its own.
 func DefaultBody(r Request) string {
-	return "Name: " + r.Name + "\nEmail: " + r.Email + "\n\n" + r.Message + "\n"
+	return LabelsFor(r.Language).Body(r)
 }
 
 // decodeFailure keeps the size and media type answers of the api package and

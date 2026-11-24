@@ -68,16 +68,18 @@ test('solves the challenge in a worker, sends it and shows success', async ({ pa
   })
   await expect(page.getByRole('status')).toBeFocused()
   expect(seen.bodies).toHaveLength(1)
-  // The state of the box goes along, and the example server requires it.
+  // The state of the box and the page language go along. The example server requires the box.
   expect(Object.keys(seen.bodies[0]).sort()).toEqual([
     'consent',
     'email',
+    'language',
     'message',
     'name',
     'pow',
     'website',
   ])
   expect(seen.bodies[0].consent).toBe(true)
+  expect(seen.bodies[0].language).toBe('en')
   expect(seen.foreign).toEqual([])
   expect(await page.evaluate(() => document.cookie)).toBe('')
 })

@@ -143,6 +143,8 @@ repeated here.
   `Request.Received` the server time at decode, which a body cannot set. `RequireConsent` refuses
   a missing or false box as the field error `consent: required`, off by default. govue writes no
   consent text into the mail: a site's `Body` adds a line, starting from `DefaultBody`.
+  `DefaultBody` labels its lines from `Request.Language`, a hint the form sends from the page
+  locale: `LabelsFor` has `en` and `de`, anything else is English, `Config.Labels` overrides.
   Missing keys or a missing sender answer 503 `not_configured` and the process still starts. A
   log line holds codes, and for a send failure the allowed stage and code of a `mail.Error` or
   the Go type name of another error, never a name, an address or message text. A panic of a
