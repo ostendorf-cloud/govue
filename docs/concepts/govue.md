@@ -2288,8 +2288,9 @@ try {
   prerendered markup is for the first paint and for crawlers, and the client takes over from it.
 - The script ships as plain JavaScript, `govue-prerender`, because Node does not strip
   TypeScript types under `node_modules`. It holds its own small copy of `injectIntoTemplate`,
-  and a test runs the same cases through both copies. The package requires Node 24 or later,
-  the lowest the repository's `@tsconfig/node24` targets. Only Node 26 is exercised.
+  and a test runs the same cases through both copies. The package requires Node 24 or later
+  (`engines`). Only Node 26 is exercised, and the repository's own tooling config extends
+  `@tsconfig/node26`.
 - With `--out` equal to `--template`, the marker is consumed, so a second run fails with no
   placeholder. Run it after a fresh `vite build`.
 - What this does not solve: data that changes per request, personalised content, client side
