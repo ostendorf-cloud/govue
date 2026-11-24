@@ -17,6 +17,10 @@ import GovueInput from './GovueInput.vue'
 import GovueTextarea from './GovueTextarea.vue'
 import { headingTag, type HeadingLevel } from './headingLevel'
 
+// With the language layer installed the form always sends `language`, the page
+// language, which picks the labels of the Go default body. A Go `contact`
+// handler older than this release refuses the key with 400 `invalid_argument`,
+// so the Go module and this package must be raised together.
 const props = withDefaults(
   defineProps<{
     /**
@@ -43,9 +47,7 @@ const props = withDefaults(
      * both together. Without this prop the request carries no `consent`.
      * A Go `contact` handler older than this release refuses the key with 400
      * `invalid_argument`, so this prop needs the Go handler of the same
-     * release: the Go module and this package share one version. The same
-     * holds for `language`, the page language the form always sends with the
-     * language layer installed: it picks the labels of the Go default body.
+     * release: the Go module and this package share one version.
      */
     requireConsent?: boolean
     /** The consent text, plain. The `consent` slot wins when both are set. */

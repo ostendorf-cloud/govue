@@ -513,7 +513,8 @@ func coded(e *api.Error, code string) *api.Error {
 
 // DefaultBody is the plain text body when Config.Body is nil: the name, the
 // address and the message, each with a label in the language of
-// Request.Language (see [LabelsFor]; English for an unknown or empty one). It
+// Request.Language, taken from [LabelsFor] or [Config.Labels]. An unknown or
+// empty language gets English labels. It
 // writes nothing about consent. A site's own Body can start from it and add
 // lines, or use [Labels.Body] with labels of its own.
 func DefaultBody(r Request) string {

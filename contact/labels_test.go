@@ -189,6 +189,25 @@ func TestConfigLabels(t *testing.T) {
 	}
 }
 
+func TestLabelsBodyFallsBackForEmptyOrMultiLineLabel(t *testing.T) {
+	t.Parallel()
+	r := valid()
+	for _, tc := range []struct {
+		name string
+		in   Labels
+		want string
+	}{
+		{"all empty", Labels{}, "Name: Ada Lovelace\nEmail: ada@example.org\n\nMessage:\nHello there.\n"},
+		{"empty email", Labels{Name: "Nom", Message: "Texte"}, "Nom: Ada Lovelace\nEmail: ada@example.org\n\nTexte:\nHello there.\n"},
+		{"LF in name", Labels{Name: "Nom\nX: y", Email: "Courriel", Message: "Texte"}, "Name: Ada Lovelace\nCourriel: ada@example.org\n\nTexte:\nHello there.\n"},
+		{"CR in message", Labels{Name: "Nom", Email: "Courriel", Message: "Texte\r"}, "Nom: Ada Lovelace\nCourriel: ada@example.org\n\nMessage:\nHello there.\n"},
+	} {
+		if got := tc.in.Body(r); got != tc.want {
+			t.Errorf("%s: Body = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestSiteBodyWinsOverLabels(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, func(c *Config) {

@@ -10,8 +10,9 @@ const MaxLanguageLen = 8
 
 // Labels are the words in front of the values in the plain text mail body.
 // They are fixed text of the site or of this package, never visitor input,
-// and the colon is added by [Labels.Body]. A label holds no line break: a
-// site that sets one writes a single line.
+// and the colon is added by [Labels.Body]. A label must not contain a line
+// break. [Labels.Body] uses the built in English label for a field that is
+// empty or holds a CR or LF.
 type Labels struct {
 	Name    string
 	Email   string
@@ -43,9 +44,18 @@ func LabelsFor(lang string) Labels {
 // refuses a line break in the name and the address, and the message follows
 // its own label and a blank line, so it cannot become a label of the body.
 func (l Labels) Body(r Request) string {
-	return l.Name + ": " + r.Name + "\n" +
-		l.Email + ": " + r.Email + "\n\n" +
-		l.Message + ":\n" + r.Message + "\n"
+	return safeLabel(l.Name, labelsEN.Name) + ": " + r.Name + "\n" +
+		safeLabel(l.Email, labelsEN.Email) + ": " + r.Email + "\n\n" +
+		safeLabel(l.Message, labelsEN.Message) + ":\n" + r.Message + "\n"
+}
+
+// safeLabel returns the label, or the built in English fallback when the
+// label is empty or holds a CR or LF.
+func safeLabel(label, fallback string) string {
+	if label == "" || strings.ContainsAny(label, "\r\n") {
+		return fallback
+	}
+	return label
 }
 
 // cleanLanguage keeps a language hint that has the shape of a language tag:

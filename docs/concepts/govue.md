@@ -3133,7 +3133,9 @@ try {
   `E-Mail:` and `Nachricht:`. The three words need no formal or informal form. The language
   itself never enters the mail. A site passes its own words through `Config.Labels`, a function
   from the language to a `Labels` (`Name`, `Email`, `Message`, the colon is added by
-  `Labels.Body`), or writes its own `Body`, which wins over `Labels`. Labels are fixed strings of
+  `Labels.Body`), or writes its own `Body`, which wins over `Labels`. A label that is empty or
+  holds a CR or LF is replaced by the built in English label of that field. Labels are fixed
+  strings of
   the site or of the package: the name and the address cannot hold a line break (see below), and
   the message sits after its own label and a blank line, so no visitor value can start a label
   line of its own. Unknown keys other than `language` are still refused. A `contact` handler
