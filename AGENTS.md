@@ -84,7 +84,9 @@ repeated here.
   legal page per language, `Run` serves it with the admin listener. Every path that answers 200
   is a key of that table. A non canonical path (encoded slash, backslash, dot, percent or NUL,
   `//`, a dot segment or dotfile) answers 404 before routing. Pages carry the theme boot script
-  through `themeboot.InjectStatic`, and `script-src` carries `themeboot.Hash`. It has no
+  through `themeboot.InjectStatic`, and `script-src` carries `themeboot.Hash`, both with
+  `Config.ThemeBoot`. `themeboot.WithDefaultMode` must equal the `mode` of `useTheme`, and
+  `themeboot/testdata/boot-<mode>.js` is shared with the Vitest test. It has no
   session, no cookie and no API route. `Config.Redirects` answers exact old paths with a 301 to
   a page of the sitemap, and refuses a source that is already a route or fails the path rules.
   `Config.ThemeColorDark` writes one `theme-color` tag per mode through

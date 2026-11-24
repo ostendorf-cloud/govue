@@ -206,6 +206,16 @@ root element, otherwise `sample`, and leaves `data-mode` off so the system decid
 the attribute names are exported on both sides, `themeboot.StorageKey` and `THEME_STORAGE_KEY`,
 and a test runs the shipped script against the composable.
 
+A site that is dark or light by default and prerenders `data-mode="dark"` or `"light"` sets the
+same mode on both sides: `useTheme({ mode: 'dark' })` and
+`themeboot.WithDefaultMode(themeboot.ModeDark)`. The modes are `ModeLight`, `ModeDark` and
+`ModeSystem`, named like `ColorMode`, and anything else panics at startup. The default is
+`ModeSystem`, which is the script and the hash of before. On a first visit, with nothing stored,
+the script then sets that mode, keeps a matching prerendered `data-mode` and does not read the
+system preference. A stored mode wins, a stored system choice included. If the two sides
+differ, the page flashes when the bundle starts. The script text changes with the mode, so
+`themeboot.Hash` takes the same options.
+
 A landing page that needs real markup for crawlers and a fast first paint can be pre-rendered once
 at build time, with no Node process at runtime. The Go server serves the result like any other
 static file. Write a small SSR entry that renders the page through `@ostendorf-cloud/govue/server`:
