@@ -1913,9 +1913,21 @@ try {
   where the text layout needs about 200 to 220px (an estimate), and a header on a 360px phone
   has about 328px for the brand and every action. The default layout is unchanged. The
   transition is dropped by the global reduced motion rule, and focus is the global ring.
-- The header recipe for a phone: `<GovueHeader>` with `<GovueThemeSwitch compact />` in its
-  `#theme` slot. The slot is the supported way and needs no header prop. A compatible
-  `themeSwitch?: boolean | 'compact'` stays possible later.
+- The `cycle` prop makes the switch one native `<button type="button">` of 44 by 44 px with the
+  icon of the current mode, the same icons as `compact`. A click, Enter or Space calls
+  `cycleMode` of `useTheme`: system, light, dark, then system again. It is no radio group, since
+  there is one control and one action. Its accessible name says the current mode and the next
+  one, `govue.theme.cycle` with the placeholders `label`, `current` and `next` ("Theme: Light
+  mode. Next: Dark mode"). The mode names are the compact ones, so the name props override them,
+  and `nextMode` in `useTheme.ts` is the one order that the name and the step both read. The name
+  changes with each press. Focus stays on the button, the ring is the global one and the
+  transition is dropped by the global reduced motion rule. `cycle` wins over `compact`.
+- `cycle` is a boolean next to `compact` and not a `variant` prop. `compact` is released API, a
+  `variant` would have made it a second spelling of the same choice or a deprecation, and a
+  boolean keeps both variants additive. Both set is a cycle button.
+- The header recipe for a phone: `<GovueHeader>` with `<GovueThemeSwitch cycle />` in its
+  `#theme` slot, and the compact switch from 1024 px, see "The header and the navigation". The
+  slot is the supported way and needs no header prop.
 - A choice kept in `localStorage` is only readable once script runs, so a page that waits for
   the bundle flashes the wrong theme. The Go package `themeboot` injects a small inline script
   into the head that sets `data-theme` and `data-mode` before the first paint.
@@ -2002,6 +2014,37 @@ try {
   `navPlacement` acts from 480px up. `start` keeps the navigation next to the brand, `end` puts
   it next to the actions, `center` in the middle of the space between. Below 480px the
   navigation is its own row, and the markup order never changes.
+- A narrow header keeps its row with two parts: `<GovueThemeSwitch cycle />` (44 px) and
+  `<GovueLanguageSwitch :link-for="linkFor" others-only />` (one link with two languages). The
+  three compact radios take about 142 px and both language names about 170 px, which wraps the
+  row on a phone and below 1024 px with a navigation in the row. A site shows the narrow parts
+  below 1024 px and the wide ones from there, with Tailwind classes on a wrapper:
+
+  ```vue
+  <template #theme>
+    <span class="contents lg:hidden"><GovueThemeSwitch cycle /></span>
+    <span class="hidden lg:contents"><GovueThemeSwitch compact /></span>
+  </template>
+  <template #actions>
+    <span class="contents lg:hidden">
+      <GovueLanguageSwitch :link-for="linkFor" others-only />
+    </span>
+    <span class="hidden lg:contents"><GovueLanguageSwitch :link-for="linkFor" /></span>
+  </template>
+  ```
+
+  Both are in the markup, and the stylesheet decides, so the layout needs no script and the
+  prerender has one height per breakpoint. `hidden` is `display: none`, which also removes the
+  part from the accessibility tree, so a screen reader and the Tab key meet one theme control
+  and one language control. `contents` keeps the visible part a flex item of the header row.
+  The example site's header is this setup.
+- The Playwright spec `web/e2e/header-width.spec.ts` mounts the header with a brand, a
+  navigation with a call to action, the cycle button and the other language link, and measures
+  it at 360, 480 and 640 px. It fails when a part leaves the viewport, the page scrolls sideways,
+  the brand, the theme button and the language link leave one row, or, from 480 px, the menu
+  button or the call to action leaves it or the header grows past one row. Below 480 px the
+  navigation keeps its own row, the documented layout: a menu button does not fit next to a
+  brand and the two actions in 328 px. jsdom has no layout, so the spec runs in Chromium.
 - `overlay` takes the header out of the flow (`position: fixed`), so the page content starts
   under it and nothing shifts when it turns solid: the row has the same height and border width
   in both states. It is transparent, without border and blur, until the page has scrolled past a
@@ -2079,6 +2122,11 @@ try {
   `aria-current="true"`. A crawler and a visitor without script can follow the links, and a
   screen reader announces links, not radios. Targets are 44 px, the styling is role tokens only.
   Without `linkFor` the select is rendered and nothing changes.
+- `othersOnly` in link mode leaves the current language out: with two languages the switch is
+  one link to the other one, for a narrow header. The link keeps `href` from `linkFor`,
+  `hreflang`, `lang` and `navigate`, inside the same named group, and no link carries
+  `aria-current`. A link is keyed by its position, so when the router takes the click the
+  element is reused for the language left behind and keeps focus. The select ignores it.
 - A plain click in link mode sets the locale, stores the choice and emits `change`, as the
   select does. Whether the page reloads is the router's decision. A site hands the path to its
   router with the `navigate` prop, `(href, code) => boolean`, and returns true, for example

@@ -24,7 +24,9 @@ repeated here.
   `GovueCheckbox`, `GovueSwitch`, `GovueTextarea`, `GovueButton`) with `useForm`, and the layout
   components (`GovuePage`, `GovueHeader`, `GovueFooter`, `GovueNav`, `GovueSkipLink`,
   `GovueCard`, `GovueBadge`, `GovueSkeleton`), `GovueThemeSwitch` (with a `compact` icon
-  variant of about 142px, named by mode, same radio group), and the account forms
+  variant of about 142px, named by mode, same radio group, and a `cycle` button of 44px that
+  steps through `useTheme`'s `cycleMode`, named by the current and the next mode; the markup of
+  the default and the compact variant is pinned by a test), and the account forms
   (`GovueLoginForm`, `GovueSignupForm`, `GovueTotpEnrolment`), `GovueContactForm` with its proof
   of work solver (`lib/pow.ts`, `lib/pow.worker.ts`), which take a `client` from
   `createClient`, and `GovuePasskeyButton` with the `usePasskey` composable and `isBearerClient`,
@@ -49,7 +51,10 @@ repeated here.
   (default), `center` or `end`. An open `GovueNav` menu keeps it solid. `NavItem.variant: 'cta'`
   is the call to action. The contrast test covers the header ground and a translucent one: keep
   the alpha at 0.95 or more. `GovueLanguageSwitch` renders links with `linkFor` and hands a
-  click to the router through `navigate`. "The header and the navigation" is the spec.
+  click to the router through `navigate`, and `othersOnly` leaves the current language out.
+  `web/e2e/header-width.spec.ts` measures the narrow header at 360, 480 and 640px in Chromium,
+  on its own harness page with the real Tailwind classes. "The header and the navigation" is
+  the spec.
 - `web/src/i18n/` holds the language layer: the `createGovueI18n` plugin, the German and
   English catalogues and `catalogues.ts`, the one list of languages. `GovueLanguageSwitch`
   lives in `web/src/components/` with the other components.
@@ -66,8 +71,9 @@ repeated here.
   either and on "du" in the formal one.
 - `web/example/` is the example site: the placeholder legal pages, the contact page, and the
   start and hero pages that show the solid and the overlay header. Its shared header has the
-  compact theme switch in the theme slot, the nav at the end with a call to action, and the
-  language links. It is prerendered and checked by its own tests, the consumer build test of
+  cycle theme button and the other language link below 1024px, the compact theme switch and
+  every language link from there, and the nav at the end with a call to action. It is
+  prerendered and checked by its own tests, the consumer build test of
   the worker bundle and the fake of the contact handlers that the component tests use, which
   knows `consent` and `requireConsent`. It is not shipped. The Go example requires the consent
   box like its contact page shows it, and its mail body adds a placeholder consent line with

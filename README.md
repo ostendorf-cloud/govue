@@ -160,6 +160,16 @@ The three name props override those names:
 <GovueThemeSwitch compact />
 ```
 
+For a phone, `cycle` is one 44px button with the icon of the current mode. A click, Enter or
+Space moves to the next mode: system, light, dark, then system again. Its accessible name says the
+current mode and the next one ("Theme: Light mode. Next: Dark mode"), from the catalogue key
+`govue.theme.cycle`, with `label` and the three name props as overrides. `cycle` wins over
+`compact`:
+
+```vue
+<GovueThemeSwitch cycle />
+```
+
 The switch uses the shared `useTheme` state, and the first `useTheme` call decides its defaults
 and storage key. An app with its own default theme or `storageKey` calls `useTheme({ ... })` in
 its setup before any switch renders.
@@ -173,12 +183,24 @@ header replaces the switch with the site's own control, and a header without eit
 </GovueHeader>
 ```
 
-On a phone, put the compact switch in the `theme` slot. No header prop is needed:
+A narrow header keeps one row with the cycle button and only the link to the other language
+(`others-only`, see Language). Show them below 1024px and the wide parts from there. `hidden` is
+`display: none`, so the hidden part is out of the accessibility tree too, and a screen reader
+meets one control of each. No header prop and no script is needed:
 
 ```vue
 <GovueHeader>
   <template #brand>My app</template>
-  <template #theme><GovueThemeSwitch compact /></template>
+  <template #theme>
+    <span class="contents lg:hidden"><GovueThemeSwitch cycle /></span>
+    <span class="hidden lg:contents"><GovueThemeSwitch compact /></span>
+  </template>
+  <template #actions>
+    <span class="contents lg:hidden">
+      <GovueLanguageSwitch :link-for="linkFor" others-only />
+    </span>
+    <span class="hidden lg:contents"><GovueLanguageSwitch :link-for="linkFor" /></span>
+  </template>
 </GovueHeader>
 ```
 
@@ -514,6 +536,18 @@ Changing it keeps the visitor on the page and keeps focus on the select. It emit
 
 ```vue
 <GovueLanguageSwitch />
+```
+
+With `linkFor`, each language is a real link to the same page in that language, with `hreflang`
+and `lang`, and `navigate` hands a plain click to the router. `othersOnly` leaves the current
+language out, so with two languages the switch is one link to the other one:
+
+```vue
+<GovueLanguageSwitch
+  :link-for="(code) => localizedPath(route.path, code)"
+  :navigate="(href) => (router.push(href), true)"
+  others-only
+/>
 ```
 
 Without the plugin, components stay English, as before, and `GovueLanguageSwitch` throws a
