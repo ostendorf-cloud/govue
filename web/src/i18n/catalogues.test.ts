@@ -71,6 +71,21 @@ describe('catalogues', () => {
     }
   })
 
+  it('names the cycle theme button with the label, the current and the next mode', () => {
+    const trees: Array<[string, MessageTree]> = [
+      ...localeCodes.map((code): [string, MessageTree] => [code, catalogues[code].messages]),
+      ...Object.entries(formalCatalogues).map(([code, tree]): [string, MessageTree] => [
+        `${code} formal`,
+        tree,
+      ]),
+    ]
+    for (const [name, tree] of trees) {
+      const text = leaves(tree).get('govue.theme.cycle')
+      expect(text, name).toBeDefined()
+      expect(placeholders(text ?? ''), name).toEqual(['current', 'label', 'next'])
+    }
+  })
+
   it('names every language in its own language', () => {
     expect(catalogues.de.name).toBe('Deutsch')
     expect(catalogues.en.name).toBe('English')

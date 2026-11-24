@@ -2,10 +2,11 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
-import { useTheme, type ColorMode } from '../composables/useTheme'
+import { nextMode, useTheme, type ColorMode } from '../composables/useTheme'
 import { useGovueText } from '../i18n/plugin'
+import ThemeModeIcon from './ThemeModeIcon.vue'
 
 // A radio group of three buttons: system, light and dark. Each option is a
 // native button with role radio, so the focus ring is the global one on the
@@ -26,19 +27,32 @@ import { useGovueText } from '../i18n/plugin'
 // 360px phone header. The icons use currentColor, so the role tokens colour
 // them, and the transition is dropped by the global reduced motion rule.
 //
+// With cycle set, the switch is one native button of 44 by 44px with the icon
+// of the current mode. A click, Enter or Space moves to the next mode through
+// useTheme's own cycleMode: system, light, dark, then system again. It is no
+// radio group: there is one control and one action. Its accessible name says
+// the current mode and the next one, built from the same names as the compact
+// radios, so a visitor knows what a press does before pressing. cycle wins
+// over compact when both are set.
+//
 // It shares the state of useTheme, and the first useTheme call decides the
 // default theme and the storage key. An app that sets either calls
 // useTheme({ ... }) in its setup before this component renders.
 const props = withDefaults(
   defineProps<{
-    /** The accessible name of the group. */
+    /** The accessible name of the group, and the first part of the cycle button's name. */
     label?: string
-    /** The name of an option: its text, or in the compact variant its accessible name. */
+    /** The name of an option: its text, or in the compact and cycle variants its accessible name. */
     systemLabel?: string
     lightLabel?: string
     darkLabel?: string
     /** One icon per mode instead of a text button. Off by default. */
     compact?: boolean
+    /**
+     * One button that steps to the next mode, with the icon of the current
+     * one. Wins over compact. Off by default.
+     */
+    cycle?: boolean
   }>(),
   {
     label: undefined,
@@ -46,10 +60,11 @@ const props = withDefaults(
     lightLabel: undefined,
     darkLabel: undefined,
     compact: false,
+    cycle: false,
   },
 )
 
-const { mode, setMode } = useTheme()
+const { mode, setMode, cycleMode } = useTheme()
 const { t } = useGovueText()
 
 const options = (): Array<{ value: ColorMode; text: string }> =>
@@ -64,6 +79,26 @@ const options = (): Array<{ value: ColorMode; text: string }> =>
         { value: 'light', text: props.lightLabel ?? t('govue.theme.light') },
         { value: 'dark', text: props.darkLabel ?? t('govue.theme.dark') },
       ]
+
+/** The name of a mode in the icon variants, a prop or the catalogue. */
+function modeName(value: ColorMode): string {
+  switch (value) {
+    case 'light':
+      return props.lightLabel ?? t('govue.theme.compact.light')
+    case 'dark':
+      return props.darkLabel ?? t('govue.theme.compact.dark')
+    default:
+      return props.systemLabel ?? t('govue.theme.compact.system')
+  }
+}
+
+const cycleName = computed(() =>
+  t('govue.theme.cycle', {
+    label: props.label ?? t('govue.theme.label'),
+    current: modeName(mode.value),
+    next: modeName(nextMode(mode.value)),
+  }),
+)
 
 const buttons = ref<HTMLButtonElement[]>([])
 
@@ -98,7 +133,18 @@ function onKeydown(event: KeyboardEvent, index: number): void {
 </script>
 
 <template>
+  <button
+    v-if="cycle"
+    type="button"
+    :aria-label="cycleName"
+    :data-mode="mode"
+    class="inline-flex size-11 shrink-0 items-center justify-center rounded-md border border-border-strong bg-surface text-text transition-colors hover:bg-surface-hover active:bg-bg-subtle"
+    @click="cycleMode()"
+  >
+    <ThemeModeIcon :mode="mode" />
+  </button>
   <div
+    v-else
     role="radiogroup"
     :aria-label="label ?? t('govue.theme.label')"
     class="inline-flex gap-1 rounded-md border border-border-strong bg-surface"
@@ -125,57 +171,7 @@ function onKeydown(event: KeyboardEvent, index: number): void {
       @keydown="onKeydown($event, index)"
     >
       <template v-if="!compact">{{ option.text }}</template>
-      <svg
-        v-else-if="option.value === 'system'"
-        class="size-5 shrink-0"
-        viewBox="0 0 24 24"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <rect
-          x="3"
-          y="4"
-          width="18"
-          height="12"
-          rx="2"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.7"
-        />
-        <path
-          d="M8 20h8M12 16v4"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.7"
-          stroke-linecap="round"
-        />
-      </svg>
-      <svg
-        v-else-if="option.value === 'dark'"
-        class="size-5 shrink-0"
-        viewBox="0 0 24 24"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <path
-          d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.7"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
-      </svg>
-      <svg v-else class="size-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.7" />
-        <path
-          d="M12 2.5v2.5M12 19v2.5M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2.5 12H5M19 12h2.5M4.2 19.8 6 18M18 6l1.8-1.8"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.7"
-          stroke-linecap="round"
-        />
-      </svg>
+      <ThemeModeIcon v-else :mode="option.value" />
     </button>
   </div>
 </template>

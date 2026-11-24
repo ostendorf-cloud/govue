@@ -50,6 +50,7 @@ const de: MessageTree = {
         light: 'Heller Modus',
         dark: 'Dunkler Modus',
       },
+      cycle: '{label}: {current}. Als Nächstes: {next}',
     },
     language: {
       label: 'Sprache',
