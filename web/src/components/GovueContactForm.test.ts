@@ -319,6 +319,7 @@ describe('GovueContactForm sending', () => {
     expect(Object.keys(post.body as object).sort()).toEqual([
       'consent',
       'email',
+      'language',
       'message',
       'name',
       'pow',
@@ -329,6 +330,7 @@ describe('GovueContactForm sending', () => {
       email: 'alice@example.com',
       message: 'Hello there',
       consent: true,
+      language: 'en',
       website: '',
       pow: { algorithm: 'SHA-256', number: expect.any(Number) as number },
     })
@@ -340,6 +342,51 @@ describe('GovueContactForm sending', () => {
       'signature',
     ])
     expect(screen.getByRole('status')).toHaveTextContent('Thank you. Your message was sent.')
+  })
+
+  it('sends the page language, the one the form texts use', async () => {
+    const { user, server } = setup({}, { locale: 'de' })
+    await user.type(screen.getByLabelText(/^Name/), 'Alice')
+    await user.type(screen.getByLabelText(/^E-Mail-Adresse/), 'alice@example.com')
+    await user.type(screen.getByLabelText(/^Nachricht/), 'Hallo')
+
+    await user.click(screen.getByRole('button', { name: 'Nachricht senden' }))
+    await settle(() => server.submits.length > 0)
+
+    expect(server.submits).toHaveLength(1)
+    expect(server.submits[0].body).toMatchObject({ language: 'de' })
+  })
+
+  it('sends no language key without the language layer', async () => {
+    const server = new FakeContactServer()
+    vi.spyOn(globalThis, 'fetch').mockImplementation(server.fetch)
+    render(GovueContactForm, { props: { client: createClient() } })
+    const user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) })
+    await fill(user)
+
+    await user.click(send())
+    await settle(() => thanks() !== null)
+
+    expect(server.submits).toHaveLength(1)
+    expect(Object.keys(server.submits[0].body as object)).not.toContain('language')
+  })
+
+  it('has a fake that takes any language string and refuses other unknown keys', async () => {
+    const server = new FakeContactServer()
+    const answer = await server.fetch('/api/v1/contact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language: 'de\r\nX-Evil: 1'.repeat(2000), website: 'bot' }),
+    })
+    // The honeypot answer proves the fake decoded the body: the server side
+    // cleans the hint and never errors on it.
+    expect(answer.status).toBe(200)
+    const unknown = await server.fetch('/api/v1/contact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ languages: 'de' }),
+    })
+    expect(unknown.status).toBe(400)
   })
 
   it('sends no consent key when the form shows no box', async () => {

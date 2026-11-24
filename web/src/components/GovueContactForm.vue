@@ -2,12 +2,12 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { computed, nextTick, onBeforeUnmount, ref, useId, warn, watchEffect } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, ref, useId, warn, watchEffect } from 'vue'
 
 import type { ApiClient } from '../api/client'
 import { useForm, type FieldErrors } from '../composables/useForm'
 import { isBearerClient } from '../composables/usePasskey'
-import { useGovueText } from '../i18n/plugin'
+import { languageKey, useGovueText } from '../i18n/plugin'
 import { createChallengeSolver } from '../lib/pow'
 import { CONTACT_LIMITS, codePoints, localizeContactError } from './contactForm'
 import GovueButton from './GovueButton.vue'
@@ -43,7 +43,9 @@ const props = withDefaults(
      * both together. Without this prop the request carries no `consent`.
      * A Go `contact` handler older than this release refuses the key with 400
      * `invalid_argument`, so this prop needs the Go handler of the same
-     * release: the Go module and this package share one version.
+     * release: the Go module and this package share one version. The same
+     * holds for `language`, the page language the form always sends with the
+     * language layer installed: it picks the labels of the Go default body.
      */
     requireConsent?: boolean
     /** The consent text, plain. The `consent` slot wins when both are set. */
@@ -88,6 +90,11 @@ const slots = defineSlots<{
 }>()
 
 const { t } = useGovueText()
+// The language of the page, the code the form's own texts use. It goes along
+// as a hint for the labels of the mail the Go handler writes
+// (contact.Request.Language). Without the language layer there is nothing to
+// say, and the key is left out.
+const languageState = inject(languageKey, null)
 
 // A bearer client would send the device token to the contact routes. A
 // required consent without a text would be a checkbox with no label, or a
@@ -178,6 +185,9 @@ const form = useForm({
           // records it as the client's claim (contact.Request.Consent) and,
           // with RequireConsent, refuses a missing or false one.
           ...(props.requireConsent ? { consent: values.consent } : {}),
+          // The page language, read when the visitor sends. The server takes
+          // it as a hint only and falls back to English labels.
+          ...(languageState ? { language: languageState.locale.value } : {}),
           website: '',
           pow,
         },

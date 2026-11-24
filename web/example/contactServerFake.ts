@@ -9,6 +9,8 @@
  *   400 invalid_argument with no details (so a client that sends a key the
  *   server does not know, such as `received`, fails here as it does against
  *   the real server),
+ * - `language` is an optional string, a hint for the labels of the mail, and
+ *   the fake records it like any other field of the request,
  * - `consent` is an optional boolean, and with `requireConsent` a missing or
  *   false one is the field error `consent: required` next to the others,
  * - the content type has to be application/json (415),
@@ -54,7 +56,7 @@ export interface FakeRequest {
 
 const TEST_KEY = Buffer.from('0a1b'.repeat(16), 'hex')
 const AUDIENCE = 'example.test'
-const BODY_KEYS = ['name', 'email', 'message', 'consent', 'website', 'pow']
+const BODY_KEYS = ['name', 'email', 'message', 'consent', 'language', 'website', 'pow']
 const POW_KEYS = ['algorithm', 'challenge', 'number', 'salt', 'signature']
 
 /** The limits of contact.Max*Runes. */
@@ -193,7 +195,7 @@ export class FakeContactServer {
     if (!isObject(sub) || Object.keys(sub).some((key) => !BODY_KEYS.includes(key))) {
       return notValid()
     }
-    for (const key of ['name', 'email', 'message', 'website']) {
+    for (const key of ['name', 'email', 'message', 'language', 'website']) {
       if (key in sub && typeof sub[key] !== 'string') {
         return notValid()
       }
