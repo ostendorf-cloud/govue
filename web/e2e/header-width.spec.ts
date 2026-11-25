@@ -122,3 +122,124 @@ for (const width of [360, 480, 640]) {
     }
   })
 }
+
+// The open menu, issue 263. From 480px the header is one row of 56px, too low
+// for the list. Between 480 and 639px the list leaves the flow and drops below
+// the bar, over the page. Below 480px it is the navigation row, in the flow.
+// Put the list back in the flow from 480px and it is centred on the 56px row:
+// it sticks out above the window and covers the bar, and this spec fails.
+
+interface MenuMeasure {
+  viewport: { width: number; height: number }
+  header: { top: number; bottom: number; height: number }
+  toggle: { top: number; bottom: number; left: number; right: number }
+  entries: Box[]
+  list: { bottom: number; scrollHeight: number; clientHeight: number }
+  content: { top: number }
+}
+
+/** measureMenu returns the header, the menu button, the list and its entries. */
+async function measureMenu(page: Page): Promise<MenuMeasure> {
+  return page.evaluate(() => {
+    const rect = (el: Element) => el.getBoundingClientRect()
+    const header = rect(document.querySelector('header') as HTMLElement)
+    const toggle = rect(document.querySelector('nav > button') as HTMLElement)
+    const list = document.querySelector('nav > ul') as HTMLElement
+    const entries = Array.from(list.querySelectorAll('a')).map((a) => {
+      const r = rect(a)
+      return {
+        name: a.textContent?.trim() ?? '',
+        top: r.top,
+        bottom: r.bottom,
+        left: r.left,
+        right: r.right,
+      }
+    })
+    return {
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      header: { top: header.top, bottom: header.bottom, height: header.height },
+      toggle: { top: toggle.top, bottom: toggle.bottom, left: toggle.left, right: toggle.right },
+      entries,
+      list: {
+        bottom: rect(list).bottom,
+        scrollHeight: list.scrollHeight,
+        clientHeight: list.clientHeight,
+      },
+      content: { top: rect(document.querySelector('main') as HTMLElement).top },
+    }
+  })
+}
+
+for (const width of [360, 480, 560, 639]) {
+  test(`drops the open menu below the bar at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 })
+    await page.goto('/header.html')
+    const toggle = page.getByRole('button', { name: 'Menu' })
+    await expect(toggle).toBeVisible()
+    const closed = await measureMenu(page)
+
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible()
+    const m = await measureMenu(page)
+
+    // The menu button stays on screen, in the bar, and is not pushed out.
+    await expect(toggle).toBeVisible()
+    expect(m.toggle.top).toBeGreaterThanOrEqual(m.header.top)
+    expect(m.toggle.bottom).toBeLessThanOrEqual(m.header.bottom)
+    expect(m.toggle.left).toBeGreaterThanOrEqual(0)
+    expect(m.toggle.right).toBeLessThanOrEqual(width)
+
+    // Every entry is inside the window and below the menu button.
+    expect(m.entries.length).toBeGreaterThan(0)
+    for (const e of m.entries) {
+      expect(e.top, `${e.name} top at ${width}px`).toBeGreaterThanOrEqual(0)
+      expect(e.bottom, `${e.name} bottom at ${width}px`).toBeLessThanOrEqual(m.viewport.height)
+      expect(e.left, `${e.name} left at ${width}px`).toBeGreaterThanOrEqual(0)
+      expect(e.right, `${e.name} right at ${width}px`).toBeLessThanOrEqual(width)
+      expect(e.top, `${e.name} under the button at ${width}px`).toBeGreaterThanOrEqual(
+        m.toggle.bottom,
+      )
+    }
+    const first = m.entries[0]
+
+    if (width >= 480) {
+      // Out of the flow: the header keeps its one row and the page does not move.
+      expect(m.header.height).toBeLessThanOrEqual(HEADER_ROW + 1)
+      expect(m.header.height).toBeCloseTo(closed.header.height, 0)
+      expect(m.content.top).toBeCloseTo(closed.content.top, 0)
+      // The list starts at the bottom of the bar.
+      expect(first.top, `first entry at ${width}px`).toBeGreaterThanOrEqual(m.header.bottom)
+    } else {
+      // In the flow: the list is the navigation row, inside the header.
+      expect(m.list.bottom).toBeLessThanOrEqual(m.header.bottom + 1)
+    }
+
+    // Escape closes the menu and returns focus to the button.
+    await page.getByRole('link', { name: 'Projects' }).focus()
+    await page.keyboard.press('Escape')
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(toggle).toBeFocused()
+  })
+}
+
+test('scrolls the dropped menu when it is taller than the window below the bar', async ({
+  page,
+}) => {
+  // 140px: the bar takes 57, the list of two 44px entries needs about 108.
+  await page.setViewportSize({ width: 560, height: 140 })
+  await page.goto('/header.html')
+  await page.getByRole('button', { name: 'Menu' }).click()
+
+  const m = await measureMenu(page)
+  expect(m.list.bottom).toBeLessThanOrEqual(m.viewport.height + 1)
+  expect(m.list.scrollHeight).toBeGreaterThan(m.list.clientHeight)
+
+  // The last entry is reachable: scrolled into view it lies inside the window.
+  const last = page.getByRole('link', { name: 'Contact' })
+  await last.scrollIntoViewIfNeeded()
+  const box = await last.boundingBox()
+  expect(box).not.toBeNull()
+  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(140 + 1)
+  expect(box?.y ?? -1).toBeGreaterThanOrEqual(0)
+})

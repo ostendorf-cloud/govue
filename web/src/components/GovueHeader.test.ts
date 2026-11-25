@@ -316,6 +316,120 @@ describe('GovueHeader', () => {
     })
   })
 
+  // jsdom has no layout and no media queries, so these pin the classes. The
+  // e2e spec header-width.spec.ts measures the result in Chromium.
+  describe('the open menu', () => {
+    const DROP = 'min-[480px]:max-sm:'
+    /** The classes of the list in the flow, the only ones below 480px and from
+     *  640px. */
+    const IN_FLOW_OPEN = ['gap-1', 'py-2', 'sm:flex', 'sm:flex-row', 'sm:items-center', 'sm:py-0']
+    const DROPPED = [
+      'absolute',
+      'inset-x-0',
+      'top-full',
+      'max-h-[calc(100dvh-var(--spacing-header))]',
+      'overflow-y-auto',
+      'border-y',
+      'border-header-border',
+      'bg-header-bg',
+      'px-4',
+    ].map((c) => DROP + c)
+
+    function renderWithNav(props: Record<string, unknown> = {}) {
+      return render(GovueHeader, {
+        props,
+        slots: {
+          brand: () => h('a', { href: '/' }, 'Home'),
+          default: () =>
+            h(GovueNav, {
+              items: [
+                { href: '#a', label: 'A' },
+                { href: '#b', label: 'B', variant: 'cta' },
+              ],
+            }),
+        },
+      })
+    }
+
+    const classes = (el: Element) => el.className.split(/\s+/).filter(Boolean)
+
+    it('drops below the bar between 480 and 639px and keeps the flow outside that range', async () => {
+      renderWithNav()
+      await fireEvent.click(screen.getByRole('button', { name: 'Menu' }))
+
+      const list = classes(screen.getByRole('list'))
+      expect(list.sort()).toEqual([...IN_FLOW_OPEN, 'flex', 'flex-col', ...DROPPED].sort())
+      // Every class that is not the in flow set acts between 480 and 639px
+      // only, so the second row below 480px and the inline row from 640px are
+      // the same as before.
+      expect(list.filter((c) => !c.startsWith(DROP)).sort()).toEqual(
+        [...IN_FLOW_OPEN, 'flex', 'flex-col'].sort(),
+      )
+    })
+
+    it('keeps the dropped classes while closed, hidden by display none', () => {
+      renderWithNav()
+
+      const list = classes(screen.getByRole('list'))
+      expect(list).toContain('hidden')
+      expect(list).not.toContain('flex')
+      expect(list).toEqual(expect.arrayContaining(DROPPED))
+    })
+
+    it('positions the list against the header element and nothing in between', async () => {
+      for (const overlay of [false, true]) {
+        const { unmount } = renderWithNav({ overlay })
+        await fireEvent.click(screen.getByRole('button', { name: 'Menu' }))
+
+        const header = screen.getByRole('banner')
+        expect(header).toHaveClass(overlay ? 'fixed' : 'sticky')
+        let el = screen.getByRole('list').parentElement
+        while (el && el !== header) {
+          expect(el.className, el.tagName).not.toMatch(/\b(relative|absolute|fixed|sticky)\b/)
+          el = el.parentElement
+        }
+        expect(el).toBe(header)
+        unmount()
+      }
+    })
+
+    it('leaves the header and its row as they are, so the height does not change', async () => {
+      renderWithNav()
+      const header = screen.getByRole('banner')
+      const row = header.firstElementChild as HTMLElement
+      const before = [header.className, row.className]
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Menu' }))
+
+      expect([header.className, row.className]).toEqual(before)
+      expect(row.className).toContain('min-[480px]:h-header')
+    })
+
+    it('keeps the menu button in the row, outside the list', async () => {
+      renderWithNav()
+      const toggle = screen.getByRole('button', { name: 'Menu' })
+      await fireEvent.click(toggle)
+
+      expect(screen.getByRole('list').contains(toggle)).toBe(false)
+      expect(toggle).toHaveClass('sm:hidden')
+      expect(toggle.className).not.toContain('max-sm:hidden')
+    })
+
+    it('closes on Escape with focus on the button, and on a followed link', async () => {
+      renderWithNav()
+      const toggle = screen.getByRole('button', { name: 'Menu' })
+
+      await fireEvent.click(toggle)
+      await fireEvent.keyDown(screen.getByRole('link', { name: 'A' }), { key: 'Escape' })
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      expect(toggle).toHaveFocus()
+
+      await fireEvent.click(toggle)
+      await fireEvent.click(screen.getByRole('link', { name: 'B' }))
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    })
+  })
+
   it('wraps to two rows on a narrow screen instead of scrolling sideways', () => {
     renderHeader()
 

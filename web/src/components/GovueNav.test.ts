@@ -70,6 +70,18 @@ describe('GovueNav', () => {
     expect(screen.getByRole('list').className).toContain('hidden')
   })
 
+  it('keeps the open list in the flow outside a header', async () => {
+    renderNav()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Menu' }))
+
+    // The drop below the bar needs the header as its containing block. Without
+    // one the list stays where it is, as it always was.
+    expect(screen.getByRole('list').className).toBe(
+      'gap-1 py-2 sm:flex sm:flex-row sm:items-center sm:py-0 flex flex-col',
+    )
+  })
+
   it('closes on Escape and puts focus back on the toggle', async () => {
     renderNav()
 
