@@ -2768,7 +2768,95 @@ try {
 
   - Cookies on `localhost` are shared by every port, so another app on the same machine can see
     them. That is the development machine's concern, the reason the option exists nowhere else.
-- What it does not do: the API server of a site and per request rendering.
+- App mode, for a site whose frontend is a single page app, such as solobill. Its build is one
+  `index.html` and `assets/` from `vite build`, and the Vue router owns every path, such as
+  `/documents/42` or `/t/acme/login`. Each such site used to write the same handler: a file of
+  the build when the path names one, else `index.html`. `Config.App` is that handler, with the
+  rest of this section around it:
+
+  ```go
+  s, err := frontend.New(frontend.Config{
+      Build:  dist,
+      App:    &frontend.AppConfig{ReservedPrefixes: []string{"/auth/"}},
+      Logger: logger,
+  })
+  ```
+
+  - A field on `Config` and not a second constructor: the security headers, the path rules, the
+    assets, `PublicFiles`, `ServeSourceMaps`, the client IP, the rate limit, the access log, the
+    metrics, the admin listener and `DevAPIProxy` are the same in both modes, and so are `Run`,
+    `Handler`, `AdminHandler`, `Health` and `Close`.
+  - What is served, and with which cache header:
+
+    | Path | Source | `Cache-Control` | ETag |
+    | --- | --- | --- | --- |
+    | `/assets/<hashed name>` | `assets/` | `public, max-age=31536000, immutable` | yes |
+    | `/assets/<other name>` | `assets/` | `no-cache` | yes |
+    | `/assets/<name>.map` | only with `ServeSourceMaps`, else 404 | as above | yes |
+    | `/assets`, an unknown name under `/assets/` | plain 404, never `index.html` | `no-cache` | no |
+    | `/favicon.svg` and the two PNG icons | root of the build, only with `ThemeColor` | `public, max-age=86400` | yes |
+    | `PublicFiles` | root of the build | `public, max-age=86400` | yes |
+    | `/robots.txt` | `AppConfig.Robots`, by default `Disallow: /` | `public, max-age=3600` | yes |
+    | `/api`, `/api/...` and each reserved prefix | `api.NotFoundHandler`, JSON 404, every method | `no-store` | no |
+    | a path that fails the path rules | plain 404 | `no-cache` | no |
+    | any other path, `GET` or `HEAD` | `index.html`, 200 | `no-cache`, `no-store` with `NoStore` | yes |
+    | any other path, another method | 405, `Allow: GET, HEAD` | none | no |
+
+  - Header table of `index.html` under the default:
+
+    | Header | Value |
+    | --- | --- |
+    | `Content-Type` | `text/html; charset=utf-8` |
+    | `Cache-Control` | `no-cache`, or `no-store` with `AppConfig.NoStore` |
+    | `ETag` | the quoted SHA-256 of the body |
+    | `Content-Security-Policy` | `default-src 'none'; script-src 'self' 'nonce-…'; …`, with no hash unless `AppConfig.ThemeBoot` |
+    | the other security headers | as in the header table of a page above |
+
+  - `index.html` is read once at startup, like every file. A build without it, or with one that
+    is a link, a directory or has no head element, is refused, naming the file. A Vite build
+    writes its bundle as a module script with `src`, so the default policy runs it with
+    `script-src 'self'` and `index.html` needs no inline script.
+  - `index.html` with `no-cache` and an ETag, not `no-store`: it is the same bytes for every
+    visitor and holds no session, and it names the hashed bundle. A browser revalidates it on
+    every load with one 304, so a new deployment reaches it at once. `NoStore` is there for a
+    site that does not want it kept at all.
+  - The reserved prefixes. `/api/` is always reserved, `AppConfig.ReservedPrefixes` adds more,
+    such as `/auth/` while an OIDC callback lives outside `/api/`. A prefix and its form without
+    the trailing slash answer the JSON 404 of `api.NotFoundHandler` for every method, with the
+    request id, so a mistyped API path is never a 200 with HTML. The match is by segment, the
+    shape of the Ingress rule `pathType: Prefix`: `/auth/` takes `/auth` and `/auth/x`, not
+    `/authors`. In production the Ingress sends the prefix to the API first, so the frontend
+    answers it only on a mistake. The reserved prefixes sit on a mux of their own, so the access
+    log and the metrics name the prefix as the route. `New` refuses a prefix that is not a
+    slash, plain segments and a trailing slash, one under `/assets/`, one that names a file
+    served at the root such as `/robots.txt/`, `/api/` again and a repeat, by position and never
+    by value.
+  - `DevAPIProxy` stays as it is and forwards `/api/` only. A reserved prefix outside `/api/`
+    stays the JSON 404 in development too, so a site whose OIDC callback lives outside `/api/`
+    moves it under `/api/` to run it through the proxy.
+  - The path rules hold, a failing path answers a plain 404 with `no-cache`, since app mode has
+    no 404 page. There is no slash redirect: `/documents/42/` is a path of the app's router.
+  - `robots.txt` disallows every path by default: the paths of an app are behind a login and are
+    no pages to index. `AppConfig.Robots` replaces the body. There is no sitemap.
+  - The favicon files and the theme boot script are optional, an app may have neither.
+    `Config.ThemeColor`, and `ThemeColorDark` with it, serves the three favicon files and writes
+    their links right after the head tag of `index.html`, and an `index.html` that carries icon
+    links or a `theme-color` tag of its own is then refused. `AppConfig.ThemeBoot` writes the boot
+    script with the options of `Config.ThemeBoot` after them and adds its hash to `script-src`,
+    and a policy without `script-src` is then refused. Without either, `index.html` is served
+    as built and the policy is not changed. Without `ThemeColor` a request for `/favicon.svg` is
+    a path of the router and answers `index.html`.
+  - `Config.Language`, `Config.Redirects` and `Config.Analytics` belong to the prerendered site
+    and are refused in app mode. A redirect needs a page of the sitemap. Page views by route
+    pattern would count every path of the app as the one pattern of the fallback, `GET /`, so a
+    view would say nothing. `ThemeColorDark` without `ThemeColor` and `Config.ThemeBoot` without
+    `AppConfig.ThemeBoot` are refused too, so no option is silently dropped.
+  - The access log and the metrics carry `GET /` for every path of the app, never the path, so
+    an id in `/documents/42` reaches neither.
+  - A test pins each rule, and turning each one off in a copy fails it. The prerendered site,
+    `App` nil, keeps its answers, and a test pins them on the paths app mode answers otherwise.
+- What it does not do: the API server of a site, per request rendering, and in app mode server
+  side rendering, per user content in `index.html` and a service worker.
 
 ### Favicons are a build requirement
 

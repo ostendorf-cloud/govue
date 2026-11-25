@@ -376,6 +376,18 @@ err = s.Run(ctx, ":8080", ":8081") // the probes and the metrics on the second a
 `example frontend` runs the example this way. The Ingress, the API on another origin and the
 rules are in the section "Frontend server" of `docs/concepts/govue.md`.
 
+A single page app, one `index.html` and `assets/` from `vite build`, sets `App`. Every path the
+app's router owns answers `index.html`, `/api/` answers the JSON 404, and no sitemap, 404 page
+or legal page is required:
+
+```go
+s, err := frontend.New(frontend.Config{
+    Build:  dist,
+    App:    &frontend.AppConfig{ReservedPrefixes: []string{"/auth/"}},
+    Logger: logger,
+})
+```
+
 ### Legal pages
 
 govue gives the structure of the imprint, privacy and terms pages, never their text. A site adds

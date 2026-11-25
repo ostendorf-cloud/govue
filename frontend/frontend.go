@@ -36,6 +36,11 @@
 // canonical path. Every other unknown path answers the 404 page of the
 // language its first segment names, else of the default language.
 //
+// Config.App switches New to app mode, the server of a single page app such
+// as the output of vite build: index.html for every path the app's router
+// owns, the assets by the same rules, a JSON 404 under /api/ and the other
+// reserved prefixes, and no sitemap, 404 page or legal page. See AppConfig.
+//
 // Run serves the handler and the admin listener with httpserver.RunAdmin:
 // health, readiness and metrics on the admin listener only, the access log,
 // the metrics middleware and the client IP resolver on the public one, the
@@ -65,8 +70,13 @@ import (
 	"github.com/ostendorf-cloud/govue/themeboot"
 )
 
-// Config configures New. Build, ThemeColor and Logger are required.
+// Config configures New. Build, ThemeColor and Logger are required, and in
+// app mode, with App set, ThemeColor is optional.
 type Config struct {
+	// App, when set, serves a single page app instead of a prerendered
+	// site: index.html for every path that is not a file of the build or a
+	// reserved prefix, see AppConfig. Nil serves the prerendered site.
+	App *AppConfig
 	// Build is the output of the frontend build: Vite's dist directory with
 	// the output of govue-prerender --out-dir written into it. An embedded
 	// directory comes from fs.Sub of an embed.FS. A directory on disk comes
@@ -172,8 +182,12 @@ type Server struct {
 // page, de/404.html, for every language, without the imprint and privacy
 // page in every language, with a terms page in some languages only, and
 // without sitemap.xml. A terms page in every language mounts /terms and
-// /agb.
+// /agb. With Config.App it builds the server of a single page app, see
+// AppConfig.
 func New(cfg Config) (*Server, error) {
+	if cfg.App != nil {
+		return newApp(cfg)
+	}
 	var problems []error
 	if cfg.Build == nil {
 		problems = append(problems, errors.New("frontend: Config.Build is required"))
@@ -197,17 +211,9 @@ func New(cfg Config) (*Server, error) {
 		problems = append(problems, err)
 	}
 
-	security := middleware.DefaultSecurity()
-	if cfg.Security != nil {
-		security = *cfg.Security
-	}
-	if security.Policy != nil {
-		if !security.Policy.Has("script-src") {
-			problems = append(problems, errors.New("frontend: Config.Security.Policy sets no script-src, "+
-				"which the hash of the theme boot script needs"))
-		} else {
-			security.Policy = security.Policy.Clone().Add("script-src", themeboot.Hash(cfg.ThemeBoot...))
-		}
+	security, err := bootSecurity(cfg.Security, cfg.ThemeBoot, true)
+	if err != nil {
+		problems = append(problems, err)
 	}
 
 	var icons favicon.Icons
@@ -278,31 +284,65 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	srv := &Server{logger: cfg.Logger, health: health.New(), views: cfg.Analytics}
-	// The outer chain of example/: Recover first, then RequestID and the
-	// security headers, which replace the request, then the two middlewares
-	// that read r.Pattern. The path check sits between the access log and
-	// the view counter and passes the request on unchanged, and the counter
-	// wraps the mux directly, so the pattern the mux sets is still seen.
+	// The view counter wraps the mux directly, so the pattern the mux sets is
+	// still seen.
 	site := views.Middleware(mux)
 	if devAPI != nil {
 		site = withDevAPIProxy(site, newDevAPIProxy(devAPI, cfg.DevAPITransport, resolver, cfg.Logger), route)
 	}
-	srv.handler = middleware.Chain(s.canonicalOnly(site),
-		middleware.Recover(cfg.Logger),
-		middleware.RequestID(cfg.Logger),
+	notFound := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { s.writeNotFound(w, s.fallback) })
+	srv.handler = publicChain(site, notFound, cfg.Logger, security, httpMetrics, accessLog)
+	srv.admin = adminHandler(srv.health, metrics.Handler(registry), cfg.Logger)
+	return srv, nil
+}
+
+// bootSecurity returns the security middleware of the site: configured, nil
+// for middleware.DefaultSecurity. With boot set, a copy of its policy gets
+// the hash of the theme boot script with opts in script-src, and a policy
+// without script-src is refused. The site's own policy is never changed.
+func bootSecurity(configured *middleware.Security, opts []themeboot.Option, boot bool) (middleware.Security, error) {
+	security := middleware.DefaultSecurity()
+	if configured != nil {
+		security = *configured
+	}
+	if !boot || security.Policy == nil {
+		return security, nil
+	}
+	if !security.Policy.Has("script-src") {
+		return security, errors.New("frontend: Config.Security.Policy sets no script-src, " +
+			"which the hash of the theme boot script needs")
+	}
+	security.Policy = security.Policy.Clone().Add("script-src", themeboot.Hash(opts...))
+	return security, nil
+}
+
+// publicChain is the outer chain of example/: Recover first, then RequestID
+// and the security headers, which replace the request, then the two
+// middlewares that read r.Pattern. The path check sits between the access
+// log and site and passes the request on unchanged, so r.Pattern still
+// reaches both. A path that fails it answers notFound.
+func publicChain(site, notFound http.Handler, logger *slog.Logger, security middleware.Security,
+	httpMetrics *metrics.HTTP, accessLog middleware.AccessLog,
+) http.Handler {
+	return middleware.Chain(canonicalOnly(site, notFound),
+		middleware.Recover(logger),
+		middleware.RequestID(logger),
 		security.Middleware,
 		httpMetrics.Middleware,
 		accessLog.Middleware,
 	)
+}
 
+// adminHandler serves health, readiness and the metrics, behind Recover and
+// RequestID only.
+func adminHandler(h *health.Registry, metricsHandler http.Handler, logger *slog.Logger) http.Handler {
 	adminMux := http.NewServeMux()
-	srv.health.Handle(adminMux)
-	adminMux.Handle("GET /metrics", metrics.Handler(registry))
-	srv.admin = middleware.Chain(adminMux,
-		middleware.Recover(cfg.Logger),
-		middleware.RequestID(cfg.Logger),
+	h.Handle(adminMux)
+	adminMux.Handle("GET /metrics", metricsHandler)
+	return middleware.Chain(adminMux,
+		middleware.Recover(logger),
+		middleware.RequestID(logger),
 	)
-	return srv, nil
 }
 
 // Handler is the public handler: the pages, the assets and the redirects,

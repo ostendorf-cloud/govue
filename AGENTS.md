@@ -106,6 +106,12 @@ repeated here.
   `Config.DevAPIProxy` forwards `/api/` to a loopback or single label host for a compose stack,
   only with `Config.Development`, which the package never reads from the environment. Without
   both `/api/` stays a 404. `X-Forwarded-For` comes from `Config.ClientIP` alone.
+  `Config.App` is app mode for a single page app: `index.html` with `no-cache` and an ETag for
+  every `GET` and `HEAD` that is no file, `/api/` and `AppConfig.ReservedPrefixes` answer the
+  JSON 404 of `api.NotFoundHandler`, an unknown asset and a failed path rule a plain 404, and
+  no sitemap, 404 page or legal page. The favicon set and the boot script are optional there,
+  and `Language`, `Redirects` and `Analytics` are refused. `internal/htmlhead` holds the head
+  tag scan that `themeboot` and app mode share.
   "Frontend server" in the concept doc is the spec.
 - `pow` issues and verifies stateless proof of work challenges, the ALTCHA shape, signed with
   HMAC-SHA-256 over a domain separator and the site name. Keys are at least 32 bytes, the first

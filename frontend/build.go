@@ -182,8 +182,6 @@ func loadSite(build fs.FS, languages []string, fallback string, opts []themeboot
 		languages: languages,
 		fallback:  fallback,
 		notFound:  map[string]*file{},
-		assets:    map[string]*file{},
-		public:    map[string]*file{},
 	}
 	var problems []error
 	fail := func(err error) {
@@ -210,29 +208,44 @@ func loadSite(build fs.FS, languages []string, fallback string, opts []themeboot
 		f.cacheControl = cacheNoCache
 		s.notFound[code] = f
 	}
-	fail(s.loadAssets(build, sourceMaps))
-	fixedFiles := []string{favicon.SVGFile, favicon.PNGFile, favicon.TouchFile}
-	for i, name := range append(fixedFiles, publicFiles...) {
-		body, err := readRegular(build, name)
-		switch {
-		case err != nil && i < len(fixedFiles):
-			// A fixed name of the favicon package, not a configuration value.
-			fail(fmt.Errorf("frontend: public file %s: %w", name, err))
-			continue
-		case err != nil:
-			// A PublicFiles entry is a configuration value: the error gives its
-			// position and the kind only, and wraps no *fs.PathError.
-			fail(fmt.Errorf("frontend: Config.PublicFiles entry %d: %w (the value is not shown)",
-				i-len(fixedFiles)+1, fileKind(err)))
-			continue
-		}
-		s.public["/"+name] = newFile(body, contentTypes[strings.ToLower(path.Ext(name))], cacheDay)
-	}
+	s.assets, err = loadAssets(build, sourceMaps)
+	fail(err)
+	s.public, err = loadPublic(build, faviconFiles, publicFiles)
+	fail(err)
 
 	if err := errors.Join(problems...); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// faviconFiles are the three files of the favicon set, at the root of the
+// build.
+var faviconFiles = []string{favicon.SVGFile, favicon.PNGFile, favicon.TouchFile}
+
+// loadPublic reads the fixed files and the PublicFiles entries from the root
+// of the build, keyed by their URL path. A fixed name is named in an error,
+// a PublicFiles entry by its position only.
+func loadPublic(build fs.FS, fixedFiles, publicFiles []string) (map[string]*file, error) {
+	public := map[string]*file{}
+	var problems []error
+	for i, name := range append(append([]string(nil), fixedFiles...), publicFiles...) {
+		body, err := readRegular(build, name)
+		switch {
+		case err != nil && i < len(fixedFiles):
+			// A fixed name of the favicon package, not a configuration value.
+			problems = append(problems, fmt.Errorf("frontend: public file %s: %w", name, err))
+			continue
+		case err != nil:
+			// A PublicFiles entry is a configuration value: the error gives its
+			// position and the kind only, and wraps no *fs.PathError.
+			problems = append(problems, fmt.Errorf("frontend: Config.PublicFiles entry %d: %w (the value is not shown)",
+				i-len(fixedFiles)+1, fileKind(err)))
+			continue
+		}
+		public["/"+name] = newFile(body, contentTypes[strings.ToLower(path.Ext(name))], cacheDay)
+	}
+	return public, errors.Join(problems...)
 }
 
 // errNotRegular is the kind of a build file that is a symbolic link, a
@@ -463,18 +476,19 @@ func (s *site) checkLegal() error {
 	return errors.Join(problems...)
 }
 
-// loadAssets reads every file under assets/. A directory or file whose name
-// starts with a dot is skipped and never served, and so is a source map
-// unless sourceMaps is set. A name of another shape, a symbolic link,
-// anything but a regular file and an extension outside contentTypes fail. A
-// build without assets/ serves none.
-func (s *site) loadAssets(build fs.FS, sourceMaps bool) error {
+// loadAssets reads every file under assets/, keyed by its URL path. A
+// directory or file whose name starts with a dot is skipped and never
+// served, and so is a source map unless sourceMaps is set. A name of another
+// shape, a symbolic link, anything but a regular file and an extension
+// outside contentTypes fail. A build without assets/ serves none.
+func loadAssets(build fs.FS, sourceMaps bool) (map[string]*file, error) {
+	assets := map[string]*file{}
 	info, err := fs.Lstat(build, assetsDir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return assets, nil
 	}
 	if err != nil || !info.IsDir() {
-		return fmt.Errorf("frontend: %s of the build is not a directory", assetsDir)
+		return assets, fmt.Errorf("frontend: %s of the build is not a directory", assetsDir)
 	}
 	var problems []error
 	err = fs.WalkDir(build, assetsDir, func(name string, d fs.DirEntry, err error) error {
@@ -527,13 +541,13 @@ func (s *site) loadAssets(build fs.FS, sourceMaps bool) error {
 		if hashedName(base) {
 			cache = cacheImmutable
 		}
-		s.assets["/"+name] = newFile(body, contentType, cache)
+		assets["/"+name] = newFile(body, contentType, cache)
 		return nil
 	})
 	if err != nil {
 		problems = append(problems, fmt.Errorf("frontend: read %s: %w", assetsDir, err))
 	}
-	return errors.Join(problems...)
+	return assets, errors.Join(problems...)
 }
 
 // hashedName reports whether base carries a Vite content hash: the name

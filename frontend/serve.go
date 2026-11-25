@@ -42,12 +42,20 @@ func (s *site) mount(mux *http.ServeMux, route, page func(http.Handler) http.Han
 	for name, f := range s.public {
 		mux.Handle("GET "+name, route(f.handler()))
 	}
+	mountAssets(mux, s.assets, http.HandlerFunc(s.notFoundFor), route)
+}
+
+// mountAssets registers the files under /assets/ on mux. A path under
+// /assets/ that names no file answers notFound, never a page.
+func mountAssets(mux *http.ServeMux, assets map[string]*file, notFound http.Handler,
+	route func(http.Handler) http.Handler,
+) {
 	// The exact pattern keeps the mux from redirecting /assets to /assets/.
-	mux.Handle("GET /"+assetsDir, route(http.HandlerFunc(s.notFoundFor)))
+	mux.Handle("GET /"+assetsDir, route(notFound))
 	mux.Handle("GET /"+assetsDir+"/{file...}", route(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f, ok := s.assets[r.URL.Path]
+		f, ok := assets[r.URL.Path]
 		if !ok {
-			s.notFoundFor(w, r)
+			notFound.ServeHTTP(w, r)
 			return
 		}
 		f.serve(w, r)
@@ -74,12 +82,17 @@ func redirectTo(location string) http.Handler {
 func (s *site) catchAll() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			methodNotAllowed(w)
 			return
 		}
 		s.notFoundFor(w, r)
 	})
+}
+
+// methodNotAllowed answers 405 with Allow: GET, HEAD.
+func methodNotAllowed(w http.ResponseWriter) {
+	w.Header().Set("Allow", "GET, HEAD")
+	http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 }
 
 // notFoundFor answers 404 with the 404 page of the language the first
@@ -103,13 +116,14 @@ func (s *site) writeNotFound(w http.ResponseWriter, code string) {
 	_, _ = w.Write(f.body)
 }
 
-// canonicalOnly answers 404 with the default 404 page for a path that is not
-// in canonical form, before the mux sees it, so the mux never cleans or
-// redirects a path itself. It passes every other request on unchanged.
-func (s *site) canonicalOnly(next http.Handler) http.Handler {
+// canonicalOnly answers notFound for a path that is not in canonical form,
+// before the mux sees it, so the mux never cleans or redirects a path itself.
+// It passes every other request on unchanged. notFound is the 404 page of
+// the default language for a prerendered site and the plain 404 in app mode.
+func canonicalOnly(next, notFound http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !canonicalPath(r) {
-			s.writeNotFound(w, s.fallback)
+			notFound.ServeHTTP(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)
