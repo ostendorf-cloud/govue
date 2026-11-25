@@ -3410,8 +3410,13 @@ try {
   most 3 mails per 48 hours to one address, and one click on "this was not me" ends it.
 - Global: a ceiling of 50 confirmation mails per hour, per process, never refunded, as in
   `contact`.
-- Confirm and unsubscribe have a per client limit as well, 10 per minute, so a token cannot be
-  guessed at speed. With 256 bits it cannot be guessed at all, the limit protects the store.
+- Confirm has a per client limit as well, 10 per minute. With 256 bits a token cannot be
+  guessed at all, the limit protects the store from lookups of random tokens.
+- Unsubscribe has no per client limit. A one click POST comes from a mail provider's servers,
+  so many recipients share one client address, and a limit would refuse honest unsubscribes. The
+  MAC is checked before the store is touched, so a forged token costs one HMAC.
+- A full `MemoryStore` drops a new request with the same 200 and a warning in the log, and an
+  unsubscribe that needs a new marker answers 503 `busy`.
 
 #### Only the confirmation mail to an unconfirmed address
 

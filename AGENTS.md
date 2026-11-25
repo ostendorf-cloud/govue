@@ -83,10 +83,10 @@ repeated here.
 - `web/` also holds a theme generator (`web/src/theme/`, run through
   `web/scripts/generate-theme.ts`) that derives an accessible theme from a consumer's own seed
   colours, never committed here.
-- Twenty-four Go packages live at the module root: `account`, `analytics`, `api`, `appassoc`,
+- Twenty-five Go packages live at the module root: `account`, `analytics`, `api`, `appassoc`,
   `clientip`, `contact`, `csrf`, `database`, `envconf`, `favicon`, `frontend`, `health`,
-  `httpserver`, `language`, `logging`, `mail`, `metrics`, `middleware`, `oidc`, `passkey`, `pow`,
-  `ratelimit`, `session`, `themeboot`.
+  `httpserver`, `language`, `logging`, `mail`, `metrics`, `middleware`, `oidc`, `optin`,
+  `passkey`, `pow`, `ratelimit`, `session`, `themeboot`.
 - `frontend` is the frontend image of a site that splits frontend and API: `New` reads the
   Vite build with the prerender output into memory and refuses a build without a 404 page or a
   legal page per language, `Run` serves it with the admin listener. Every path that answers 200
@@ -153,6 +153,18 @@ repeated here.
   site function or of the `Sender` is recovered and logged by type. Tests search the log of the
   main paths, not of every refusal. The limits and the replay set are per process, so
   several replicas multiply the budgets, and a few valid clients can use up the mail ceiling.
+- `optin` is the waitlist with double opt-in: `Challenge`, `Request`, `Confirm` and `Unsubscribe`
+  handlers, `Purge` and `RunPurge`, `MailConfirmed` and `Wait`. It builds on the same packages
+  as `contact` and never imports `session` or `database`. `Request` answers the same 200 for
+  every address, takes the global ceiling before the state is known and sends the confirmation
+  mail after the answer. Every mail leaves through one function that takes a `recipient`, which
+  only a pending entry (confirmation) or a confirmed entry (mailing) yields, and carries the
+  unsubscribe link and `List-Unsubscribe` with `List-Unsubscribe-Post`. Confirmation tokens are
+  random and stored as a hash, unsubscribe tokens are an HMAC of the entry key and not stored.
+  An unsubscribe leaves a suppression marker with the key only. The `Store` interface has five
+  methods and `MemoryStore`, and govue ships no SQL store: the package doc has the schema. No IP
+  address is stored. The site writes every mail text. "Waitlist with double opt-in" in the
+  concept doc is the spec.
 - `database` holds the PostgreSQL connection of a product: `Config` and `LoadConfig` with the
   `DB_*` variables, the pgx pool, the migration runner over an `fs.FS` and `Check` for
   readiness. The password is a `database.Secret`, held in a closure, so no fmt verb, encoder,
