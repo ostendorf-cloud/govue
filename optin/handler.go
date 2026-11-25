@@ -42,7 +42,6 @@ const (
 	CodePowBusy        = "pow_busy"
 	CodeMailLimit      = "mail_limit"
 	CodeTokenInvalid   = "token_invalid"
-	CodeBusy           = "busy"
 	CodeMethodDisallow = "method_not_allowed"
 )
 
@@ -129,11 +128,14 @@ type MailingData struct {
 // Config configures a [Handler]. Every limiter is per process. With several
 // replicas the budgets multiply, the per address limit in the Store does not.
 type Config struct {
-	// Secret derives the address key and the unsubscribe key. At least
-	// [MinSecretLen] bytes. Nil or empty means not configured: the routes
-	// answer 503 not_configured and the process starts. Changing it changes
-	// every entry key, so existing entries and suppression markers are no
-	// longer found.
+	// Secret derives the address key, the mailbox key and the unsubscribe
+	// key. At least [MinSecretLen] bytes, random, and used for nothing else:
+	// never the proof of work key, a session or CSRF key or any other key,
+	// because a key shared across purposes lets one purpose's output stand in
+	// for another's. Nil or empty means not configured: the routes answer 503
+	// not_configured and the process starts. Changing it changes every entry
+	// key, so existing entries are no longer found and old unsubscribe links
+	// stop working.
 	Secret []byte
 	// PoW issues and verifies the challenges of Request. Nil means not
 	// configured.
@@ -169,11 +171,13 @@ type Config struct {
 	// PendingTTL is the life of an unconfirmed entry and its links. Zero
 	// means [DefaultPendingTTL].
 	PendingTTL time.Duration
-	// MaxSendsPerAddress bounds the confirmation mails per pending period.
-	// Zero means [DefaultMaxSendsPerAddress].
+	// MaxSendsPerAddress bounds the confirmation mails to one mailbox per
+	// counting period, which is PendingTTL long. The mailbox is the address
+	// in lower case without a "+tag", see the package doc for what is not
+	// folded. Zero means [DefaultMaxSendsPerAddress].
 	MaxSendsPerAddress int
 	// ResendInterval is the least time between two confirmation mails to one
-	// address. Zero means [DefaultResendInterval].
+	// mailbox. Zero means [DefaultResendInterval].
 	ResendInterval time.Duration
 	// PurgeInterval is the period of RunPurge. Zero means
 	// [DefaultPurgeInterval].
@@ -448,8 +452,8 @@ func (h *Handler) Request() http.Handler { return handle(h, h.serveRequest) }
 // {"token": "..."}. It is limited per client.
 func (h *Handler) Confirm() http.Handler { return h.confirm }
 
-// Unsubscribe returns the POST handler that removes an address and keeps a
-// suppression marker. It takes a JSON body {"token": "..."} from the site's
+// Unsubscribe returns the POST handler that deletes the entry of an address
+// at once and keeps nothing of it. It takes a JSON body {"token": "..."} from the site's
 // page, with the origin check, or the RFC 8058 one click form body
 // List-Unsubscribe=One-Click with the token in the query, which a mail
 // provider sends from its own servers.
@@ -577,35 +581,14 @@ func (h *Handler) serveRequest(w http.ResponseWriter, r *http.Request) error {
 		return api.Internal(err)
 	}
 	now := h.now().Round(0)
-	key := h.keys.addressKey(address)
 	language := cleanLanguage(body.Language)
+	// Both store updates run for every request, whatever the state, so the
+	// number of store calls does not tell one address from another.
+	allowed, err := h.reserveSend(r.Context(), address, now)
 	var rcpt *recipient
-	err = h.store.Update(r.Context(), key, func(e *Entry) error {
-		rcpt = nil
-		switch {
-		case e.State == StateNone, e.State == StatePending && !now.Before(e.Created.Add(h.ttl)):
-			*e = Entry{
-				Key: key, State: StatePending, Address: address, Language: language,
-				ConsentVersion: h.consentVersion, Created: now, ConfirmHash: hash, Sends: 1, LastSent: now,
-			}
-		case e.State == StatePending:
-			if e.Sends >= h.maxSends || now.Sub(e.LastSent) < h.resend {
-				return nil
-			}
-			e.Address, e.Language, e.ConsentVersion = address, language, h.consentVersion
-			e.ConfirmHash, e.LastSent = hash, now
-			e.Sends++
-		default:
-			// Confirmed or suppressed: nothing is written and nothing is sent.
-			return nil
-		}
-		rc, err := newRecipient(*e, kindConfirmation)
-		if err != nil {
-			return err
-		}
-		rcpt = &rc
-		return nil
-	})
+	if err == nil {
+		rcpt, err = h.updateEntry(r.Context(), address, language, hash, now, allowed)
+	}
 	switch {
 	case errors.Is(err, ErrStoreFull):
 		// The same answer as for every other address. Nothing is sent.
@@ -618,6 +601,65 @@ func (h *Handler) serveRequest(w http.ResponseWriter, r *http.Request) error {
 		h.sendConfirmationLater(r, *rcpt, token)
 	}
 	return ok(w)
+}
+
+// reserveSend takes one confirmation mail from the counter of the mailbox of
+// address: at most maxSends per counting period of PendingTTL, at least
+// ResendInterval apart. It reserves whether or not the entry turns out to
+// need a mail, so a request for a confirmed address costs the same as one
+// for a new address. The counter outlives an unsubscribe until its period
+// ends, so the bound holds across unsubscribes.
+func (h *Handler) reserveSend(ctx context.Context, address string, now time.Time) (bool, error) {
+	key := h.keys.mailboxKey(address)
+	var allowed bool
+	err := h.store.Update(ctx, key, func(e *Entry) error {
+		allowed = false
+		if e.State != StateCounter || !now.Before(e.Created.Add(h.ttl)) {
+			*e = Entry{Key: key, State: StateCounter, Created: now}
+		}
+		if e.Sends >= h.maxSends || (e.Sends > 0 && now.Sub(e.LastSent) < h.resend) {
+			return nil
+		}
+		e.Sends++
+		e.LastSent = now
+		allowed = true
+		return nil
+	})
+	return allowed, err
+}
+
+// updateEntry writes the pending entry of address when a mail is allowed and
+// due, and returns the recipient of the confirmation mail, or nil. A
+// confirmed entry is left alone and gets no mail.
+func (h *Handler) updateEntry(ctx context.Context, address, language string, hash TokenHash, now time.Time, allowed bool) (*recipient, error) {
+	key := h.keys.addressKey(address)
+	var rcpt *recipient
+	err := h.store.Update(ctx, key, func(e *Entry) error {
+		rcpt = nil
+		if !allowed {
+			return nil
+		}
+		switch {
+		case e.State == StateNone, e.State == StatePending && !now.Before(e.Created.Add(h.ttl)):
+			*e = Entry{
+				Key: key, State: StatePending, Address: address, Language: language,
+				ConsentVersion: h.consentVersion, Created: now, ConfirmHash: hash,
+			}
+		case e.State == StatePending:
+			e.Address, e.Language, e.ConsentVersion = address, language, h.consentVersion
+			e.ConfirmHash = hash
+		default:
+			// Confirmed: nothing is written and nothing is sent.
+			return nil
+		}
+		rc, err := newRecipient(*e, kindConfirmation)
+		if err != nil {
+			return err
+		}
+		rcpt = &rc
+		return nil
+	})
+	return rcpt, err
 }
 
 // sendConfirmationLater sends the confirmation mail after the answer, so the
@@ -700,7 +742,7 @@ func (h *Handler) serveConfirm(w http.ResponseWriter, r *http.Request) error {
 			return errTokenInvalid
 		}
 		e.State, e.Confirmed = StateConfirmed, now
-		e.ConfirmHash, e.Sends, e.LastSent = TokenHash{}, 0, time.Time{}
+		e.ConfirmHash = TokenHash{}
 		return nil
 	})
 	switch {
@@ -746,22 +788,19 @@ func (h *Handler) serveUnsubscribe(w http.ResponseWriter, r *http.Request) error
 	if !valid {
 		return tokenInvalid()
 	}
-	if err := h.suppress(r.Context(), key); err != nil {
-		if errors.Is(err, ErrStoreFull) {
-			e := api.Unavailable("please try again later").Exposed()
-			e.Code = CodeBusy
-			return e
-		}
+	if err := h.remove(r.Context(), key); err != nil {
 		return api.Internal(err)
 	}
 	return ok(w)
 }
 
-// suppress replaces the entry of key with a suppression marker that holds the
-// key and nothing else.
-func (h *Handler) suppress(ctx context.Context, key Key) error {
+// remove deletes the entry of key at once, pending or confirmed. Nothing of
+// it is kept. An entry that is already gone answers the same.
+func (h *Handler) remove(ctx context.Context, key Key) error {
 	if err := h.store.Update(ctx, key, func(e *Entry) error {
-		*e = Entry{Key: key, State: StateSuppressed}
+		if e.State == StatePending || e.State == StateConfirmed {
+			e.State = StateNone
+		}
 		return nil
 	}); err != nil {
 		return fmt.Errorf("optin: store: %w", err)
@@ -769,47 +808,26 @@ func (h *Handler) suppress(ctx context.Context, key Key) error {
 	return nil
 }
 
-// Suppressed reports whether address carries a suppression marker. An
-// import tool of the site checks it before it adds an address anywhere.
-func (h *Handler) Suppressed(ctx context.Context, address string) (bool, error) {
-	if h.keys.address == nil {
-		return false, ErrNotConfigured
-	}
-	e, err := h.store.Get(ctx, h.keys.addressKey(strings.TrimSpace(address)))
-	switch {
-	case errors.Is(err, ErrNotFound):
-		return false, nil
-	case err != nil:
-		return false, fmt.Errorf("optin: store: %w", err)
-	}
-	return e.State == StateSuppressed, nil
-}
-
-// Unsuppress removes the suppression marker of address, on the person's own
-// request to the site. The form cannot do this. An address without a marker
-// is left alone.
-func (h *Handler) Unsuppress(ctx context.Context, address string) error {
-	if h.keys.address == nil {
-		return ErrNotConfigured
-	}
-	err := h.store.Update(ctx, h.keys.addressKey(strings.TrimSpace(address)), func(e *Entry) error {
-		if e.State == StateSuppressed {
-			e.State = StateNone
-		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("optin: store: %w", err)
-	}
-	return nil
-}
-
 // Purge deletes every unconfirmed entry whose pending period has ended and
-// returns how many it deleted.
+// every send counter whose counting period has ended, and returns how many
+// records it deleted.
 func (h *Handler) Purge(ctx context.Context) (int, error) {
-	n, err := h.store.DeletePendingBefore(ctx, h.now().Add(-h.ttl))
+	n, err := h.store.DeleteUnconfirmedBefore(ctx, h.now().Add(-h.ttl))
 	if err != nil {
 		return n, fmt.Errorf("optin: purge: %w", err)
+	}
+	return n, nil
+}
+
+// DeleteConfirmedBefore deletes every confirmed entry confirmed at or before
+// cutoff and returns how many it deleted. The site decides the retention of
+// confirmed entries and calls it, for example with the current time once the
+// retention after its launch mail has passed. Pending entries are the job
+// of Purge.
+func (h *Handler) DeleteConfirmedBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	n, err := h.store.DeleteConfirmedBefore(ctx, cutoff)
+	if err != nil {
+		return n, fmt.Errorf("optin: delete confirmed: %w", err)
 	}
 	return n, nil
 }

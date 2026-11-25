@@ -58,12 +58,14 @@ func TestMemoryStore_Update(t *testing.T) {
 	t.Run("a full store refuses a new key and keeps an old one", func(t *testing.T) {
 		t.Parallel()
 		s := NewMemoryStore(1)
-		mustUpdate(t, s, key, func(e *Entry) { e.State = StateSuppressed })
+		mustUpdate(t, s, key, func(e *Entry) { e.State = StateConfirmed })
 		err := s.Update(t.Context(), Key{9}, func(e *Entry) error { e.State = StatePending; return nil })
 		if !errors.Is(err, ErrStoreFull) {
 			t.Fatalf("got %v", err)
 		}
-		mustUpdate(t, s, key, func(e *Entry) { e.State = StateSuppressed })
+		mustUpdate(t, s, key, func(e *Entry) { e.State = StateConfirmed })
+		// Deleting a missing key needs no room.
+		mustUpdate(t, s, Key{9}, func(*Entry) {})
 	})
 	t.Run("a cancelled context is refused", func(t *testing.T) {
 		t.Parallel()
@@ -83,7 +85,7 @@ func mustUpdate(t *testing.T, s *MemoryStore, key Key, fn func(*Entry)) {
 	}
 }
 
-func TestMemoryStore_DeletePendingBefore(t *testing.T) {
+func TestMemoryStore_DeleteUnconfirmedBefore(t *testing.T) {
 	t.Parallel()
 	s := NewMemoryStore(0)
 	at := time.Date(2026, 11, 25, 9, 0, 0, 0, time.UTC)
@@ -91,16 +93,46 @@ func TestMemoryStore_DeletePendingBefore(t *testing.T) {
 	mustUpdate(t, s, Key{2}, func(e *Entry) {
 		*e = Entry{State: StatePending, Created: at.Add(time.Second), ConfirmHash: TokenHash{2}}
 	})
-	mustUpdate(t, s, Key{3}, func(e *Entry) { *e = Entry{State: StateConfirmed, Created: at.Add(-time.Hour)} })
-	n, err := s.DeletePendingBefore(t.Context(), at)
-	if err != nil || n != 1 {
+	mustUpdate(t, s, Key{3}, func(e *Entry) {
+		*e = Entry{State: StateConfirmed, Created: at.Add(-time.Hour), Confirmed: at.Add(-time.Hour)}
+	})
+	mustUpdate(t, s, Key{4}, func(e *Entry) { *e = Entry{State: StateCounter, Created: at, Sends: 1} })
+	mustUpdate(t, s, Key{5}, func(e *Entry) { *e = Entry{State: StateCounter, Created: at.Add(time.Second), Sends: 1} })
+	n, err := s.DeleteUnconfirmedBefore(t.Context(), at)
+	if err != nil || n != 2 {
 		t.Fatalf("got %d %v", n, err)
 	}
 	if _, err := s.FindByConfirmHash(t.Context(), TokenHash{1}); !errors.Is(err, ErrNotFound) {
 		t.Fatal("the hash of a purged entry is still found")
 	}
-	if s.Len() != 2 {
-		t.Fatalf("len %d", s.Len())
+	for _, k := range []Key{{2}, {3}, {5}} {
+		if _, err := s.Get(t.Context(), k); err != nil {
+			t.Errorf("key %d: %v", k[0], err)
+		}
+	}
+}
+
+func TestMemoryStore_DeleteConfirmedBefore(t *testing.T) {
+	t.Parallel()
+	s := NewMemoryStore(0)
+	at := time.Date(2026, 11, 25, 9, 0, 0, 0, time.UTC)
+	mustUpdate(t, s, Key{1}, func(e *Entry) { *e = Entry{State: StateConfirmed, Confirmed: at} })
+	mustUpdate(t, s, Key{2}, func(e *Entry) { *e = Entry{State: StateConfirmed, Confirmed: at.Add(time.Second)} })
+	mustUpdate(t, s, Key{3}, func(e *Entry) {
+		*e = Entry{State: StatePending, Created: at.Add(-time.Hour), ConfirmHash: TokenHash{3}}
+	})
+	mustUpdate(t, s, Key{4}, func(e *Entry) { *e = Entry{State: StateCounter, Created: at.Add(-time.Hour)} })
+	n, err := s.DeleteConfirmedBefore(t.Context(), at)
+	if err != nil || n != 1 {
+		t.Fatalf("got %d %v", n, err)
+	}
+	if _, err := s.Get(t.Context(), Key{1}); !errors.Is(err, ErrNotFound) {
+		t.Fatal("the entry confirmed at the cutoff is still there")
+	}
+	for _, k := range []Key{{2}, {3}, {4}} {
+		if _, err := s.Get(t.Context(), k); err != nil {
+			t.Errorf("key %d: %v", k[0], err)
+		}
 	}
 }
 

@@ -396,8 +396,12 @@ func TestRequest_sendsOneConfirmationMailWithLinksAndHeaders(t *testing.T) {
 		t.Error("the built message carries the header encoded or not at all")
 	}
 	en, ok := e.entry(t, visitor)
-	if !ok || en.State != StatePending || en.ConsentVersion != "2026-11-25" || en.Language != "de" || en.Sends != 1 {
+	if !ok || en.State != StatePending || en.ConsentVersion != "2026-11-25" || en.Language != "de" || en.Sends != 0 {
 		t.Fatalf("entry %+v", en)
+	}
+	counter, err := e.store.Get(t.Context(), e.h.keys.mailboxKey(visitor))
+	if err != nil || counter.State != StateCounter || counter.Sends != 1 || counter.Address != "" {
+		t.Fatalf("counter %+v %v", counter, err)
 	}
 	if en.ConfirmHash == (TokenHash{}) {
 		t.Fatal("no token hash stored")
@@ -418,8 +422,8 @@ func hashConfirmString(t *testing.T, token string) TokenHash {
 }
 
 // TestRequest_answersTheSameForEveryState is the enumeration rule: status and
-// body are equal for a new, a pending, a limited, a confirmed and a
-// suppressed address.
+// body are equal for a new, a pending, a limited, a confirmed and an
+// unsubscribed address.
 func TestRequest_answersTheSameForEveryState(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, nil)
@@ -433,15 +437,16 @@ func TestRequest_answersTheSameForEveryState(t *testing.T) {
 	if w := e.confirm(t, token); w.Code != http.StatusOK {
 		t.Fatalf("confirm: %d %s", w.Code, w.Body)
 	}
-	answers["confirmed"] = e.request(t, other)
-
 	const gone = "carla.fenwick@example.org"
 	e.request(t, gone)
 	unsub := tokenAfter(t, e.sender.to(gone)[0].Body, unsubPage)
 	if w := e.unsubscribe(t, unsub); w.Code != http.StatusOK {
 		t.Fatalf("unsubscribe: %d %s", w.Code, w.Body)
 	}
-	answers["suppressed"] = e.request(t, gone)
+	// Past the resend interval, so only the state decides about a mail.
+	e.clock.advance(DefaultResendInterval)
+	answers["confirmed"] = e.request(t, other)
+	answers["unsubscribed"] = e.request(t, gone)
 
 	want := answers["new"]
 	for name, w := range answers {
@@ -455,8 +460,66 @@ func TestRequest_answersTheSameForEveryState(t *testing.T) {
 	if n := len(e.sender.to(other)); n != 1 {
 		t.Errorf("a confirmed address got %d mails from the form, want only the first confirmation", n)
 	}
-	if n := len(e.sender.to(gone)); n != 1 {
-		t.Errorf("a suppressed address got %d mails, want only the first confirmation", n)
+	if n := len(e.sender.to(gone)); n != 2 {
+		t.Errorf("an unsubscribed address got %d mails, want a new confirmation after the first", n)
+	}
+}
+
+// TestRequest_foldsPlusTagsIntoOneMailbox pins that the per address limit
+// counts the mailbox: "+tag" variants and case share one budget, while each
+// full address keeps its own entry.
+func TestRequest_foldsPlusTagsIntoOneMailbox(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, func(c *Config) { c.MaxSendsPerAddress = 2 })
+	variants := []string{
+		"ada.quillfeather+1@example.org",
+		"ADA.Quillfeather+news@Example.org",
+		"ada.quillfeather+2@example.org",
+		"ada.quillfeather@example.org",
+	}
+	e.request(t, variants[0])
+	e.request(t, variants[1]) // within the resend interval of the mailbox
+	if n := len(e.sender.messages()); n != 1 {
+		t.Fatalf("a plus variant within the interval got a mail: %d mails, want 1", n)
+	}
+	e.clock.advance(DefaultResendInterval)
+	e.request(t, variants[2])
+	e.clock.advance(DefaultResendInterval)
+	e.request(t, variants[3])
+	if n := len(e.sender.messages()); n != 2 {
+		t.Fatalf("%d mails to one mailbox, want the limit of 2", n)
+	}
+	if _, ok := e.entry(t, variants[0]); !ok {
+		t.Fatal("the first variant has no entry of its own")
+	}
+	if _, ok := e.entry(t, variants[2]); !ok {
+		t.Fatal("the second mailed variant has no entry of its own")
+	}
+	if _, ok := e.entry(t, variants[3]); ok {
+		t.Fatal("an entry was written for a variant that got no mail")
+	}
+}
+
+func TestMailbox_foldsCaseAndPlusTagOnly(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, input, want string
+	}{
+		{"plain", "ada@example.org", "ada@example.org"},
+		{"case", "Ada@Example.ORG", "ada@example.org"},
+		{"plus tag", "ada+news@example.org", "ada@example.org"},
+		{"two plus signs", "ada+a+b@example.org", "ada@example.org"},
+		{"leading plus kept", "+ada@example.org", "+ada@example.org"},
+		{"dots kept", "a.d.a@gmail.com", "a.d.a@gmail.com"},
+		{"plus in the domain kept", "ada@ex+ample.org", "ada@ex+ample.org"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := mailbox(tc.input); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -672,8 +735,12 @@ func TestRequest_ceilingRefusesKnownAndUnknownAlike(t *testing.T) {
 
 func TestRequest_fullStoreAnswersTheSameAndSendsNothing(t *testing.T) {
 	t.Parallel()
-	e2 := newEnv(t, func(c *Config) { c.Store = NewMemoryStore(1) })
+	// Two records: the counter and the entry of the first address.
+	e2 := newEnv(t, func(c *Config) { c.Store = NewMemoryStore(2) })
 	e2.request(t, other)
+	if n := len(e2.sender.to(other)); n != 1 {
+		t.Fatalf("the first address got %d mails, want 1", n)
+	}
 	w := e2.request(t, visitor)
 	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"ok":true}` {
 		t.Fatalf("got %d %s", w.Code, w.Body)
@@ -693,7 +760,7 @@ func TestConfirm_confirmsOnceAndClearsTheToken(t *testing.T) {
 		t.Fatalf("first use: %d %s", w.Code, w.Body)
 	}
 	en, _ := e.entry(t, visitor)
-	if en.State != StateConfirmed || !en.Confirmed.Equal(e.clock.now()) || en.ConfirmHash != (TokenHash{}) || en.Sends != 0 {
+	if en.State != StateConfirmed || !en.Confirmed.Equal(e.clock.now()) || en.ConfirmHash != (TokenHash{}) {
 		t.Fatalf("entry after confirm %+v", en)
 	}
 	if w := e.confirm(t, token); w.Code != http.StatusBadRequest || errCode(t, w) != CodeTokenInvalid {
@@ -839,7 +906,7 @@ func TestConfirm_isRateLimitedPerClient(t *testing.T) {
 	}
 }
 
-func TestUnsubscribe_leavesOnlyASuppressionMarker(t *testing.T) {
+func TestUnsubscribe_deletesAConfirmedEntryAtOnce(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, nil)
 	e.request(t, visitor)
@@ -847,19 +914,14 @@ func TestUnsubscribe_leavesOnlyASuppressionMarker(t *testing.T) {
 	if w := e.confirm(t, tokenAfter(t, m.Body, confirmPage)); w.Code != http.StatusOK {
 		t.Fatal(w.Body)
 	}
+	if en, ok := e.entry(t, visitor); !ok || en.State != StateConfirmed {
+		t.Fatalf("before: entry %+v present %v", en, ok)
+	}
 	if w := e.unsubscribe(t, tokenAfter(t, m.Body, unsubPage)); w.Code != http.StatusOK {
 		t.Fatalf("got %d %s", w.Code, w.Body)
 	}
-	en, ok := e.entry(t, visitor)
-	if !ok {
-		t.Fatal("no suppression marker")
-	}
-	if want := (Entry{Key: e.h.keys.addressKey(visitor), State: StateSuppressed}); en != want {
-		t.Fatalf("marker %+v holds more than the key", en)
-	}
-	suppressed, err := e.h.Suppressed(t.Context(), " ADA.Quillfeather@example.org ")
-	if err != nil || !suppressed {
-		t.Fatalf("Suppressed: %v %v", suppressed, err)
+	if en, ok := e.entry(t, visitor); ok {
+		t.Fatalf("the unsubscribed address is still stored: %+v", en)
 	}
 	// A second use answers the same.
 	if w := e.unsubscribe(t, tokenAfter(t, m.Body, unsubPage)); w.Code != http.StatusOK {
@@ -867,28 +929,34 @@ func TestUnsubscribe_leavesOnlyASuppressionMarker(t *testing.T) {
 	}
 }
 
-func TestUnsubscribe_suppressesAPurgedPendingAddress(t *testing.T) {
+// TestUnsubscribe_addressIsGoneAndCanSignUpAgain pins the owner decision: no
+// marker is kept, and a new request enters the address again, bounded only
+// by the counter of the mailbox.
+func TestUnsubscribe_addressIsGoneAndCanSignUpAgain(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, nil)
 	e.request(t, visitor)
 	unsub := tokenAfter(t, e.sender.to(visitor)[0].Body, unsubPage)
-	e.clock.advance(DefaultPendingTTL)
-	if n, err := e.h.Purge(t.Context()); err != nil || n != 1 {
-		t.Fatalf("purge: %d %v", n, err)
+	if _, ok := e.entry(t, visitor); !ok {
+		t.Fatal("no entry before the unsubscribe")
 	}
 	if w := e.unsubscribe(t, unsub); w.Code != http.StatusOK {
 		t.Fatalf("got %d %s", w.Code, w.Body)
 	}
-	e.request(t, visitor)
-	if n := len(e.sender.to(visitor)); n != 1 {
-		t.Fatalf("a suppressed address got %d mails, want the first only", n)
+	if _, ok := e.entry(t, visitor); ok {
+		t.Fatal("the unsubscribed address is still stored")
 	}
-	if err := e.h.Unsuppress(t.Context(), visitor); err != nil {
-		t.Fatal(err)
+	for range 3 {
+		e.clock.advance(DefaultResendInterval)
+		e.request(t, visitor)
+		if w := e.unsubscribe(t, unsub); w.Code != http.StatusOK {
+			t.Fatalf("unsubscribe: %d", w.Code)
+		}
 	}
-	e.request(t, visitor)
-	if n := len(e.sender.to(visitor)); n != 2 {
-		t.Fatalf("after Unsuppress: %d mails, want 2", n)
+	// Three mails in the period: the first and two after unsubscribes. The
+	// third restart is refused by the counter, which an unsubscribe keeps.
+	if n := len(e.sender.to(visitor)); n != DefaultMaxSendsPerAddress {
+		t.Fatalf("%d mails, want %d", n, DefaultMaxSendsPerAddress)
 	}
 }
 
@@ -906,8 +974,8 @@ func TestUnsubscribe_acceptsTheOneClickForm(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d %s", w.Code, w.Body)
 	}
-	if en, _ := e.entry(t, visitor); en.State != StateSuppressed {
-		t.Fatalf("state %s", en.State)
+	if en, ok := e.entry(t, visitor); ok {
+		t.Fatalf("still stored in state %s", en.State)
 	}
 }
 
@@ -975,28 +1043,61 @@ func TestPurge_deletesExpiredPendingEntriesOnly(t *testing.T) {
 	e := newEnv(t, nil)
 	e.request(t, other)
 	e.confirm(t, tokenAfter(t, e.sender.to(other)[0].Body, confirmPage))
-	const gone = "carla.fenwick@example.org"
-	e.request(t, gone)
-	e.unsubscribe(t, tokenAfter(t, e.sender.to(gone)[0].Body, unsubPage))
 	e.request(t, visitor)
 	created, _ := e.entry(t, visitor)
+	counterKey := e.h.keys.mailboxKey(visitor)
 
 	e.clock.advance(DefaultPendingTTL - time.Second - e.clock.now().Sub(created.Created))
-	if n, err := e.h.Purge(t.Context()); err != nil || n != 0 {
-		t.Fatalf("before expiry: %d %v", n, err)
+	if _, err := e.h.Purge(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := e.entry(t, visitor); !ok {
+		t.Fatal("purge deleted a pending entry before its period ended")
+	}
+	if _, err := e.store.Get(t.Context(), counterKey); err != nil {
+		t.Fatalf("purge deleted a counter before its period ended: %v", err)
 	}
 	e.clock.advance(time.Second)
-	if n, err := e.h.Purge(t.Context()); err != nil || n != 1 {
-		t.Fatalf("at expiry: %d %v", n, err)
+	if _, err := e.h.Purge(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 	if _, ok := e.entry(t, visitor); ok {
 		t.Error("the expired pending entry is still there")
 	}
+	if _, err := e.store.Get(t.Context(), counterKey); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the expired counter is still there: %v", err)
+	}
 	if en, _ := e.entry(t, other); en.State != StateConfirmed {
 		t.Error("purge touched a confirmed entry")
 	}
-	if en, _ := e.entry(t, gone); en.State != StateSuppressed {
-		t.Error("purge touched a suppression marker")
+}
+
+func TestDeleteConfirmedBefore_deletesOnlyConfirmedEntriesAtOrBeforeTheCutoff(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, nil)
+	e.request(t, other)
+	e.confirm(t, tokenAfter(t, e.sender.to(other)[0].Body, confirmPage))
+	cutoff := e.clock.now()
+	const later = "carla.fenwick@example.org"
+	e.request(t, later)
+	e.confirm(t, tokenAfter(t, e.sender.to(later)[0].Body, confirmPage))
+	e.request(t, visitor) // pending
+
+	n, err := e.h.DeleteConfirmedBefore(t.Context(), cutoff)
+	if err != nil || n != 1 {
+		t.Fatalf("got %d %v", n, err)
+	}
+	if _, ok := e.entry(t, other); ok {
+		t.Error("the entry confirmed at the cutoff is still there")
+	}
+	if en, ok := e.entry(t, later); !ok || en.State != StateConfirmed {
+		t.Error("an entry confirmed after the cutoff was deleted")
+	}
+	if en, ok := e.entry(t, visitor); !ok || en.State != StatePending {
+		t.Error("a pending entry was deleted")
+	}
+	if _, err := e.store.Get(t.Context(), e.h.keys.mailboxKey(visitor)); err != nil {
+		t.Errorf("a counter was deleted: %v", err)
 	}
 }
 
@@ -1010,7 +1111,7 @@ func TestRequest_afterExpiryStartsANewPeriod(t *testing.T) {
 		t.Fatalf("got %d mails, want 2", n)
 	}
 	en, _ := e.entry(t, visitor)
-	if !en.Created.Equal(e.clock.now()) || en.Sends != 1 {
+	if !en.Created.Equal(e.clock.now()) {
 		t.Fatalf("entry %+v", en)
 	}
 }
@@ -1058,7 +1159,7 @@ func TestMailConfirmed_mailsConfirmedEntriesOnly(t *testing.T) {
 		t.Errorf("the pending address got %d mails, want the confirmation only", n)
 	}
 	if n := len(e.sender.to(gone)); n != 1 {
-		t.Errorf("the suppressed address got %d mails, want the confirmation only", n)
+		t.Errorf("the unsubscribed address got %d mails, want the confirmation only", n)
 	}
 	got := e.sender.to(other)
 	if len(got) != 2 {
@@ -1138,11 +1239,12 @@ func TestMailConfirmed_sendsNothingToAPendingEntryAStoreListed(t *testing.T) {
 	res, err := e2.h.MailConfirmed(t.Context(), func(d MailingData) Content {
 		return Content{Subject: "We launched", Body: d.UnsubscribeURL}
 	})
-	if err != nil || res.Sent != 0 || res.Skipped != 1 {
+	// The lying store lists the pending entry and the counter of its mailbox.
+	if err != nil || res.Sent != 0 || res.Skipped != 2 {
 		t.Fatalf("result %+v %v", res, err)
 	}
 	if n := len(e2.sender.messages()); n != 0 {
-		t.Fatalf("%d mails to an unconfirmed address", n)
+		t.Fatalf("%d mails to an unconfirmed address or a counter", n)
 	}
 }
 
@@ -1158,8 +1260,8 @@ func TestNewRecipient_allowsOnlyTheMailTheStateAllows(t *testing.T) {
 		{"mailing to confirmed", StateConfirmed, kindMailing, true},
 		{"mailing to pending", StatePending, kindMailing, false},
 		{"confirmation to confirmed", StateConfirmed, kindConfirmation, false},
-		{"confirmation to suppressed", StateSuppressed, kindConfirmation, false},
-		{"mailing to suppressed", StateSuppressed, kindMailing, false},
+		{"confirmation to a counter", StateCounter, kindConfirmation, false},
+		{"mailing to a counter", StateCounter, kindMailing, false},
 		{"confirmation to none", StateNone, kindConfirmation, false},
 		{"unknown kind", StatePending, 0, false},
 	}
@@ -1214,21 +1316,41 @@ func TestHandlers_logNoAddressAndNoToken(t *testing.T) {
 	}
 }
 
+// TestRequest_panicInConfirmationDoesNotCrash covers the mail goroutine: a
+// panic there, http.ErrAbortHandler included, would end the process, because
+// no server recovers a goroutine it did not start.
 func TestRequest_panicInConfirmationDoesNotCrash(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, func(c *Config) {
-		c.Confirmation = func(d ConfirmationData) Content {
-			if d.Address != "probe@example.org" {
-				panic(d.Address)
-			}
-			return confirmationText(d)
-		}
-	})
-	if w := e.request(t, visitor); w.Code != http.StatusOK {
-		t.Fatalf("got %d", w.Code)
+	cases := []struct {
+		name  string
+		value func(ConfirmationData) any
+		want  string
+	}{
+		{"value holding the address", func(d ConfirmationData) any { return d.Address }, "panicked with string"},
+		{"abort handler", func(ConfirmationData) any { return http.ErrAbortHandler }, "panicked with *errors.errorString"},
 	}
-	if strings.Contains(e.logs.String(), visitor) {
-		t.Fatal("the panic value reached the log")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, func(c *Config) {
+				c.Confirmation = func(d ConfirmationData) Content {
+					if d.Address != probeAddress {
+						panic(tc.value(d))
+					}
+					return confirmationText(d)
+				}
+			})
+			if w := e.request(t, visitor); w.Code != http.StatusOK {
+				t.Fatalf("got %d", w.Code)
+			}
+			logs := e.logs.String()
+			if strings.Contains(logs, visitor) {
+				t.Fatal("the panic value reached the log")
+			}
+			if !strings.Contains(logs, tc.want) {
+				t.Fatalf("no log line naming the panic type %q", tc.want)
+			}
+		})
 	}
 }
 

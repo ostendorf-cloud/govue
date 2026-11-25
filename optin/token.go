@@ -19,6 +19,7 @@ const MinSecretLen = 32
 const (
 	labelAddressKey     = "govue/optin\x00v1\x00address-key"
 	labelUnsubscribeKey = "govue/optin\x00v1\x00unsubscribe-key"
+	labelMailboxKey     = "govue/optin\x00v1\x00mailbox-key"
 	labelConfirm        = "govue/optin\x00v1\x00confirm\x00"
 )
 
@@ -36,6 +37,7 @@ var unsubscribeTokenLen = base64.RawURLEncoding.EncodedLen(2 * sha256.Size)
 type keys struct {
 	address     []byte
 	unsubscribe []byte
+	mailbox     []byte
 }
 
 func mac(key []byte, parts ...[]byte) []byte {
@@ -50,7 +52,31 @@ func deriveKeys(secret []byte) keys {
 	return keys{
 		address:     mac(secret, []byte(labelAddressKey)),
 		unsubscribe: mac(secret, []byte(labelUnsubscribeKey)),
+		mailbox:     mac(secret, []byte(labelMailboxKey)),
 	}
+}
+
+// mailbox folds an address to the mailbox the send counter is kept for: lower
+// case, and a "+tag" at the end of the local part removed. Dots and other
+// provider specific aliases are not folded, see the package doc.
+func mailbox(address string) string {
+	address = strings.ToLower(address)
+	at := strings.LastIndexByte(address, '@')
+	if at <= 0 {
+		return address
+	}
+	local, domain := address[:at], address[at:]
+	if plus := strings.IndexByte(local, '+'); plus > 0 {
+		local = local[:plus]
+	}
+	return local + domain
+}
+
+// mailboxKey is the key of the send counter of the mailbox of address.
+func (k keys) mailboxKey(address string) Key {
+	var out Key
+	copy(out[:], mac(k.mailbox, []byte(mailbox(address))))
+	return out
 }
 
 // addressKey is the entry key of an address. The address is ASCII by

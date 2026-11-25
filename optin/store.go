@@ -10,25 +10,29 @@ import (
 	"time"
 )
 
-// Key identifies the entry of one address: HMAC-SHA-256 of the address in
-// lower case under a key derived from Config.Secret. It is pseudonymous, not
-// anonymous: whoever holds the secret can compute it from an address.
+// Key identifies a record. The key of an entry is HMAC-SHA-256 of the
+// address in lower case, the key of a send counter HMAC-SHA-256 of the
+// mailbox (see the package doc), each under its own key derived from
+// Config.Secret. It is pseudonymous, not anonymous: whoever holds the secret
+// can compute it from an address.
 type Key [32]byte
 
 // TokenHash is the SHA-256 of a confirmation token under a domain separator.
 // The token itself is never stored.
 type TokenHash [32]byte
 
-// State is the state of an entry.
+// State is the state of a record.
 type State uint8
 
-// The states of an entry. StateNone is never stored: [Store.Update] deletes
-// an entry whose function leaves it in StateNone.
+// The states of a record. StateNone is never stored: [Store.Update] deletes a
+// record whose function leaves it in StateNone.
 const (
 	StateNone State = iota
 	StatePending
 	StateConfirmed
-	StateSuppressed
+	// StateCounter is the send counter of one mailbox, not an entry of the
+	// list. It holds no address.
+	StateCounter
 )
 
 // String returns the lower case name of the state.
@@ -40,19 +44,21 @@ func (s State) String() string {
 		return "pending"
 	case StateConfirmed:
 		return "confirmed"
-	case StateSuppressed:
-		return "suppressed"
+	case StateCounter:
+		return "counter"
 	}
 	return "unknown"
 }
 
-// Entry is one address on the list. Which fields are set depends on the
+// Entry is one record of the store. Which fields are set depends on the
 // state:
 //
-//   - pending: every field, ConfirmHash, Sends and LastSent included.
+//   - pending: Key, Address, Language, ConsentVersion, Created and
+//     ConfirmHash.
 //   - confirmed: Key, Address, Language, ConsentVersion, Created and
-//     Confirmed. The token hash and the counters are zero.
-//   - suppressed: Key only. Everything else is zero.
+//     Confirmed. The token hash is zero.
+//   - counter: Key, Created (the start of the counting period), Sends and
+//     LastSent. No address.
 type Entry struct {
 	Key   Key
 	State State
@@ -63,15 +69,18 @@ type Entry struct {
 	Language string
 	// ConsentVersion is Config.ConsentVersion at the time of the request.
 	ConsentVersion string
-	// Created is the start of the pending period. A resend keeps it.
+	// Created is the start of the pending period of an entry, or of the
+	// counting period of a counter. A resend keeps it.
 	Created time.Time
 	// Confirmed is the time of the confirmation.
 	Confirmed time.Time
 	// ConfirmHash is the hash of the newest confirmation token.
 	ConfirmHash TokenHash
-	// Sends counts the confirmation mails of this pending period.
+	// Sends counts the confirmation mails to one mailbox in the counting
+	// period. Counter only.
 	Sends int
-	// LastSent is the time of the last confirmation mail.
+	// LastSent is the time of the last confirmation mail to the mailbox.
+	// Counter only.
 	LastSent time.Time
 }
 
@@ -79,32 +88,39 @@ type Entry struct {
 // nothing matches.
 var ErrNotFound = errors.New("optin: entry not found")
 
-// ErrStoreFull is returned by [MemoryStore.Update] when a new entry would pass
-// MaxEntries.
+// ErrStoreFull is returned by [MemoryStore.Update] when a new record would
+// pass MaxEntries.
 var ErrStoreFull = errors.New("optin: store is full")
 
-// Store keeps the entries. The package holds every rule, the store only has
+// Store keeps the records. The package holds every rule, the store only has
 // to keep each method atomic. A SQL adapter in a product implements it on
 // its own table, see the package doc for a schema. Every method must be safe
-// for concurrent use.
+// for concurrent use. An error text must not carry an address or a token,
+// because the handler logs it.
 type Store interface {
-	// Get returns the entry of key, or ErrNotFound.
+	// Get returns the record of key, or ErrNotFound.
 	Get(ctx context.Context, key Key) (Entry, error)
-	// Update loads the entry of key, calls fn with it and writes the result,
-	// as one atomic step against every other method: in SQL a transaction
-	// with SELECT ... FOR UPDATE. A missing entry is passed as an Entry with
-	// only Key set and State StateNone. When fn returns an error nothing is
-	// written and Update returns that error unchanged. When fn leaves the
-	// state at StateNone the entry is deleted. fn must not call the store.
+	// Update loads the record of key, calls fn with it and writes the
+	// result, as one atomic step against every other method, see the package
+	// doc for SQL. A missing record is passed with only Key set and State
+	// StateNone. When fn returns an error nothing is written and Update
+	// returns that error unchanged. When fn leaves the state at StateNone the
+	// record is deleted. fn must not call the store. Update may call fn more
+	// than once, when it retries a transaction: only the last call counts, so
+	// fn starts from what it is given every time.
 	Update(ctx context.Context, key Key, fn func(*Entry) error) error
 	// FindByConfirmHash returns the key of the pending entry whose
 	// ConfirmHash is h, or ErrNotFound. The handler checks the hash again
 	// under Update, so a stale answer is safe.
 	FindByConfirmHash(ctx context.Context, h TokenHash) (Key, error)
-	// DeletePendingBefore deletes every pending entry whose Created is at or
-	// before cutoff and returns how many it deleted. It never touches a
-	// confirmed or a suppressed entry.
-	DeletePendingBefore(ctx context.Context, cutoff time.Time) (int, error)
+	// DeleteUnconfirmedBefore deletes every pending entry and every counter
+	// whose Created is at or before cutoff and returns how many it deleted.
+	// It never touches a confirmed entry.
+	DeleteUnconfirmedBefore(ctx context.Context, cutoff time.Time) (int, error)
+	// DeleteConfirmedBefore deletes every confirmed entry whose Confirmed is
+	// at or before cutoff and returns how many it deleted. It never touches a
+	// pending entry or a counter.
+	DeleteConfirmedBefore(ctx context.Context, cutoff time.Time) (int, error)
 	// EachConfirmed calls fn with every confirmed entry, in any order, and
 	// stops at the first error of fn, which it returns. fn can be slow, it
 	// sends a mail: the store must not hold a lock or a transaction open
@@ -116,9 +132,8 @@ type Store interface {
 const DefaultMaxEntries = 100_000
 
 // MemoryStore is a [Store] in process memory. It is correct for one process
-// and loses every entry, every suppression marker included, when the process
-// ends. It suits tests and a site that accepts that loss. It is safe for
-// concurrent use.
+// and loses every record when the process ends. It suits tests and a site
+// that accepts that loss. It is safe for concurrent use.
 type MemoryStore struct {
 	mu      sync.Mutex
 	max     int
@@ -127,8 +142,7 @@ type MemoryStore struct {
 }
 
 // NewMemoryStore returns an empty store that holds at most maxEntries
-// entries, suppression markers included. Zero or less means
-// [DefaultMaxEntries].
+// records, counters included. Zero or less means [DefaultMaxEntries].
 func NewMemoryStore(maxEntries int) *MemoryStore {
 	if maxEntries <= 0 {
 		maxEntries = DefaultMaxEntries
@@ -166,15 +180,15 @@ func (m *MemoryStore) Update(ctx context.Context, key Key, fn func(*Entry) error
 		return err
 	}
 	e.Key = key
+	if !exists && e.State != StateNone && len(m.entries) >= m.max {
+		return ErrStoreFull
+	}
 	if exists && old.State == StatePending {
 		delete(m.byHash, old.ConfirmHash)
 	}
 	if e.State == StateNone {
 		delete(m.entries, key)
 		return nil
-	}
-	if !exists && len(m.entries) >= m.max {
-		return ErrStoreFull
 	}
 	m.entries[key] = e
 	if e.State == StatePending {
@@ -197,8 +211,21 @@ func (m *MemoryStore) FindByConfirmHash(ctx context.Context, h TokenHash) (Key, 
 	return key, nil
 }
 
-// DeletePendingBefore implements [Store].
-func (m *MemoryStore) DeletePendingBefore(ctx context.Context, cutoff time.Time) (int, error) {
+// DeleteUnconfirmedBefore implements [Store].
+func (m *MemoryStore) DeleteUnconfirmedBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return m.deleteWhere(ctx, func(e Entry) bool {
+		return (e.State == StatePending || e.State == StateCounter) && !e.Created.After(cutoff)
+	})
+}
+
+// DeleteConfirmedBefore implements [Store].
+func (m *MemoryStore) DeleteConfirmedBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return m.deleteWhere(ctx, func(e Entry) bool {
+		return e.State == StateConfirmed && !e.Confirmed.After(cutoff)
+	})
+}
+
+func (m *MemoryStore) deleteWhere(ctx context.Context, match func(Entry) bool) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -206,8 +233,10 @@ func (m *MemoryStore) DeletePendingBefore(ctx context.Context, cutoff time.Time)
 	defer m.mu.Unlock()
 	n := 0
 	for key, e := range m.entries {
-		if e.State == StatePending && !e.Created.After(cutoff) {
-			delete(m.byHash, e.ConfirmHash)
+		if match(e) {
+			if e.State == StatePending {
+				delete(m.byHash, e.ConfirmHash)
+			}
 			delete(m.entries, key)
 			n++
 		}
@@ -240,7 +269,7 @@ func (m *MemoryStore) EachConfirmed(ctx context.Context, fn func(Entry) error) e
 	return nil
 }
 
-// Len returns the number of entries, suppression markers included.
+// Len returns the number of records, counters included.
 func (m *MemoryStore) Len() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

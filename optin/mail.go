@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	netmail "net/mail"
 	"strings"
 	"time"
@@ -98,7 +97,7 @@ var errKindNotAllowed = errors.New("optin: mail kind not allowed for this entry"
 // recipient is the only way to an address for [Handler.deliver]. Only
 // newRecipient builds one, and it holds the rule: a confirmation goes to a
 // pending entry only, a mailing to a confirmed entry only, nothing to a
-// suppressed entry.
+// counter or a missing entry.
 type recipient struct {
 	key      Key
 	address  string
@@ -240,16 +239,15 @@ func (h *Handler) MailConfirmed(ctx context.Context, content func(MailingData) C
 }
 
 // guard runs fn and turns a panic into a cause that names the type of the
-// panic value only, because the value can hold an address.
-// http.ErrAbortHandler is re-panicked unchanged.
+// panic value only, because the value can hold an address. Every guarded
+// call runs outside the request goroutine (in New, in the mail goroutine or
+// in MailConfirmed), so nothing would catch a re-panic and it would end the
+// process: http.ErrAbortHandler is recovered like any other value.
 func guard(what string, fn func()) (cause error) {
 	defer func() {
 		p := recover()
 		if p == nil {
 			return
-		}
-		if err, ok := p.(error); ok && errors.Is(err, http.ErrAbortHandler) {
-			panic(p)
 		}
 		cause = loggedCause(what + " panicked with " + fmt.Sprintf("%T", p))
 	}()

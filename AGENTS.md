@@ -154,17 +154,21 @@ repeated here.
   main paths, not of every refusal. The limits and the replay set are per process, so
   several replicas multiply the budgets, and a few valid clients can use up the mail ceiling.
 - `optin` is the waitlist with double opt-in: `Challenge`, `Request`, `Confirm` and `Unsubscribe`
-  handlers, `Purge` and `RunPurge`, `MailConfirmed` and `Wait`. It builds on the same packages
-  as `contact` and never imports `session` or `database`. `Request` answers the same 200 for
-  every address, takes the global ceiling before the state is known and sends the confirmation
-  mail after the answer. Every mail leaves through one function that takes a `recipient`, which
-  only a pending entry (confirmation) or a confirmed entry (mailing) yields, and carries the
-  unsubscribe link and `List-Unsubscribe` with `List-Unsubscribe-Post`. Confirmation tokens are
-  random and stored as a hash, unsubscribe tokens are an HMAC of the entry key and not stored.
-  An unsubscribe leaves a suppression marker with the key only. The `Store` interface has five
-  methods and `MemoryStore`, and govue ships no SQL store: the package doc has the schema. No IP
-  address is stored. The site writes every mail text. "Waitlist with double opt-in" in the
-  concept doc is the spec.
+  handlers, `Purge` and `RunPurge`, `DeleteConfirmedBefore`, `MailConfirmed` and `Wait`. It
+  builds on the same packages as `contact` and never imports `session` or `database`. `Request`
+  answers the same 200 for every address, takes the global ceiling before the state is known,
+  runs the same two store updates for every address and sends the confirmation mail after the
+  answer. The send limit is a counter per mailbox (lower case, `+tag` removed, dots not folded),
+  the entry stays per full address. Every mail leaves through one function that takes a
+  `recipient`, which only a pending entry (confirmation) or a confirmed entry (mailing) yields,
+  and carries the unsubscribe link and `List-Unsubscribe` with `List-Unsubscribe-Post`.
+  Confirmation tokens are random and stored as a hash, unsubscribe tokens are an HMAC of the
+  entry key and not stored. An unsubscribe deletes the entry at once and keeps nothing, the
+  owner's decision. A panic in the mail goroutine is recovered, `http.ErrAbortHandler`
+  included. The `Store` interface has six methods and `MemoryStore`, and govue ships no SQL
+  store: the package doc has the schema and the transaction. No IP address is stored. The site
+  writes every mail text and sets the retention of confirmed entries. "Waitlist with double
+  opt-in" in the concept doc is the spec.
 - `database` holds the PostgreSQL connection of a product: `Config` and `LoadConfig` with the
   `DB_*` variables, the pgx pool, the migration runner over an `fs.FS` and `Check` for
   readiness. The password is a `database.Secret`, held in a closure, so no fmt verb, encoder,

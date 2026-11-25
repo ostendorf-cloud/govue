@@ -3298,7 +3298,7 @@ try {
 
 - Problem. A marketing site needs a waitlist (solobill issue 5). `contact` is stateless and mails
   only the owner, so it cannot hold a list. Without a govue package every site writes its own
-  opt-in, token and suppression code, and each copy is a new place to get consent, enumeration
+  opt-in, token and unsubscribe code, and each copy is a new place to get consent, enumeration
   or mail bombing wrong.
 - Goals. A site wires `optin` and writes no opt-in code: a request, a confirm and an unsubscribe
   handler, a purge, and one call that mails every confirmed entry. An unconfirmed address
@@ -3313,9 +3313,11 @@ try {
   as `http.Handler` values, like `contact`. It builds on `pow`, `mail`, `csrf` (origin half),
   `ratelimit`, `middleware.RateLimit`, `api` and `clientip`. It imports no `session` and no
   `database`: no cookie, no session, no CSRF token.
-- `Handler.Purge` deletes expired unconfirmed entries, `Handler.RunPurge` calls it on a ticker
-  until its context ends. `Handler.MailConfirmed` sends one site written mail to each confirmed
-  entry. `Handler.Wait` waits for confirmation mails still in flight, for a clean shutdown.
+- `Handler.Purge` deletes expired unconfirmed entries and send counters, `Handler.RunPurge` calls
+  it on a ticker until its context ends. `Handler.DeleteConfirmedBefore` deletes confirmed
+  entries at the retention the site sets. `Handler.MailConfirmed` sends one site written mail to
+  each confirmed entry. `Handler.Wait` waits for confirmation mails still in flight, for a clean
+  shutdown.
 - The site supplies every word: the subject and body of the confirmation mail and of a mailing
   are functions of the site, the consent text and its version are the site's. The package writes
   no marketing text and no legal text. It only adds the headers and refuses a body without the
@@ -3328,11 +3330,15 @@ try {
   one entry. The address itself is stored as the visitor typed it, trimmed, because a mail goes
   to it.
 - A pending entry holds the address, the state, the creation time of the pending period, the
-  consent text version (`Config.ConsentVersion`, the site's), the language hint of the page, the
-  hash of the current confirmation token, the number of confirmation mails sent in this period
-  and the time of the last one.
+  consent text version (`Config.ConsentVersion`, the site's), the language hint of the page and
+  the hash of the current confirmation token.
 - A confirmed entry keeps the address, the creation and confirmation times, the consent version
-  and the language. The token hash and the counters are cleared.
+  and the language. The token hash is cleared.
+- A send counter per mailbox, a record of its own: a keyed hash of the mailbox (see "Limits"),
+  the number of confirmation mails in the counting period, the time of the last one and the
+  start of the period. No address. It goes with the purge when its period ends.
+- Retention of confirmed entries: the site decides and calls `DeleteConfirmedBefore`. solobill
+  keeps them 12 months after its launch mail.
 - No IP address, no user agent, no referrer, no name. Decision: none by default and no option in
   this version. Reading of the GDPR, not verified and not legal advice: Art. 7(1) asks the
   controller to demonstrate consent, and Art. 5(1)(c) asks for data minimisation. The proof of a
@@ -3345,20 +3351,17 @@ try {
 
 #### Unsubscribe
 
-- Decision: unsubscribe deletes the entry and keeps a suppression marker, the keyed hash of the
-  address with the state `suppressed` and no other field. No address, no time, no version.
-- Reason: a deleted address could be added again by a request of a third party or by an import,
-  and then mailed. The marker makes a request for that address a silent no-op, and an import tool
-  of the site can check it through `Handler.Suppressed`. The "this was not me" link in a
-  confirmation mail is the same unsubscribe, so a victim of a mail bomb stops it for good.
-- Reading of the GDPR, not verified and not legal advice: the hash is still personal data,
-  pseudonymous under Recital 26, because the site can recompute it from an address. Keeping a
-  minimal suppression record is the common reading of honouring an objection to direct marketing
-  (Art. 21(3)). A site names it in its privacy text.
-- A suppressed address can be added again only by the site through `Handler.Unsuppress`, on the
-  person's direct request. The form cannot lift it.
-- Dropped: delete only (an import or a third party can re-add and mail the address), and keeping
-  the full entry with a flag (more data than the purpose needs).
+- Decision of the owner, 25 November 2026: unsubscribe deletes the entry at once, pending or
+  confirmed, and keeps nothing of it. Whoever signs up again is entered again.
+- Consequence, stated plainly: the "this was not me" link in a confirmation mail no longer stops
+  a mail bomb for good. A third party can restart the confirmation mails to that address after
+  each unsubscribe. The bound is the per mailbox counter, which an unsubscribe does not reset:
+  at most 3 mails per 48 hours to one mailbox, plus the global ceiling. The counter is a keyed
+  hash with a count and two times, deleted when its 48 hour period ends.
+- Dropped: a permanent suppression marker, the keyed hash of the address kept after the
+  unsubscribe. It would stop a re-add by a third party or an import, but the owner decided
+  against keeping any hash of an address that left. Also dropped: keeping the full entry with a
+  flag, more data than any purpose needs.
 
 #### Tokens
 
@@ -3376,25 +3379,27 @@ try {
   confirmed entry long after the request, and a random token stored only as a hash cannot be put
   into a later mail. A stored plain token would be a credential in the database. It does not
   expire, so an old mail can always unsubscribe, which RFC 8058 and an easy withdrawal ask for.
-  It is idempotent rather than single use: a second use finds the marker and answers the same.
+  It is idempotent rather than single use: a second use finds nothing and answers the same.
 - The links put the token in the query, `?token=`. The site's confirm and unsubscribe pages read
   it and POST it as JSON. The access log carries the route pattern only, and the site's
   `Referrer-Policy` keeps it out of other hosts.
 - Confirm is a POST from the page, never a GET of the link: a mail scanner that follows links
   must not confirm. A scanner that runs the page's script still can. That is a known limit of
   every link based double opt-in.
-- One `Config.Secret` of at least 32 bytes derives the address key and the unsubscribe key with
-  HMAC and fixed labels. Rotating it changes every entry key. Rotation is an open question.
+- One `Config.Secret` of at least 32 bytes derives the address key, the mailbox key and the
+  unsubscribe key with HMAC and fixed labels. It is used for nothing else, never as the proof of
+  work key or any other key. Rotating it changes every entry key. Rotation is an open question.
 
 #### No enumeration
 
-- `Request` answers 200 `{"ok":true}` for a new, a pending, a confirmed and a suppressed address,
-  and for a resend that the per address limit refused. Body and status are equal.
-- Timing: every valid request generates a token, takes a global ceiling token and runs one store
-  update, whatever the state. The mail is sent after the answer, in a goroutine, so the SMTP time
-  never shows in the answer. The remaining difference is the branch inside the store update and
-  the write of a new entry against a no-op, microseconds in memory and one row write in a
-  database. A test pins equal status and body, not equal time.
+- `Request` answers 200 `{"ok":true}` for a new, a pending, a confirmed and an unsubscribed
+  address, and for a resend that the per mailbox limit refused. Body and status are equal.
+- Timing: every valid request generates a token, takes a global ceiling token and runs two store
+  updates, the counter and the entry, whatever the state. The counter is taken for a confirmed
+  address too, so that path costs the same. The mail is sent after the answer, in a goroutine,
+  so the SMTP time never shows in the answer. The remaining difference is the branch inside the
+  updates and the write of a new row against a no-op, microseconds in memory and one row write
+  in a database. A test pins equal status and body, not equal time.
 - The global ceiling is taken before the state is known, so an exhausted ceiling refuses every
   address with the same 503 and tells nothing about one address.
 - `Confirm` and `Unsubscribe` answer one code, `token_invalid`, for an unknown, an expired, a used
@@ -3404,10 +3409,18 @@ try {
 
 - Per client: 5 requests per 10 minutes on `Request`, 10 challenges per 20 seconds, keyed by
   `clientip`, in memory, as in `contact`.
-- Per address, in the store, so it holds across replicas with a shared store: at most
-  `MaxSendsPerAddress` confirmation mails per pending period (3 by default) and at least
-  `ResendInterval` between two (10 minutes by default). A third party can therefore cause at
-  most 3 mails per 48 hours to one address, and one click on "this was not me" ends it.
+- Per mailbox, in the store, so it holds across replicas with a shared store: at most
+  `MaxSendsPerAddress` confirmation mails per counting period of `PendingTTL` (3 per 48 hours by
+  default) and at least `ResendInterval` between two (10 minutes by default). The entry stays
+  per full address, the counter is per mailbox.
+- The mailbox is the address in lower case with a `+tag` at the end of the local part removed,
+  so `ada+1@x` and `Ada+news@x` share one budget. Decision taken without the owner, as the
+  review asked: fold the plus tag, nothing else.
+- Honest limit: dots, which Gmail ignores, and every other provider specific alias are not
+  folded. `a.da@gmail.com` and `ada@gmail.com` reach one inbox with a budget each, and there are
+  many such variants. The real bound per inbox is therefore the global ceiling, 50 confirmation
+  mails per hour per process by default, not 3 per 48 hours. Folding dots for every domain
+  would merge distinct mailboxes at providers where dots matter.
 - Global: a ceiling of 50 confirmation mails per hour, per process, never refunded, as in
   `contact`.
 - Confirm has a per client limit as well, 10 per minute. With 256 bits a token cannot be
@@ -3415,8 +3428,8 @@ try {
 - Unsubscribe has no per client limit. A one click POST comes from a mail provider's servers,
   so many recipients share one client address, and a limit would refuse honest unsubscribes. The
   MAC is checked before the store is touched, so a forged token costs one HMAC.
-- A full `MemoryStore` drops a new request with the same 200 and a warning in the log, and an
-  unsubscribe that needs a new marker answers 503 `busy`.
+- A full `MemoryStore` drops a new request with the same 200 and a warning in the log. An
+  unsubscribe only deletes, so it never needs room.
 
 #### Only the confirmation mail to an unconfirmed address
 
@@ -3440,15 +3453,18 @@ try {
 
 #### Store
 
-- Decision: a `Store` interface with five methods and `MemoryStore` in the package, no PostgreSQL
+- Decision: a `Store` interface with six methods and `MemoryStore` in the package, no PostgreSQL
   store in govue.
 - Reason: `database` keeps pgx confined to itself, and a store that runs SQL needs pgx types or
   a second driver. The repository rule is also that the product keeps its schema and its
   queries, the same reason `account` ships no tables. The package doc gives a reference schema
   and the atomicity each method needs, so an adapter is a short file in the product.
-- `Update` loads one entry, runs the package's function on it and writes the result atomically:
-  in SQL a transaction with `SELECT ... FOR UPDATE`. All rules live in the package and run against
-  `MemoryStore` in the tests.
+- `Update` loads one record, runs the package's function on it and writes the result atomically.
+  In SQL that is a READ COMMITTED transaction with `SELECT ... FOR UPDATE` and a plain `INSERT`
+  for a missing row, retried on `unique_violation`, because a missing row locks nothing and
+  `ON CONFLICT DO UPDATE` would let a second first request overwrite the first. The package doc
+  spells it out. It is reasoned from the PostgreSQL documentation and not run against a server.
+  All rules live in the package and run against `MemoryStore` in the tests.
 - `MemoryStore` is correct for one process and loses everything at a restart. It suits tests and
   a site that accepts that loss. It is bounded by `MaxEntries`.
 
@@ -3456,8 +3472,12 @@ try {
 
 - An unconfirmed entry is deleted once its pending period ends, `PendingTTL` after the first
   request, 48 hours by default. `Confirm` refuses an expired token even before the purge ran, and
-  a request for an expired entry starts a new period. `RunPurge` runs `Purge` every
-  `PurgeInterval` (one hour by default). The site starts it once.
+  a request for an expired entry starts a new period. A send counter goes once its counting
+  period ends. `RunPurge` runs `Purge` every `PurgeInterval` (one hour by default). The site
+  starts it once.
+- Confirmed entries are not the purge's job. The site sets their retention and calls
+  `DeleteConfirmedBefore`, which deletes confirmed entries confirmed at or before a time and
+  nothing else.
 
 #### Waitlist alternatives dropped
 
@@ -3469,13 +3489,15 @@ try {
 - Sending the confirmation mail inside the request: simpler, but the SMTP time tells a new
   address from a known one.
 - An in memory per address limiter: lost at a restart and per replica, while the store already
-  holds the entry the limit belongs to.
+  holds the records the limit belongs to.
+- The counter on the entry of the full address: a third party could use `+tag` variants to get a
+  fresh budget for one mailbox each time.
 
 #### Open questions of the waitlist
 
 - Whether a site needs an option to store the IP address with the confirmation. The owner
   decides, with a legal reading.
-- Rotation of `Config.Secret` without losing the entry keys and the suppression markers. Next
+- Rotation of `Config.Secret` without losing the entry keys and the old unsubscribe links. Next
   step: a second key list when the first site needs a rotation.
 - A conformance suite `optin/optintest` for a product's SQL adapter, like `accounttest`. Next
   step: with the first adapter.
