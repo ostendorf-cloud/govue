@@ -202,6 +202,66 @@ const de: MessageTree = {
         generic: 'Etwas ist schiefgegangen. Bitte versuche es erneut.',
       },
     },
+    waitlist: {
+      title: 'Warteliste',
+      field: {
+        email: 'E-Mail-Adresse',
+        honeypot: 'Dieses Feld bitte leer lassen',
+      },
+      privacy: 'Datenschutzerklärung',
+      privacyIntro: 'So gehen wir mit deinen Angaben um:',
+      submit: 'Auf die Warteliste',
+      solving: 'Die Spam-Prüfung läuft in deinem Browser. Das dauert ein paar Sekunden.',
+      sending: 'Deine Anfrage wird gesendet',
+      success:
+        'Fast geschafft. Bitte sieh in dein Postfach und bestätige deine Adresse über den Link in der Mail. Eine Adresse, die schon auf der Liste steht, bekommt keine neue Mail.',
+      another: 'Andere Adresse eintragen',
+      failure: 'Die Anfrage ist fehlgeschlagen.',
+      unavailable: 'Das Formular der Warteliste ist nicht verfügbar.',
+      noscript:
+        'Dieses Formular braucht JavaScript, weil es eine Spam-Prüfung in deinem Browser ausführt. Bitte schalte JavaScript ein, um dich auf die Warteliste zu setzen.',
+      unsupported:
+        'Dieser Browser kann die Spam-Prüfung dieses Formulars nicht ausführen. Bitte nutze einen aktuellen Browser, um dich auf die Warteliste zu setzen.',
+      error: {
+        required: 'Bitte gib deine E-Mail-Adresse ein.',
+        tooLong: 'Das ist zu lang. Erlaubt sind höchstens {max} Zeichen.',
+        invalidChars: 'Das enthält Zeichen, die nicht erlaubt sind.',
+        nonAsciiEmail:
+          'Bitte nutze eine E-Mail-Adresse ohne Umlaute und andere Sonderzeichen, etwa ä, ö, ü, ß oder é.',
+        invalid: 'Das ist keine gültige E-Mail-Adresse.',
+        consentRequired: 'Bitte stimme zu, bevor du dich einträgst.',
+        invalidRequest:
+          'Das Formular konnte nicht angenommen werden. Bitte prüfe deine Eingaben und versuche es erneut.',
+        notConfigured:
+          'Die Warteliste ist noch nicht eingerichtet. Bitte versuche es später erneut.',
+        powRequired:
+          'Die Spam-Prüfung fehlt. Es wurde nichts gesendet. Bitte sende das Formular erneut.',
+        powInvalid:
+          'Die Spam-Prüfung ist fehlgeschlagen. Es wurde nichts gesendet. Bitte sende das Formular erneut.',
+        powExpired:
+          'Die Spam-Prüfung ist abgelaufen. Es wurde nichts gesendet. Bitte sende das Formular erneut.',
+        powTooFast:
+          'Das Formular wurde zu schnell gesendet. Bitte warte einen Moment und sende es erneut.',
+        powReplay:
+          'Die Spam-Prüfung wurde schon verwendet. Es wurde nichts gesendet. Bitte sende das Formular erneut.',
+        powBusy:
+          'Der Server ist gerade ausgelastet. Es wurde nichts gesendet. Bitte versuche es gleich erneut.',
+        powBusyWait:
+          'Der Server ist gerade ausgelastet. Es wurde nichts gesendet. Bitte versuche es {wait} erneut.',
+        mailLimit:
+          'Die Warteliste hat ihr Limit an Mails vorerst erreicht. Es wurde nichts gesendet. Bitte versuche es später erneut.',
+        mailLimitWait:
+          'Die Warteliste hat ihr Limit an Mails vorerst erreicht. Es wurde nichts gesendet. Bitte versuche es {wait} erneut.',
+        rateLimited: 'Zu viele Anfragen. Bitte warte ein paar Minuten und versuche es erneut.',
+        rateLimitedWait: 'Zu viele Anfragen. Bitte versuche es {wait} erneut.',
+        tooLarge: 'Die Anfrage ist zu groß zum Senden.',
+        refused: 'Die Anfrage wurde abgelehnt. Bitte lade die Seite neu und versuche es erneut.',
+        solver:
+          'Die Spam-Prüfung konnte in diesem Browser nicht laufen. Es wurde nichts gesendet. Bitte lade die Seite neu oder nutze einen anderen Browser.',
+        network: 'Keine Verbindung zum Server. Bitte prüfe dein Netzwerk und versuche es erneut.',
+        generic: 'Etwas ist schiefgegangen. Bitte versuche es erneut.',
+      },
+    },
   },
 }
 

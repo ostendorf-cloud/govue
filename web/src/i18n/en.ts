@@ -191,6 +191,57 @@ const en: MessageTree = {
         generic: 'Something went wrong. Please try again.',
       },
     },
+    waitlist: {
+      title: 'Waitlist',
+      field: {
+        email: 'Email address',
+        honeypot: 'Leave this field empty',
+      },
+      privacy: 'Privacy policy',
+      privacyIntro: 'How your details are handled:',
+      submit: 'Join the waitlist',
+      solving: 'Running the spam check in your browser. This takes a few seconds.',
+      sending: 'Sending your request',
+      success:
+        'Almost done. Please check your inbox and confirm your address with the link in the mail. An address that is already on the list gets no new mail.',
+      another: 'Use another address',
+      failure: 'The request failed.',
+      unavailable: 'The waitlist form is not available.',
+      noscript:
+        'This form needs JavaScript, because it runs a spam check in your browser. Please turn on JavaScript to join the waitlist.',
+      unsupported:
+        'This browser cannot run the spam check this form needs. Please use a current browser to join the waitlist.',
+      error: {
+        required: 'Please enter your email address.',
+        tooLong: 'This is too long. At most {max} characters are allowed.',
+        invalidChars: 'This contains characters that are not allowed.',
+        nonAsciiEmail:
+          'Please use an email address without umlauts or other special characters, such as ä, ö, ü, ß or é.',
+        invalid: 'This is not a valid email address.',
+        consentRequired: 'Please agree before you join.',
+        invalidRequest: 'The form could not be accepted. Please check your input and try again.',
+        notConfigured: 'The waitlist is not set up yet. Please try again later.',
+        powRequired: 'The spam check is missing. Nothing was sent. Please send the form again.',
+        powInvalid: 'The spam check failed. Nothing was sent. Please send the form again.',
+        powExpired: 'The spam check ran out of time. Nothing was sent. Please send the form again.',
+        powTooFast: 'The form was sent too fast. Please wait a moment and send it again.',
+        powReplay: 'The spam check was already used. Nothing was sent. Please send the form again.',
+        powBusy: 'The server is busy right now. Nothing was sent. Please try again in a moment.',
+        powBusyWait: 'The server is busy right now. Nothing was sent. Please try again {wait}.',
+        mailLimit:
+          'The waitlist has reached its limit of mails for now. Nothing was sent. Please try again later.',
+        mailLimitWait:
+          'The waitlist has reached its limit of mails for now. Nothing was sent. Please try again {wait}.',
+        rateLimited: 'Too many requests. Please wait a few minutes and try again.',
+        rateLimitedWait: 'Too many requests. Please try again {wait}.',
+        tooLarge: 'The request is too large to send.',
+        refused: 'The request was refused. Please reload the page and try again.',
+        solver:
+          'The spam check could not run in this browser. Nothing was sent. Please reload the page or try another browser.',
+        network: 'No connection to the server. Please check your network and try again.',
+        generic: 'Something went wrong. Please try again.',
+      },
+    },
   },
 }
 
