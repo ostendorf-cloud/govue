@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.10.1](https://github.com/ostendorf-cloud/govue/compare/v0.10.0...v0.10.1) (2026-11-25)
+
+### Bug Fixes
+
+- **web:** drop the open nav menu below the header bar from 480px ([#264](https://github.com/ostendorf-cloud/govue/pull/264))
+
 ## [v0.10.0](https://github.com/ostendorf-cloud/govue/compare/v0.9.0...v0.10.0) (2026-11-24)
 
 ### Features
