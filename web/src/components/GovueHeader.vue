@@ -70,7 +70,10 @@ const placements: Record<NavPlacement, string> = {
        state, so the header never changes size when it turns solid. A site
        styles it through the --color-header-bg, --color-header-border and
        --header-backdrop tokens. The default backdrop is none, so the header is
-       no containing block for fixed descendants. data-state is the hook for a site's own rules. -->
+       no containing block for fixed descendants. data-state is the hook for a site's own rules.
+       Sticky or fixed, the header is the containing block of the open GovueNav
+       list between 480 and 639px, which drops below the bar. No element between
+       the header and the list may be positioned, or the list hangs from that one. -->
   <header
     :data-state="solid ? 'solid' : 'transparent'"
     :data-overlay="overlay ? 'true' : undefined"

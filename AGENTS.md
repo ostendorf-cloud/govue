@@ -53,8 +53,10 @@ repeated here.
   the alpha at 0.95 or more. `GovueLanguageSwitch` renders links with `linkFor` and hands a
   click to the router through `navigate`, and `othersOnly` leaves the current language out.
   `web/e2e/header-width.spec.ts` measures the narrow header at 360, 480 and 640px in Chromium,
-  on its own harness page with the real Tailwind classes. "The header and the navigation" is
-  the spec.
+  on its own harness page with the real Tailwind classes, and the open menu at 360, 480, 560
+  and 639px. Between 480 and 639px the open list hangs from the header element below the bar,
+  so nothing between the header and the list may be positioned. "The header and the
+  navigation" is the spec.
 - `web/src/i18n/` holds the language layer: the `createGovueI18n` plugin, the German and
   English catalogues and `catalogues.ts`, the one list of languages. `GovueLanguageSwitch`
   lives in `web/src/components/` with the other components.

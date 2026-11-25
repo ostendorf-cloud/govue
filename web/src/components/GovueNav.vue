@@ -62,6 +62,20 @@ const header = inject(headerContextKey, null)
 watch(open, (value) => header?.setMenuOpen(value))
 onBeforeUnmount(() => header?.setMenuOpen(false))
 
+// From 480px the header is one row of --spacing-header, too low for the open
+// list. Between 480 and 639px the list therefore leaves the flow and drops
+// below the bar, over the page, full width, on the ground of the header. Its
+// containing block is the header element, which is sticky or fixed: nothing
+// between them is positioned. top-full is the top of the header's bottom
+// border, and the list's own top border lies on it. It scrolls when it is
+// taller than the window below the bar. Below 480px the list stays in the
+// flow, on the navigation row, and from 640px it is the inline row. Outside a
+// header the list always stays in the flow. Whole class names, so Tailwind
+// finds them.
+const dropBelowBar = header
+  ? 'min-[480px]:max-sm:absolute min-[480px]:max-sm:inset-x-0 min-[480px]:max-sm:top-full min-[480px]:max-sm:max-h-[calc(100dvh-var(--spacing-header))] min-[480px]:max-sm:overflow-y-auto min-[480px]:max-sm:border-y min-[480px]:max-sm:border-header-border min-[480px]:max-sm:bg-header-bg min-[480px]:max-sm:px-4'
+  : ''
+
 /** close returns focus to the toggle, so Escape does not drop the visitor at
  *  the top of the page. */
 function close(): void {
@@ -102,6 +116,7 @@ function close(): void {
       :class="[
         'gap-1 py-2 sm:flex sm:flex-row sm:items-center sm:py-0',
         open ? 'flex flex-col' : 'hidden',
+        dropBelowBar,
       ]"
     >
       <li v-for="item in items" :key="item.href">

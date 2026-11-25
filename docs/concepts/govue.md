@@ -2049,6 +2049,28 @@ try {
   button or the call to action leaves it or the header grows past one row. Below 480 px the
   navigation keeps its own row, the documented layout: a menu button does not fit next to a
   brand and the two actions in 328 px. jsdom has no layout, so the spec runs in Chromium.
+- The open menu of `GovueNav` sits below the bar at every width below 640 px. Below 480 px it is
+  the navigation row of the header, in the flow, and the header grows with it. From 480 px the
+  header is one row of `--spacing-header`, too low for the list. Issue 263 showed the list
+  centred on that row there, cut off above the window, with the menu button pushed out of view.
+  So between 480 and 639 px the list leaves the flow (`absolute`, `inset-x-0`, `top-full`):
+  it hangs from the header element, full width, over the page. Its own top border lies on the
+  bottom border of the bar. It takes the ground and the border of the header
+  (`bg-header-bg`, `border-header-border`), and an overlay header turns solid while it is
+  open, as before. Its height is at most the window below the bar
+  (`calc(100dvh - var(--spacing-header))`), and it scrolls when it is taller. Opening and
+  closing it changes neither the header height nor the place of the page content. The header
+  is `sticky` or `fixed`, so it is the containing block, and no element between the header and
+  the list may be positioned. Every class of the drop carries `min-[480px]:max-sm:`, so the
+  layout below 480 px and from 640 px is unchanged. Outside a `GovueHeader` the list stays in
+  the flow at every width. It stays inside the stacking context of the header (`z-10`), so it
+  covers the page and stays under a dialog.
+- The same spec opens the menu at 360, 480, 560 and 639 px. It fails when an entry leaves the
+  window, an entry starts above the bottom of the menu button, the menu button leaves the bar
+  or, from 480 px, the first entry starts above the bottom of the bar, the header height
+  changes or the page content moves. Escape closes the menu with focus on the button. A second
+  case at 560 by 140 px checks that the list ends at the window and scrolls. Put the list back
+  in the flow from 480 px, and the spec fails.
 - `overlay` takes the header out of the flow (`position: fixed`), so the page content starts
   under it and nothing shifts when it turns solid: the row has the same height and border width
   in both states. It is transparent, without border and blur, until the page has scrolled past a
@@ -2057,7 +2079,7 @@ try {
   its own rules on them. Without `overlay` the header is `sticky` and always `solid`.
 - An open mobile menu always has the solid ground, as the menu lists links over whatever is
   behind the header. `GovueNav` reports its open state to the header it sits in, which is the
-  only change the menu got. Reduced motion switches the ground without a transition
+  only change the overlay made to the menu. Reduced motion switches the ground without a transition
   (`motion-reduce:transition-none`, and the global rule in `base.css`).
 - The scroll state is `useScrolled({ threshold?, active? })`, exported from the package. The
   listener is passive, is attached only while `active` is true (the header passes `overlay`),
