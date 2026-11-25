@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.11.0](https://github.com/ostendorf-cloud/govue/compare/v0.10.1...v0.11.0) (2026-11-25)
+
+### Features
+
+- **optin:** add a waitlist package with double opt-in ([#270](https://github.com/ostendorf-cloud/govue/pull/270))
+- **frontend:** add app mode for a single page app build ([#269](https://github.com/ostendorf-cloud/govue/pull/269))
+
 ## [v0.10.1](https://github.com/ostendorf-cloud/govue/compare/v0.10.0...v0.10.1) (2026-11-25)
 
 ### Bug Fixes
