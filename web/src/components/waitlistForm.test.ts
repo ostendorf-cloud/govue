@@ -30,32 +30,40 @@ function text(tree: MessageTree, key: string): string | undefined {
   return typeof node === 'string' ? node : undefined
 }
 
+/** The Code* string constants of a Go source file of the optin package. */
+function goCodes(file: string): string[] {
+  const source = readFileSync(
+    fileURLToPath(new URL(`../../../optin/${file}`, import.meta.url)),
+    'utf8',
+  )
+  return [...source.matchAll(/^\s*Code\w+\s*=\s*"([a-z_]+)"/gm)].map((m) => m[1])
+}
+
+// The Go sources are in this repository: a missing file fails, it never skips.
+const OPTIN_CODES = goCodes('handler.go')
+/** optin.CodeTokenInvalid: an answer of Confirm and Unsubscribe only. */
+const NOT_REQUEST_CODES = ['token_invalid']
 /**
- * Every code the Request route of optin/handler.go answers with, written out
- * from govue PR #270, which is not on main yet. The first block is the optin
- * Code* constants, the second the api codes the handler uses.
+ * The codes of the api package that optin/handler.go also answers with, as
+ * its comment above the Code* constants lists them. They are api constants,
+ * not optin ones, so they are written out here.
  */
-const REQUEST_CODES = [
-  'cross_origin',
-  'not_configured',
-  'pow_required',
-  'pow_invalid',
-  'pow_expired',
-  'pow_too_fast',
-  'pow_replay',
-  'pow_busy',
-  'mail_limit',
-  'method_not_allowed',
+const API_CODES = [
   'invalid_argument',
   'unsupported_media_type',
   'request_too_large',
   'too_many_requests',
   'internal',
 ]
-/** optin.CodeTokenInvalid: an answer of Confirm and Unsubscribe only. */
-const NOT_REQUEST_CODES = ['token_invalid']
+/** The codes the client itself adds for a failed transport. */
+const CLIENT_CODES = ['network', 'timeout']
+/** Every code the Request route answers with. */
+const REQUEST_CODES = [
+  ...OPTIN_CODES.filter((code) => !NOT_REQUEST_CODES.includes(code)),
+  ...API_CODES,
+]
 /** The field codes of optin/mail.go. */
-const FIELD_CODES = ['required', 'too_long', 'invalid_chars', 'non_ascii_email', 'invalid']
+const FIELD_CODES = goCodes('mail.go')
 
 /** Every catalogue a visitor can get: each language and each formal variant. */
 const trees: Array<[string, MessageTree]> = [
@@ -74,16 +82,17 @@ const componentSource = readFileSync(
 const componentKeys = [...componentSource.matchAll(/t\('(govue\.[\w.]+)'/g)].map((m) => m[1])
 
 describe('the codes of the waitlist form', () => {
-  it('has a text key for every code of the Request route', () => {
-    for (const code of REQUEST_CODES) {
-      expect(Object.keys(WAITLIST_REFUSAL_CODES), code).toContain(code)
+  it('reads the codes of optin/handler.go', () => {
+    expect(OPTIN_CODES.length).toBeGreaterThan(5)
+    for (const code of NOT_REQUEST_CODES) {
+      expect(OPTIN_CODES, code).toContain(code)
     }
   })
 
-  it('maps no code that Request never answers', () => {
-    for (const code of NOT_REQUEST_CODES) {
-      expect(Object.keys(WAITLIST_REFUSAL_CODES), code).not.toContain(code)
-    }
+  it('maps exactly the codes of the Request route and of the client, no more and no less', () => {
+    expect(Object.keys(WAITLIST_REFUSAL_CODES).sort()).toEqual(
+      [...REQUEST_CODES, ...CLIENT_CODES].sort(),
+    )
   })
 
   it('has a text key for every field code of the address check', () => {

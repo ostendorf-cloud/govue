@@ -3,7 +3,7 @@
 
 /**
  * A fake of the Request and Challenge handlers of the Go optin package for
- * tests, written from optin/handler.go and optin/mail.go of govue PR #270. It
+ * tests, written from optin/handler.go and optin/mail.go of the Go module. It
  * is the contact fake with the body and the field check of optin:
  *
  * - the body keys are `email`, `consent`, `language`, `website` and `pow`,

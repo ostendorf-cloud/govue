@@ -3610,7 +3610,7 @@ try {
 
 ### Waitlist form
 
-- `GovueWaitlistForm` is the Vue half of the `optin` package's `Request` route (PR #270). It
+- `GovueWaitlistForm` is the Vue half of the `Request` route in `optin/handler.go`. It
   is built like `GovueContactForm`: a `client` from `createClient`, the proof of work through
   `createChallengeSolver`, a honeypot `website`, codes mapped to catalogue texts, no cookie,
   no CSRF token and no third party. A bearer client is refused and the form renders nothing.
@@ -3627,12 +3627,16 @@ try {
   changes the text of the form and `Config.ConsentVersion` in the same release. The body is
   exactly `email`, `consent`, `language` (the page locale, when the language layer is
   installed), `website` and `pow`.
+- A page loaded before a deploy can still send its request after it, under the new
+  `Config.ConsentVersion`, while the visitor saw the old text. The stored version therefore
+  names the text in force when the server received the request, not the text the visitor read.
 - States: idle, solving (the status says the spam check runs in the browser), sending, and
   done (the status asks the visitor to check the inbox and says that an address already on the
-  list gets no new mail). Every code of `Request` has its own text: `cross_origin`,
+  list gets no new mail). Every code of `Request` has a text: `cross_origin`,
   `not_configured`, the six `pow_` codes, `mail_limit`, `too_many_requests`,
   `request_too_large`, `unsupported_media_type`, `method_not_allowed`, `invalid_argument` and
-  `internal`, plus the client's `network` and `timeout`. `mail_limit`, `too_many_requests` and
+  `internal`, plus the client's `network` and `timeout`. Codes that ask the same step of the
+  visitor share one text, and each `pow_` code has its own. `mail_limit`, `too_many_requests` and
   `pow_busy` name the wait of a `Retry-After`. The field codes of optin land on the address
   field, and `consent: required` on the box.
 - Without JavaScript a `noscript` text says the form needs it for the spam check. The server
