@@ -117,12 +117,17 @@ func newApp(cfg Config) (*Server, error) {
 	if len(cfg.ThemeBoot) > 0 && !appCfg.ThemeBoot {
 		fail(errors.New("frontend: Config.ThemeBoot needs Config.App.ThemeBoot in app mode"))
 	}
-	publicFiles, err := checkPublicFiles(cfg.PublicFiles)
-	fail(err)
+	// The root files app mode serves itself: robots.txt always, the favicon
+	// set only with ThemeColor. Without it a favicon file of the app's own
+	// is a PublicFiles entry like any other, and there is no sitemap.
 	served := []string{robotsFile}
+	servedText := "robots.txt"
 	if cfg.ThemeColor != "" {
 		served = append(served, faviconFiles...)
+		servedText = "robots.txt or a favicon file, which Config.ThemeColor serves"
 	}
+	publicFiles, err := checkPublicFiles(cfg.PublicFiles, served, servedText)
+	fail(err)
 	reserved, err := checkReservedPrefixes(appCfg.ReservedPrefixes, append(served, publicFiles...))
 	fail(err)
 	devAPI, err := checkDevAPIProxy(cfg.DevAPIProxy, cfg.Development)

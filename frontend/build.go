@@ -147,10 +147,17 @@ type site struct {
 	terms   bool
 }
 
-// checkPublicFiles checks the names of Config.PublicFiles. A refused name is
-// never quoted, the error gives its position.
-func checkPublicFiles(names []string) ([]string, error) {
-	fixed := []string{favicon.SVGFile, favicon.PNGFile, favicon.TouchFile, sitemapFile, robotsFile}
+// sitePublicFixed are the root files a prerendered site serves itself, which
+// no PublicFiles entry may name.
+var sitePublicFixed = []string{favicon.SVGFile, favicon.PNGFile, favicon.TouchFile, sitemapFile, robotsFile}
+
+// sitePublicServed names sitePublicFixed in the error of a refused entry.
+const sitePublicServed = "a favicon file, the sitemap or robots.txt"
+
+// checkPublicFiles checks the names of Config.PublicFiles against fixed, the
+// root files the server serves itself, which served names in the error. A
+// refused name is never quoted, the error gives its position.
+func checkPublicFiles(names, fixed []string, served string) ([]string, error) {
 	var problems []error
 	seen := map[string]int{}
 	for i, name := range names {
@@ -162,7 +169,7 @@ func checkPublicFiles(names []string) ([]string, error) {
 				"HTML (the value is not shown)", i+1))
 		case slices.Contains(fixed, name):
 			problems = append(problems, fmt.Errorf("frontend: Config.PublicFiles entry %d names a file that is "+
-				"served already, a favicon file, the sitemap or robots.txt (the value is not shown)", i+1))
+				"served already, %s (the value is not shown)", i+1, served))
 		case seen[name] > 0:
 			problems = append(problems, fmt.Errorf("frontend: Config.PublicFiles entry %d repeats entry %d "+
 				"(the value is not shown)", i+1, seen[name]))

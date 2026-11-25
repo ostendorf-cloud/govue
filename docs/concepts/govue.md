@@ -2836,6 +2836,13 @@ try {
     moves it under `/api/` to run it through the proxy.
   - The path rules hold, a failing path answers a plain 404 with `no-cache`, since app mode has
     no 404 page. There is no slash redirect: `/documents/42/` is a path of the app's router.
+  - Only `/assets/` is guarded with a 404. A root file that is not served, such as `/main.js` or
+    `/favicon.ico`, and a case variant such as `/Assets/x` answer `index.html` with 200, the
+    usual behaviour of a single page app. `nosniff` keeps a browser from running that HTML as a
+    script or a stylesheet.
+  - A `PublicFiles` entry may name a favicon file or `sitemap.xml` when govue does not serve it:
+    without `ThemeColor` an app serves its own favicon that way. With `ThemeColor` the three
+    favicon names and always `robots.txt` are refused, since govue serves them.
   - `robots.txt` disallows every path by default: the paths of an app are behind a login and are
     no pages to index. `AppConfig.Robots` replaces the body. There is no sitemap.
   - The favicon files and the theme boot script are optional, an app may have neither.

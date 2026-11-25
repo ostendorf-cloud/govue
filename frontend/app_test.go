@@ -167,6 +167,7 @@ func TestAppAnswersIndexForEveryRouteOfTheApp(t *testing.T) {
 	for _, target := range []string{
 		"/", "/documents/42", "/documents/42/", "/t/acme/login", "/t/acme/login?next=%2Fdocuments",
 		"/index.html", "/favicon.svg", "/robots", "/apidocs", "/API/v1/x", "/assetsx/y", "/de/über",
+		"/main.js", "/favicon.ico", "/Assets/index-BXa3k2_9.js",
 	} {
 		t.Run(target, func(t *testing.T) {
 			t.Parallel()
@@ -542,6 +543,96 @@ func TestAppServesPublicFiles(t *testing.T) {
 	}
 	if ct := res.Header.Get("Content-Type"); ct != "image/png" {
 		t.Errorf("Content-Type = %q", ct)
+	}
+}
+
+func TestAppWithoutThemeColorServesItsOwnFaviconAndSitemap(t *testing.T) {
+	t.Parallel()
+	build := withFavicons(appBuildOf())
+	build["favicon.ico"] = &fstest.MapFile{Data: []byte("ico")}
+	build["sitemap.xml"] = &fstest.MapFile{Data: []byte("<urlset/>")}
+	cfg := appConfig(build, io.Discard)
+	cfg.PublicFiles = []string{favicon.SVGFile, favicon.PNGFile, "favicon.ico", "sitemap.xml"}
+	s, err := frontend.New(cfg)
+	if err != nil {
+		t.Fatalf("New refused the app's own favicon and sitemap: %v", err)
+	}
+	for name, want := range map[string]string{
+		favicon.SVGFile: "image/svg+xml", favicon.PNGFile: "image/png",
+		"favicon.ico": "image/x-icon", "sitemap.xml": "application/xml; charset=utf-8",
+	} {
+		res := do(t, s.Handler(), http.MethodGet, "/"+name, nil)
+		if got := body(t, res); res.StatusCode != http.StatusOK || got != string(build[name].Data) {
+			t.Errorf("/%s: status %d, body %q, want the file", name, res.StatusCode, got)
+		}
+		if ct := res.Header.Get("Content-Type"); ct != want {
+			t.Errorf("/%s: Content-Type = %q, want %q", name, ct, want)
+		}
+	}
+	// No favicon links are written without ThemeColor.
+	if page := body(t, do(t, s.Handler(), http.MethodGet, "/", nil)); page != appIndex {
+		t.Errorf("index.html changed without ThemeColor: %s", page)
+	}
+}
+
+func TestAppPublicFilesServedAlready(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		themed bool
+		files  []string
+		value  string
+		want   string
+	}{
+		{
+			"favicon with ThemeColor", true,
+			[]string{favicon.SVGFile},
+			favicon.SVGFile,
+			"Config.PublicFiles entry 1 names a file that is served already, robots.txt or a favicon file, " +
+				"which Config.ThemeColor serves",
+		},
+		{
+			"touch icon with ThemeColor", true,
+			[]string{"a.txt", favicon.TouchFile},
+			favicon.TouchFile,
+			"Config.PublicFiles entry 2 names a file that is served already, robots.txt or a favicon file",
+		},
+		{"robots without ThemeColor", false, []string{"robots.txt"}, "", "Config.PublicFiles entry 1 names a file " +
+			"that is served already, robots.txt (the value is not shown)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := appConfig(withFavicons(appBuildOf()), io.Discard)
+			if tt.themed {
+				cfg.ThemeColor = themeColor
+			}
+			cfg.PublicFiles = tt.files
+			_, err := frontend.New(cfg)
+			if tt.value == "" {
+				if err == nil || !strings.Contains(err.Error(), tt.want) {
+					t.Errorf("error = %v, want %q", err, tt.want)
+				}
+				return
+			}
+			configtexttest.AssertHidden(t, err, tt.value, tt.want)
+		})
+	}
+}
+
+// TestPrerenderedSiteStillRefusesTheFilesItServes pins the PublicFiles
+// check of the prerendered site, which app mode does not change.
+func TestPrerenderedSiteStillRefusesTheFilesItServes(t *testing.T) {
+	t.Parallel()
+	const want = "names a file that is served already, a favicon file, the sitemap or robots.txt " +
+		"(the value is not shown)"
+	for _, name := range []string{favicon.SVGFile, favicon.PNGFile, favicon.TouchFile, "sitemap.xml", "robots.txt"} {
+		cfg := testConfig(buildOf(routes), io.Discard)
+		cfg.PublicFiles = []string{name}
+		_, err := frontend.New(cfg)
+		if err == nil || !strings.Contains(err.Error(), "Config.PublicFiles entry 1 "+want) {
+			t.Errorf("%s: error = %v, want the refusal", name, err)
+		}
 	}
 }
 

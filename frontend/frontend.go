@@ -199,7 +199,7 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		problems = append(problems, fmt.Errorf("frontend: Config.Language: %w", err))
 	}
-	publicFiles, err := checkPublicFiles(cfg.PublicFiles)
+	publicFiles, err := checkPublicFiles(cfg.PublicFiles, sitePublicFixed, sitePublicServed)
 	if err != nil {
 		problems = append(problems, err)
 	}
