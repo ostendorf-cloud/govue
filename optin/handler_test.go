@@ -1116,6 +1116,45 @@ func TestRequest_afterExpiryStartsANewPeriod(t *testing.T) {
 	}
 }
 
+// TestRequest_keepsTheGapAcrossTheEndOfAPeriod pins that a new counting
+// period keeps the time of the last mail: three mails late in one period
+// cannot be followed by more right after the reset, also when a purge ran in
+// between.
+func TestRequest_keepsTheGapAcrossTheEndOfAPeriod(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, nil)
+	e.request(t, visitor)
+	counter, err := e.store.Get(t.Context(), e.h.keys.mailboxKey(visitor))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := counter.Created
+	// at runs a request at start+d. The proof of work of a request moves
+	// the clock by 4 seconds first.
+	at := func(d time.Duration) {
+		t.Helper()
+		e.clock.advance(start.Add(d).Sub(e.clock.now()) - 4*time.Second)
+		e.request(t, visitor)
+	}
+	at(DefaultPendingTTL - 25*time.Minute)
+	at(DefaultPendingTTL - 5*time.Minute)
+	if n := len(e.sender.to(visitor)); n != 3 {
+		t.Fatalf("%d mails in the first period, want 3", n)
+	}
+	e.clock.advance(start.Add(DefaultPendingTTL + time.Second).Sub(e.clock.now()))
+	if _, err := e.h.Purge(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	at(DefaultPendingTTL + time.Minute) // a new period, 6 minutes after the last mail
+	if n := len(e.sender.to(visitor)); n != 3 {
+		t.Fatalf("a mail 6 minutes after the last one: %d mails, want 3", n)
+	}
+	at(DefaultPendingTTL + 5*time.Minute + 4*time.Second) // 10 minutes after the last mail
+	if n := len(e.sender.to(visitor)); n != 4 {
+		t.Fatalf("after the gap in the new period: %d mails, want 4", n)
+	}
+}
+
 func TestRunPurge_purgesUntilTheContextEnds(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, func(c *Config) { c.PurgeInterval = time.Millisecond })

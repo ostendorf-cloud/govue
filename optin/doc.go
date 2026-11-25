@@ -28,9 +28,11 @@
 //     unsubscribed address. Every request runs the same two store updates,
 //     and the mail is sent after the answer, so the SMTP time does not show.
 //     The store updates still differ by a branch, see the concept doc.
-//   - At most MaxSendsPerAddress confirmation mails per mailbox in a
-//     counting period of PendingTTL, and ResendInterval between two, counted
-//     in the store. The mailbox is the address in lower case with a "+tag"
+//   - At most 3 mails per counting period of 48 hours, and never closer than
+//     10 minutes, per mailbox (MaxSendsPerAddress, PendingTTL and
+//     ResendInterval by default), counted in the store. The period is a fixed
+//     window, and the time of the last mail carries over into the next
+//     period, so the 10 minutes also hold at the boundary. The mailbox is the address in lower case with a "+tag"
 //     at the end of the local part removed, so ada+1@ and Ada+2@ share one
 //     budget. Dots, as Gmail ignores them, and other provider specific
 //     aliases are not folded: such variants reach one inbox with a budget
@@ -52,8 +54,8 @@
 //     state, the start of the pending period, the confirmation time, the
 //     consent text version of the site, the page language hint, and while
 //     unconfirmed the hash of the newest confirmation token.
-//   - Stored per mailbox, while a confirmation mail was sent in the last
-//     PendingTTL: a send counter, keyed by a keyed hash (HMAC-SHA-256) of
+//   - Stored per mailbox, while its counting period runs (48 hours by
+//     default, plus at most 10 minutes after the last mail): a send counter, keyed by a keyed hash (HMAC-SHA-256) of
 //     the mailbox, with the number of confirmation mails, the time of the
 //     last one and the start of the counting period. It holds no address,
 //     but the site can recompute the hash from one, so it is pseudonymous
@@ -63,7 +65,8 @@
 //   - Retention: an unconfirmed entry is deleted when its pending period
 //     ends, 48 hours after the first request by default, at the next run of
 //     Purge (RunPurge runs it every hour by default). A send counter goes
-//     the same way when its counting period ends, also after an unsubscribe.
+//     the same way when its counting period has ended and its last mail is
+//     10 minutes old, also after an unsubscribe.
 //     A confirmed entry stays until the person unsubscribes or the site
 //     deletes it with [Handler.DeleteConfirmedBefore], at the retention the
 //     site sets, for example 12 months after its launch mail. An unsubscribe
@@ -127,8 +130,8 @@
 // indexes. It has not been run against a server.
 //
 // confirm_hash is NULL outside the pending state. DeleteUnconfirmedBefore is
-// one DELETE with "state IN (1, 3) AND created <= $1", DeleteConfirmedBefore
-// one with "state = 2 AND confirmed <= $1". EachConfirmed reads the keys
+// one DELETE with "created <= $1 AND (state = 1 OR (state = 3 AND last_sent
+// <= $2))", DeleteConfirmedBefore one with "state = 2 AND confirmed <= $1". EachConfirmed reads the keys
 // first and closes the query before it calls fn. A store error must not
 // carry an address or a token in its text, because the handler logs it.
 //

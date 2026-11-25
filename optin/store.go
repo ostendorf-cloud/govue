@@ -113,10 +113,13 @@ type Store interface {
 	// ConfirmHash is h, or ErrNotFound. The handler checks the hash again
 	// under Update, so a stale answer is safe.
 	FindByConfirmHash(ctx context.Context, h TokenHash) (Key, error)
-	// DeleteUnconfirmedBefore deletes every pending entry and every counter
-	// whose Created is at or before cutoff and returns how many it deleted.
-	// It never touches a confirmed entry.
-	DeleteUnconfirmedBefore(ctx context.Context, cutoff time.Time) (int, error)
+	// DeleteUnconfirmedBefore deletes every pending entry whose Created is at
+	// or before cutoff, and every counter whose Created is at or before
+	// cutoff and whose LastSent is at or before lastSentCutoff, and returns
+	// how many it deleted. It never touches a confirmed entry. The second
+	// time keeps a counter whose last mail is recent, so the gap between two
+	// mails also holds when a counting period ends.
+	DeleteUnconfirmedBefore(ctx context.Context, cutoff, lastSentCutoff time.Time) (int, error)
 	// DeleteConfirmedBefore deletes every confirmed entry whose Confirmed is
 	// at or before cutoff and returns how many it deleted. It never touches a
 	// pending entry or a counter.
@@ -212,9 +215,15 @@ func (m *MemoryStore) FindByConfirmHash(ctx context.Context, h TokenHash) (Key, 
 }
 
 // DeleteUnconfirmedBefore implements [Store].
-func (m *MemoryStore) DeleteUnconfirmedBefore(ctx context.Context, cutoff time.Time) (int, error) {
+func (m *MemoryStore) DeleteUnconfirmedBefore(ctx context.Context, cutoff, lastSentCutoff time.Time) (int, error) {
 	return m.deleteWhere(ctx, func(e Entry) bool {
-		return (e.State == StatePending || e.State == StateCounter) && !e.Created.After(cutoff)
+		switch e.State {
+		case StatePending:
+			return !e.Created.After(cutoff)
+		case StateCounter:
+			return !e.Created.After(cutoff) && !e.LastSent.After(lastSentCutoff)
+		}
+		return false
 	})
 }
 

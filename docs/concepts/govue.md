@@ -3336,7 +3336,8 @@ try {
   and the language. The token hash is cleared.
 - A send counter per mailbox, a record of its own: a keyed hash of the mailbox (see "Limits"),
   the number of confirmation mails in the counting period, the time of the last one and the
-  start of the period. No address. It goes with the purge when its period ends.
+  start of the period. No address. It goes with the purge when its period has ended and its last
+  mail is 10 minutes old.
 - Retention of confirmed entries: the site decides and calls `DeleteConfirmedBefore`. solobill
   keeps them 12 months after its launch mail.
 - No IP address, no user agent, no referrer, no name. Decision: none by default and no option in
@@ -3356,8 +3357,14 @@ try {
 - Consequence, stated plainly: the "this was not me" link in a confirmation mail no longer stops
   a mail bomb for good. A third party can restart the confirmation mails to that address after
   each unsubscribe. The bound is the per mailbox counter, which an unsubscribe does not reset:
-  at most 3 mails per 48 hours to one mailbox, plus the global ceiling. The counter is a keyed
-  hash with a count and two times, deleted when its 48 hour period ends.
+  at most 3 mails per counting period of 48 hours, and never closer than 10 minutes, plus the
+  global ceiling. That bound holds per mailbox only as far as the mailbox folding reaches: dot
+  variants and other aliases get a budget each, see the honest limit under "Limits". The
+  counter is a keyed hash with a count and two times, deleted once its period has ended and its
+  last mail is 10 minutes old.
+- Open owner confirmation: the decision said no hash is kept, and the counter is a keyed hash
+  that lives up to 48 hours after an unsubscribe. It is named in the privacy facts of the
+  package doc. The owner is asked to confirm it.
 - Dropped: a permanent suppression marker, the keyed hash of the address kept after the
   unsubscribe. It would stop a re-add by a third party or an import, but the owner decided
   against keeping any hash of an address that left. Also dropped: keeping the full entry with a
@@ -3409,17 +3416,20 @@ try {
 
 - Per client: 5 requests per 10 minutes on `Request`, 10 challenges per 20 seconds, keyed by
   `clientip`, in memory, as in `contact`.
-- Per mailbox, in the store, so it holds across replicas with a shared store: at most
-  `MaxSendsPerAddress` confirmation mails per counting period of `PendingTTL` (3 per 48 hours by
-  default) and at least `ResendInterval` between two (10 minutes by default). The entry stays
-  per full address, the counter is per mailbox.
+- Per mailbox, in the store, so it holds across replicas with a shared store: at most 3 mails
+  per counting period of 48 hours, and never closer than 10 minutes (`MaxSendsPerAddress`,
+  `PendingTTL` and `ResendInterval` by default). The period is a fixed window that starts with
+  the first mail. A new period keeps the time of the last mail, and the purge keeps a counter
+  until that mail is 10 minutes old, so three mails late in one period cannot be followed by
+  three more right after the reset. The entry stays per full address, the counter is per
+  mailbox.
 - The mailbox is the address in lower case with a `+tag` at the end of the local part removed,
   so `ada+1@x` and `Ada+news@x` share one budget. Decision taken without the owner, as the
   review asked: fold the plus tag, nothing else.
 - Honest limit: dots, which Gmail ignores, and every other provider specific alias are not
   folded. `a.da@gmail.com` and `ada@gmail.com` reach one inbox with a budget each, and there are
   many such variants. The real bound per inbox is therefore the global ceiling, 50 confirmation
-  mails per hour per process by default, not 3 per 48 hours. Folding dots for every domain
+  mails per hour per process by default, not 3 per counting period. Folding dots for every domain
   would merge distinct mailboxes at providers where dots matter.
 - Global: a ceiling of 50 confirmation mails per hour, per process, never refunded, as in
   `contact`.
@@ -3473,8 +3483,8 @@ try {
 - An unconfirmed entry is deleted once its pending period ends, `PendingTTL` after the first
   request, 48 hours by default. `Confirm` refuses an expired token even before the purge ran, and
   a request for an expired entry starts a new period. A send counter goes once its counting
-  period ends. `RunPurge` runs `Purge` every `PurgeInterval` (one hour by default). The site
-  starts it once.
+  period has ended and its last mail is 10 minutes old. `RunPurge` runs `Purge` every
+  `PurgeInterval` (one hour by default). The site starts it once.
 - Confirmed entries are not the purge's job. The site sets their retention and calls
   `DeleteConfirmedBefore`, which deletes confirmed entries confirmed at or before a time and
   nothing else.

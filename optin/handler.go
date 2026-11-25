@@ -604,8 +604,8 @@ func (h *Handler) serveRequest(w http.ResponseWriter, r *http.Request) error {
 }
 
 // reserveSend takes one confirmation mail from the counter of the mailbox of
-// address: at most maxSends per counting period of PendingTTL, at least
-// ResendInterval apart. It reserves whether or not the entry turns out to
+// address: at most maxSends per counting period of PendingTTL, and never
+// closer than ResendInterval, also across the end of a period. It reserves whether or not the entry turns out to
 // need a mail, so a request for a confirmed address costs the same as one
 // for a new address. The counter outlives an unsubscribe until its period
 // ends, so the bound holds across unsubscribes.
@@ -615,9 +615,15 @@ func (h *Handler) reserveSend(ctx context.Context, address string, now time.Time
 	err := h.store.Update(ctx, key, func(e *Entry) error {
 		allowed = false
 		if e.State != StateCounter || !now.Before(e.Created.Add(h.ttl)) {
-			*e = Entry{Key: key, State: StateCounter, Created: now}
+			// A new period keeps the time of the last mail, so the gap of
+			// ResendInterval also holds across the boundary of two periods.
+			last := e.LastSent
+			if e.State != StateCounter {
+				last = time.Time{}
+			}
+			*e = Entry{Key: key, State: StateCounter, Created: now, LastSent: last}
 		}
-		if e.Sends >= h.maxSends || (e.Sends > 0 && now.Sub(e.LastSent) < h.resend) {
+		if e.Sends >= h.maxSends || (!e.LastSent.IsZero() && now.Sub(e.LastSent) < h.resend) {
 			return nil
 		}
 		e.Sends++
@@ -809,10 +815,11 @@ func (h *Handler) remove(ctx context.Context, key Key) error {
 }
 
 // Purge deletes every unconfirmed entry whose pending period has ended and
-// every send counter whose counting period has ended, and returns how many
-// records it deleted.
+// every send counter whose counting period has ended and whose last mail is
+// at least ResendInterval old, and returns how many records it deleted.
 func (h *Handler) Purge(ctx context.Context) (int, error) {
-	n, err := h.store.DeleteUnconfirmedBefore(ctx, h.now().Add(-h.ttl))
+	now := h.now()
+	n, err := h.store.DeleteUnconfirmedBefore(ctx, now.Add(-h.ttl), now.Add(-h.resend))
 	if err != nil {
 		return n, fmt.Errorf("optin: purge: %w", err)
 	}

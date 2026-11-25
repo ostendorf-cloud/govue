@@ -96,16 +96,25 @@ func TestMemoryStore_DeleteUnconfirmedBefore(t *testing.T) {
 	mustUpdate(t, s, Key{3}, func(e *Entry) {
 		*e = Entry{State: StateConfirmed, Created: at.Add(-time.Hour), Confirmed: at.Add(-time.Hour)}
 	})
-	mustUpdate(t, s, Key{4}, func(e *Entry) { *e = Entry{State: StateCounter, Created: at, Sends: 1} })
-	mustUpdate(t, s, Key{5}, func(e *Entry) { *e = Entry{State: StateCounter, Created: at.Add(time.Second), Sends: 1} })
-	n, err := s.DeleteUnconfirmedBefore(t.Context(), at)
+	lastSentCutoff := at.Add(time.Hour)
+	mustUpdate(t, s, Key{4}, func(e *Entry) {
+		*e = Entry{State: StateCounter, Created: at, Sends: 1, LastSent: lastSentCutoff}
+	})
+	mustUpdate(t, s, Key{5}, func(e *Entry) {
+		*e = Entry{State: StateCounter, Created: at.Add(time.Second), Sends: 1, LastSent: at.Add(time.Second)}
+	})
+	// Period over, but the last mail is after the second cutoff: kept.
+	mustUpdate(t, s, Key{6}, func(e *Entry) {
+		*e = Entry{State: StateCounter, Created: at, Sends: 1, LastSent: lastSentCutoff.Add(time.Second)}
+	})
+	n, err := s.DeleteUnconfirmedBefore(t.Context(), at, lastSentCutoff)
 	if err != nil || n != 2 {
 		t.Fatalf("got %d %v", n, err)
 	}
 	if _, err := s.FindByConfirmHash(t.Context(), TokenHash{1}); !errors.Is(err, ErrNotFound) {
 		t.Fatal("the hash of a purged entry is still found")
 	}
-	for _, k := range []Key{{2}, {3}, {5}} {
+	for _, k := range []Key{{2}, {3}, {5}, {6}} {
 		if _, err := s.Get(t.Context(), k); err != nil {
 			t.Errorf("key %d: %v", k[0], err)
 		}
