@@ -762,8 +762,10 @@ func TestAppAccessLogCarriesThePatternNotThePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = body(t, do(t, s.Handler(), http.MethodGet, "/documents/4711-secret?token=abc", nil))
-	_ = body(t, do(t, s.Handler(), http.MethodGet, "/api/v1/customers/4712-secret", nil))
+	// The sentinels are no bare numbers: the scrape holds Go runtime values, and one of them can
+	// contain the digits of a bare number by chance.
+	_ = body(t, do(t, s.Handler(), http.MethodGet, "/documents/id-4711-secret?token=abc", nil))
+	_ = body(t, do(t, s.Handler(), http.MethodGet, "/api/v1/customers/id-4712-secret", nil))
 	var routes []any
 	for _, raw := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
 		var entry map[string]any
@@ -774,12 +776,12 @@ func TestAppAccessLogCarriesThePatternNotThePath(t *testing.T) {
 	if len(routes) != 2 || routes[0] != "GET /" || routes[1] != "/api/" {
 		t.Errorf("routes = %v, want the fallback pattern and /api/", routes)
 	}
-	if strings.Contains(logs.String(), "4711") || strings.Contains(logs.String(), "4712") ||
+	if strings.Contains(logs.String(), "id-4711-secret") || strings.Contains(logs.String(), "id-4712-secret") ||
 		strings.Contains(logs.String(), "token=abc") {
 		t.Errorf("the log holds the path or the query:\n%s", logs.String())
 	}
 	scrape := body(t, do(t, s.AdminHandler(), http.MethodGet, "/metrics", nil))
-	if !strings.Contains(scrape, `route="GET /"`) || strings.Contains(scrape, "4711") {
+	if !strings.Contains(scrape, `route="GET /"`) || strings.Contains(scrape, "id-4711-secret") {
 		t.Errorf("the metrics do not count the fallback by its pattern:\n%s", scrape)
 	}
 }
