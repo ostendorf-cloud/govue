@@ -3294,6 +3294,188 @@ try {
   one bucket, which fails closed: 5 submissions per 10 minutes for the whole site.
 - Out of scope: a session or CSRF token variant and content scoring of messages.
 
+### Waitlist with double opt-in
+
+- Problem. A marketing site needs a waitlist (solobill issue 5). `contact` is stateless and mails
+  only the owner, so it cannot hold a list. Without a govue package every site writes its own
+  opt-in, token and suppression code, and each copy is a new place to get consent, enumeration
+  or mail bombing wrong.
+- Goals. A site wires `optin` and writes no opt-in code: a request, a confirm and an unsubscribe
+  handler, a purge, and one call that mails every confirmed entry. An unconfirmed address
+  receives nothing but the confirmation mail. Every mail carries a working unsubscribe link and
+  the `List-Unsubscribe` headers. A known and an unknown address get the same answer.
+- Non goals. The Vue form (a separate issue), HTML mail, DKIM, a queue with retries, a shared
+  limiter across replicas, a newsletter editor, open or click tracking, and any text of the mails.
+
+#### Shape
+
+- `optin.New(Config)` returns a `Handler` with `Challenge`, `Request`, `Confirm` and `Unsubscribe`
+  as `http.Handler` values, like `contact`. It builds on `pow`, `mail`, `csrf` (origin half),
+  `ratelimit`, `middleware.RateLimit`, `api` and `clientip`. It imports no `session` and no
+  `database`: no cookie, no session, no CSRF token.
+- `Handler.Purge` deletes expired unconfirmed entries, `Handler.RunPurge` calls it on a ticker
+  until its context ends. `Handler.MailConfirmed` sends one site written mail to each confirmed
+  entry. `Handler.Wait` waits for confirmation mails still in flight, for a clean shutdown.
+- The site supplies every word: the subject and body of the confirmation mail and of a mailing
+  are functions of the site, the consent text and its version are the site's. The package writes
+  no marketing text and no legal text. It only adds the headers and refuses a body without the
+  links it needs.
+
+#### What is stored
+
+- One `Entry` per address, keyed by a keyed hash of the address in lower case:
+  HMAC-SHA-256 under a key derived from `Config.Secret`. The lower case key makes `A@x` and `a@x`
+  one entry. The address itself is stored as the visitor typed it, trimmed, because a mail goes
+  to it.
+- A pending entry holds the address, the state, the creation time of the pending period, the
+  consent text version (`Config.ConsentVersion`, the site's), the language hint of the page, the
+  hash of the current confirmation token, the number of confirmation mails sent in this period
+  and the time of the last one.
+- A confirmed entry keeps the address, the creation and confirmation times, the consent version
+  and the language. The token hash and the counters are cleared.
+- No IP address, no user agent, no referrer, no name. Decision: none by default and no option in
+  this version. Reading of the GDPR, not verified and not legal advice: Art. 7(1) asks the
+  controller to demonstrate consent, and Art. 5(1)(c) asks for data minimisation. The proof of a
+  double opt-in is that a token sent only to the mailbox came back, which the confirmation time
+  records. An IP address does not identify the mailbox owner and adds little to that proof, while
+  it is personal data with its own retention question. German practice sometimes recommends
+  logging it. Whether a site needs an option is an open question for the owner.
+- The consent box is a claim of the client, as in `contact`: the request needs `consent: true`,
+  and the stored record is the site's version string next to the times.
+
+#### Unsubscribe
+
+- Decision: unsubscribe deletes the entry and keeps a suppression marker, the keyed hash of the
+  address with the state `suppressed` and no other field. No address, no time, no version.
+- Reason: a deleted address could be added again by a request of a third party or by an import,
+  and then mailed. The marker makes a request for that address a silent no-op, and an import tool
+  of the site can check it through `Handler.Suppressed`. The "this was not me" link in a
+  confirmation mail is the same unsubscribe, so a victim of a mail bomb stops it for good.
+- Reading of the GDPR, not verified and not legal advice: the hash is still personal data,
+  pseudonymous under Recital 26, because the site can recompute it from an address. Keeping a
+  minimal suppression record is the common reading of honouring an objection to direct marketing
+  (Art. 21(3)). A site names it in its privacy text.
+- A suppressed address can be added again only by the site through `Handler.Unsuppress`, on the
+  person's direct request. The form cannot lift it.
+- Dropped: delete only (an import or a third party can re-add and mail the address), and keeping
+  the full entry with a flag (more data than the purpose needs).
+
+#### Tokens
+
+- Confirmation token: 32 random bytes from `crypto/rand`, base64url in the link. Only
+  SHA-256 over a domain separator and the token bytes is stored. It is single use: a successful
+  confirm clears the hash under the store's lock, so a second use finds nothing. It expires with
+  the pending period, `Config.PendingTTL`, 48 hours by default. A resend replaces the hash, so
+  only the newest link works, and it keeps the period's creation time, so a resend never extends
+  the life of an unconfirmed entry.
+- Lookup by hash: the store finds the entry by the hash, then the handler compares the stored hash
+  with `subtle.ConstantTimeCompare` under the lock. The lookup itself runs on a hash of a random
+  value the caller cannot choose a preimage for, so its timing leaks nothing usable.
+- Unsubscribe token: not stored. It is the entry key plus an HMAC-SHA-256 of it under a second
+  derived key, base64url, compared with `hmac.Equal`. Reason: a mailing sends the link to every
+  confirmed entry long after the request, and a random token stored only as a hash cannot be put
+  into a later mail. A stored plain token would be a credential in the database. It does not
+  expire, so an old mail can always unsubscribe, which RFC 8058 and an easy withdrawal ask for.
+  It is idempotent rather than single use: a second use finds the marker and answers the same.
+- The links put the token in the query, `?token=`. The site's confirm and unsubscribe pages read
+  it and POST it as JSON. The access log carries the route pattern only, and the site's
+  `Referrer-Policy` keeps it out of other hosts.
+- Confirm is a POST from the page, never a GET of the link: a mail scanner that follows links
+  must not confirm. A scanner that runs the page's script still can. That is a known limit of
+  every link based double opt-in.
+- One `Config.Secret` of at least 32 bytes derives the address key and the unsubscribe key with
+  HMAC and fixed labels. Rotating it changes every entry key. Rotation is an open question.
+
+#### No enumeration
+
+- `Request` answers 200 `{"ok":true}` for a new, a pending, a confirmed and a suppressed address,
+  and for a resend that the per address limit refused. Body and status are equal.
+- Timing: every valid request generates a token, takes a global ceiling token and runs one store
+  update, whatever the state. The mail is sent after the answer, in a goroutine, so the SMTP time
+  never shows in the answer. The remaining difference is the branch inside the store update and
+  the write of a new entry against a no-op, microseconds in memory and one row write in a
+  database. A test pins equal status and body, not equal time.
+- The global ceiling is taken before the state is known, so an exhausted ceiling refuses every
+  address with the same 503 and tells nothing about one address.
+- `Confirm` and `Unsubscribe` answer one code, `token_invalid`, for an unknown, an expired, a used
+  and a malformed token.
+
+#### Limits
+
+- Per client: 5 requests per 10 minutes on `Request`, 10 challenges per 20 seconds, keyed by
+  `clientip`, in memory, as in `contact`.
+- Per address, in the store, so it holds across replicas with a shared store: at most
+  `MaxSendsPerAddress` confirmation mails per pending period (3 by default) and at least
+  `ResendInterval` between two (10 minutes by default). A third party can therefore cause at
+  most 3 mails per 48 hours to one address, and one click on "this was not me" ends it.
+- Global: a ceiling of 50 confirmation mails per hour, per process, never refunded, as in
+  `contact`.
+- Confirm and unsubscribe have a per client limit as well, 10 per minute, so a token cannot be
+  guessed at speed. With 256 bits it cannot be guessed at all, the limit protects the store.
+
+#### Only the confirmation mail to an unconfirmed address
+
+- Enforced in code: every mail leaves through one unexported function that takes a `recipient`.
+  A `recipient` is built only from an `Entry` and a mail kind, and the constructor refuses a
+  confirmation to anything but a pending entry and a mailing to anything but a confirmed entry.
+  `MailConfirmed` checks each entry it gets from the store again, so a store that returns a
+  pending entry by mistake still sends nothing. A test drives a lying store.
+
+#### Unsubscribe in every mail
+
+- Every mail carries the unsubscribe link in its body and the headers `List-Unsubscribe` with
+  the one click URL and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058).
+  `mail.Message.Headers` already takes both: neither is reserved, and a URL with no `=?` stays
+  plain ASCII. `Config` refuses a URL that would be encoded.
+- The package refuses to send a body that does not contain the exact unsubscribe link, and a
+  confirmation body without the exact confirmation link. `New` runs the site's functions once
+  with sample data, so a missing link fails at startup.
+- The one click URL is the API route of `Unsubscribe`. It takes the RFC 8058 form body with the
+  token in the query. The page link and the JSON body serve a visitor.
+
+#### Store
+
+- Decision: a `Store` interface with five methods and `MemoryStore` in the package, no PostgreSQL
+  store in govue.
+- Reason: `database` keeps pgx confined to itself, and a store that runs SQL needs pgx types or
+  a second driver. The repository rule is also that the product keeps its schema and its
+  queries, the same reason `account` ships no tables. The package doc gives a reference schema
+  and the atomicity each method needs, so an adapter is a short file in the product.
+- `Update` loads one entry, runs the package's function on it and writes the result atomically:
+  in SQL a transaction with `SELECT ... FOR UPDATE`. All rules live in the package and run against
+  `MemoryStore` in the tests.
+- `MemoryStore` is correct for one process and loses everything at a restart. It suits tests and
+  a site that accepts that loss. It is bounded by `MaxEntries`.
+
+#### Purge
+
+- An unconfirmed entry is deleted once its pending period ends, `PendingTTL` after the first
+  request, 48 hours by default. `Confirm` refuses an expired token even before the purge ran, and
+  a request for an expired entry starts a new period. `RunPurge` runs `Purge` every
+  `PurgeInterval` (one hour by default). The site starts it once.
+
+#### Waitlist alternatives dropped
+
+- A GET confirm link: one click less, but every link scanner confirms the address.
+- Stateless signed confirmation tokens with no store: the token could not be single use and no
+  resend could revoke an older link.
+- A random unsubscribe token stored in plain text: a database leak becomes the power to
+  unsubscribe everyone, and it is a secret at rest.
+- Sending the confirmation mail inside the request: simpler, but the SMTP time tells a new
+  address from a known one.
+- An in memory per address limiter: lost at a restart and per replica, while the store already
+  holds the entry the limit belongs to.
+
+#### Open questions of the waitlist
+
+- Whether a site needs an option to store the IP address with the confirmation. The owner
+  decides, with a legal reading.
+- Rotation of `Config.Secret` without losing the entry keys and the suppression markers. Next
+  step: a second key list when the first site needs a rotation.
+- A conformance suite `optin/optintest` for a product's SQL adapter, like `accounttest`. Next
+  step: with the first adapter.
+- Wiring `optin` into `example/`. Next step: with the Vue form issue.
+
 ### Component behaviour
 
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a
