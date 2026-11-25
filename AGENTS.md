@@ -34,7 +34,11 @@ repeated here.
   button is not offered, the form renders nothing, so a device token never reaches the contact
   routes. `ApiError.retryAfter` carries a valid `Retry-After` in whole seconds (at most one day,
   digits only), and the contact form names the wait in its 429, `mail_limit` and `pow_busy`
-  texts. `createClient({ auth: { mode: 'bearer' } })` is
+  texts. `GovueWaitlistForm` is the form of the `optin` request route on the same solver: the
+  consent box is always required and its text always the site's, the consent version stays on
+  the server and is never sent, and the submit button stays disabled until mount, with a
+  `noscript` text. "Waitlist form" in the concept doc is the spec.
+  `createClient({ auth: { mode: 'bearer' } })` is
   the client of a native app with a device token: `TokenStorage` (async `get`, `set`, `clear`,
   one opaque string) with the in memory default and no persistent adapter, rotation in
   `web/src/api/bearer.ts`, `signIn` and `signOut`.
@@ -77,7 +81,8 @@ repeated here.
   every language link from there, and the nav at the end with a call to action. It is
   prerendered and checked by its own tests, the consumer build test of
   the worker bundle and the fake of the contact handlers that the component tests use, which
-  knows `consent` and `requireConsent`. It is not shipped. The Go example requires the consent
+  knows `consent` and `requireConsent`, with the fake of the optin request route built on it.
+  It is not shipped. The Go example requires the consent
   box like its contact page shows it, and its mail body adds a placeholder consent line with
   the receive time.
 - `web/` also holds a theme generator (`web/src/theme/`, run through

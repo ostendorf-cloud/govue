@@ -3608,6 +3608,44 @@ try {
   step: with the first adapter.
 - Wiring `optin` into `example/`. Next step: with the Vue form issue.
 
+### Waitlist form
+
+- `GovueWaitlistForm` is the Vue half of the `optin` package's `Request` route (PR #270). It
+  is built like `GovueContactForm`: a `client` from `createClient`, the proof of work through
+  `createChallengeSolver`, a honeypot `website`, codes mapped to catalogue texts, no cookie,
+  no CSRF token and no third party. A bearer client is refused and the form renders nothing.
+- Props: `client`, `consentLabel` (or the `consent` slot), `privacyHref`, `challengePath`
+  (default `/waitlist/challenge`), `requestPath` (default `/waitlist`), `minAgeMs`,
+  `headingLevel` and `disabled`. Slots: `title` and `consent`. Event: `requested`, after the
+  server's 200 and never for a failure. optin answers the same 200 for every address, so the
+  event says nothing about whether a mail went out.
+- The consent box is always shown and always required, because optin refuses a request
+  without `consent: true`. govue ships no consent text: without `consentLabel` or the slot the
+  form renders an alert instead of the fields and warns in development.
+- The consent version is not sent. optin stores `Config.ConsentVersion` of the server with
+  every entry, and its decoder refuses an unknown key with 400 `invalid_argument`. A site
+  changes the text of the form and `Config.ConsentVersion` in the same release. The body is
+  exactly `email`, `consent`, `language` (the page locale, when the language layer is
+  installed), `website` and `pow`.
+- States: idle, solving (the status says the spam check runs in the browser), sending, and
+  done (the status asks the visitor to check the inbox and says that an address already on the
+  list gets no new mail). Every code of `Request` has its own text: `cross_origin`,
+  `not_configured`, the six `pow_` codes, `mail_limit`, `too_many_requests`,
+  `request_too_large`, `unsupported_media_type`, `method_not_allowed`, `invalid_argument` and
+  `internal`, plus the client's `network` and `timeout`. `mail_limit`, `too_many_requests` and
+  `pow_busy` name the wait of a `Retry-After`. The field codes of optin land on the address
+  field, and `consent: required` on the box.
+- Without JavaScript a `noscript` text says the form needs it for the spam check. The server
+  render keeps the submit button disabled until the component is mounted, so a page without
+  JavaScript never submits natively and never puts the address into a query string. A browser
+  without a module `Worker` or without `crypto.subtle`, which an insecure context lacks, sees a
+  text that it cannot run the spam check, and the disabled button is described by that text.
+- Accessibility: the address field and the box have labels and `aria-describedby` errors.
+  After a refused check the focus moves to the first invalid field, after a refusal of the
+  server to the alert, after success to the status. The form works with the keyboard alone.
+- The confirm and unsubscribe pages of a site read `?token=` and post `{"token": "..."}` to
+  `Confirm` and `Unsubscribe`. This component does not cover them.
+
 ### Component behaviour
 
 - Where behaviour is genuinely hard, a modal's focus trap, a dropdown, a combobox, adopting a
