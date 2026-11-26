@@ -219,6 +219,69 @@ const deFormal: MessageTree = {
         generic: 'Etwas ist schiefgegangen. Bitte versuchen Sie es erneut.',
       },
     },
+    waitlist: {
+      title: 'Warteliste',
+      field: {
+        email: 'E-Mail-Adresse',
+        honeypot: 'Dieses Feld bitte leer lassen',
+      },
+      privacy: 'Datenschutzerklärung',
+      privacyIntro: 'So gehen wir mit Ihren Angaben um:',
+      submit: 'Auf die Warteliste',
+      solving: 'Die Spam-Prüfung läuft in Ihrem Browser. Das dauert ein paar Sekunden.',
+      sending: 'Ihre Anfrage wird gesendet',
+      success:
+        'Fast geschafft. Bitte sehen Sie in Ihr Postfach und bestätigen Sie Ihre Adresse über den Link in der Mail. Eine Adresse, die schon auf der Liste steht, bekommt keine neue Mail.',
+      another: 'Andere Adresse eintragen',
+      failure: 'Die Anfrage ist fehlgeschlagen.',
+      unavailable: 'Das Formular der Warteliste ist nicht verfügbar.',
+      noscript:
+        'Dieses Formular braucht JavaScript, weil es eine Spam-Prüfung in Ihrem Browser ausführt. Bitte schalten Sie JavaScript ein, um sich auf die Warteliste zu setzen.',
+      unsupported:
+        'Dieser Browser kann die Spam-Prüfung dieses Formulars nicht ausführen. Bitte nutzen Sie einen aktuellen Browser, um sich auf die Warteliste zu setzen.',
+      error: {
+        required: 'Bitte geben Sie Ihre E-Mail-Adresse ein.',
+        tooLong: 'Das ist zu lang. Erlaubt sind höchstens {max} Zeichen.',
+        invalidChars: 'Das enthält Zeichen, die nicht erlaubt sind.',
+        nonAsciiEmail:
+          'Bitte nutzen Sie eine E-Mail-Adresse ohne Umlaute und andere Sonderzeichen, etwa ä, ö, ü, ß oder é.',
+        invalid: 'Das ist keine gültige E-Mail-Adresse.',
+        consentRequired: 'Bitte stimmen Sie zu, bevor Sie sich eintragen.',
+        invalidRequest:
+          'Das Formular konnte nicht angenommen werden. Bitte prüfen Sie Ihre Eingaben und versuchen Sie es erneut.',
+        notConfigured:
+          'Die Warteliste ist noch nicht eingerichtet. Bitte versuchen Sie es später erneut.',
+        powRequired:
+          'Die Spam-Prüfung fehlt. Es wurde nichts gesendet. Bitte senden Sie das Formular erneut.',
+        powInvalid:
+          'Die Spam-Prüfung ist fehlgeschlagen. Es wurde nichts gesendet. Bitte senden Sie das Formular erneut.',
+        powExpired:
+          'Die Spam-Prüfung ist abgelaufen. Es wurde nichts gesendet. Bitte senden Sie das Formular erneut.',
+        powTooFast:
+          'Das Formular wurde zu schnell gesendet. Bitte warten Sie einen Moment und senden Sie es erneut.',
+        powReplay:
+          'Die Spam-Prüfung wurde schon verwendet. Es wurde nichts gesendet. Bitte senden Sie das Formular erneut.',
+        powBusy:
+          'Der Server ist gerade ausgelastet. Es wurde nichts gesendet. Bitte versuchen Sie es gleich erneut.',
+        powBusyWait:
+          'Der Server ist gerade ausgelastet. Es wurde nichts gesendet. Bitte versuchen Sie es {wait} erneut.',
+        mailLimit:
+          'Die Warteliste hat ihr Limit an Mails vorerst erreicht. Es wurde nichts gesendet. Bitte versuchen Sie es später erneut.',
+        mailLimitWait:
+          'Die Warteliste hat ihr Limit an Mails vorerst erreicht. Es wurde nichts gesendet. Bitte versuchen Sie es {wait} erneut.',
+        rateLimited:
+          'Zu viele Anfragen. Bitte warten Sie ein paar Minuten und versuchen Sie es erneut.',
+        rateLimitedWait: 'Zu viele Anfragen. Bitte versuchen Sie es {wait} erneut.',
+        tooLarge: 'Die Anfrage ist zu groß zum Senden.',
+        refused:
+          'Die Anfrage wurde abgelehnt. Bitte laden Sie die Seite neu und versuchen Sie es erneut.',
+        solver:
+          'Die Spam-Prüfung konnte in diesem Browser nicht laufen. Es wurde nichts gesendet. Bitte laden Sie die Seite neu oder nutzen Sie einen anderen Browser.',
+        network:
+          'Keine Verbindung zum Server. Bitte prüfen Sie Ihr Netzwerk und versuchen Sie es erneut.',
+        generic: 'Etwas ist schiefgegangen. Bitte versuchen Sie es erneut.',
+      },
+    },
   },
 }
 

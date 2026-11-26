@@ -105,7 +105,7 @@ export class FakeContactServer {
   private readonly ttl: number
   private readonly minAge: number
   private readonly clientLimit: number
-  private readonly requireConsent: boolean
+  protected readonly requireConsent: boolean
 
   constructor(options: FakeContactOptions = {}) {
     this.requireConsent = options.requireConsent ?? false
@@ -192,7 +192,7 @@ export class FakeContactServer {
     } catch {
       return notValid()
     }
-    if (!isObject(sub) || Object.keys(sub).some((key) => !BODY_KEYS.includes(key))) {
+    if (!isObject(sub) || Object.keys(sub).some((key) => !this.bodyKeys.includes(key))) {
       return notValid()
     }
     for (const key of ['name', 'email', 'message', 'language', 'website']) {
@@ -231,7 +231,11 @@ export class FakeContactServer {
     return this.verify(pow)
   }
 
-  private validate(sub: Record<string, unknown>): Record<string, string> | undefined {
+  /** The keys the decoder knows. Any other key is refused as unknown. */
+  protected readonly bodyKeys: readonly string[] = BODY_KEYS
+
+  /** The field check of the handler, `{field: code}` or undefined. */
+  protected validate(sub: Record<string, unknown>): Record<string, string> | undefined {
     const out: Record<string, string> = {}
     for (const field of ['name', 'email', 'message'] as const) {
       const value = typeof sub[field] === 'string' ? sub[field].trim() : ''

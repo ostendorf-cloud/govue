@@ -152,3 +152,9 @@ export { default as GovueThemeSwitch } from './components/GovueThemeSwitch.vue'
 export { THEME_STORAGE_KEY, THEME_ATTRIBUTE, MODE_ATTRIBUTE } from './composables/themeStorage'
 export { default as GovueToastHost } from './components/GovueToastHost.vue'
 export { default as GovueTotpEnrolment } from './components/GovueTotpEnrolment.vue'
+export { default as GovueWaitlistForm } from './components/GovueWaitlistForm.vue'
+export {
+  WAITLIST_FIELD_CODES,
+  WAITLIST_LIMITS,
+  WAITLIST_REFUSAL_CODES,
+} from './components/waitlistForm'
