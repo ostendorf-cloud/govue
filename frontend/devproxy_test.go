@@ -388,6 +388,106 @@ func TestDevAPIProxyBoundsTheBody(t *testing.T) {
 	}
 }
 
+// countingReader yields n bytes of x and counts what the proxy took.
+type countingReader struct {
+	left int64
+	read int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	if c.left == 0 {
+		return 0, io.EOF
+	}
+	n := min(int64(len(p)), c.left)
+	for i := range p[:n] {
+		p[i] = 'x'
+	}
+	c.left -= n
+	c.read += n
+	return int(n), nil
+}
+
+func TestDevAPIProxyRaisedBodyLimit(t *testing.T) {
+	const raised = 4 << 20
+	tests := []struct {
+		name   string
+		limit  int64
+		size   int64
+		status int
+	}{
+		{"above the default limit", 0, frontend.DevAPIProxyMaxBody + 1, http.StatusRequestEntityTooLarge},
+		{"at the default limit", 0, frontend.DevAPIProxyMaxBody, http.StatusOK},
+		{"below a raised limit", raised, 3 << 20, http.StatusOK},
+		{"at a raised limit", raised, raised, http.StatusOK},
+		{"above a raised limit", raised, raised + 1, http.StatusRequestEntityTooLarge},
+		{"above the default under a lowered limit", 1024, 1025, http.StatusRequestEntityTooLarge},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			up := &upstream{}
+			s := proxyServer(t, up, func(c *frontend.Config) { c.DevAPIMaxBody = tc.limit })
+			res := send(t, s.Handler(), http.MethodPost, "/api/v1/notes",
+				bytes.NewReader(bytes.Repeat([]byte("x"), int(tc.size))), nil, "203.0.113.7:4000")
+			_ = body(t, res)
+			if res.StatusCode != tc.status {
+				t.Errorf("status %d, want %d", res.StatusCode, tc.status)
+			}
+			if tc.status == http.StatusOK {
+				if _, got := up.request(); int64(len(got)) != tc.size {
+					t.Errorf("upstream got %d bytes, want %d", len(got), tc.size)
+				}
+			}
+		})
+	}
+}
+
+// TestDevAPIProxyStopsReadingAtTheLimit proves the proxy streams: a body far
+// above the limit is cut off, never read to its end.
+func TestDevAPIProxyStopsReadingAtTheLimit(t *testing.T) {
+	t.Parallel()
+	const limit = 64 << 10
+	s := proxyServer(t, &upstream{}, func(c *frontend.Config) { c.DevAPIMaxBody = limit })
+	src := &countingReader{left: 64 << 20}
+	res := send(t, s.Handler(), http.MethodPost, "/api/v1/notes", src, nil, "203.0.113.7:4000")
+	_ = body(t, res)
+	if res.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status %d, want 413", res.StatusCode)
+	}
+	if src.read > limit+(64<<10) {
+		t.Errorf("proxy read %d bytes of a body over the %d limit", src.read, limit)
+	}
+}
+
+func TestDevAPIMaxBodyValidation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		limit   int64
+		wantErr bool
+	}{
+		{"zero is the default", 0, false},
+		{"one byte", 1, false},
+		{"the upper bound", frontend.DevAPIProxyMaxBodyLimit, false},
+		{"negative", -1, true},
+		{"above the upper bound", frontend.DevAPIProxyMaxBodyLimit + 1, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := testConfig(buildOf(routes), io.Discard)
+			cfg.DevAPIMaxBody = tc.limit
+			_, err := frontend.New(cfg)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("New: err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), "Config.DevAPIMaxBody") {
+				t.Errorf("the error does not name the field: %v", err)
+			}
+		})
+	}
+}
+
 func TestDevAPIProxyIsLoggedByPatternAndNeverCounted(t *testing.T) {
 	up := &upstream{handler: func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

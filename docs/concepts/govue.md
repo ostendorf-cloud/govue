@@ -2745,9 +2745,15 @@ try {
     `X-Forwarded-For` is set from `Config.ClientIP` alone, so a client cannot claim an address.
     The browser's cookies and `Authorization` go along: they are the API's own, the frontend sets
     none.
-  - A request body over one MiB (`DevAPIProxyMaxBody`) answers 413. The dial has five seconds
-    and the response header thirty, and the environment's proxy settings are ignored. A failure
-    answers one opaque 502 and logs the error type only.
+  - A request body over `Config.DevAPIMaxBody` bytes answers 413. Zero, the default, is one MiB
+    (`DevAPIProxyMaxBody`). A negative value and one over 256 MiB (`DevAPIProxyMaxBodyLimit`) are
+    refused at startup. The cap stays because the proxy has no auth of its own and a
+    development machine should not take an unbounded upload by a typo or a runaway client. The
+    upper bound lets an app raise it for photos or short videos, and keeps a mistyped value from
+    meaning no cap. The body streams through `http.MaxBytesReader`, so the proxy never holds more
+    than one read buffer of it, and a body over the cap is cut off, not read to its end. The
+    dial has five seconds and the response header thirty, and the environment's proxy settings
+    are ignored. A failure answers one opaque 502 and logs the error type only.
   - The answer passes the frontend's chain: the frontend's security headers replace the API's
     copies, so none is sent twice, the access log names the pattern `/api/`, and no answer under
     `/api/` reaches the page view counter.

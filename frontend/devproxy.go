@@ -23,9 +23,12 @@ import (
 
 // The bounds of the development API proxy.
 const (
-	// DevAPIProxyMaxBody is the largest request body the development proxy
-	// forwards. A larger one answers 413.
+	// DevAPIProxyMaxBody is the default of Config.DevAPIMaxBody: the largest
+	// request body the development proxy forwards. A larger one answers 413.
 	DevAPIProxyMaxBody = 1 << 20
+	// DevAPIProxyMaxBodyLimit is the largest value Config.DevAPIMaxBody
+	// accepts. It keeps a typo from turning the cap into no cap.
+	DevAPIProxyMaxBodyLimit = 256 << 20
 	// devAPIDialTimeout bounds the connection to the API.
 	devAPIDialTimeout = 5 * time.Second
 	// devAPIHeaderTimeout bounds the wait for the API's response header.
@@ -86,6 +89,19 @@ func checkDevAPIProxy(raw string, development bool) (*url.URL, error) {
 	return u, nil
 }
 
+// checkDevAPIMaxBody validates Config.DevAPIMaxBody and returns the limit in
+// bytes. Zero is the default, DevAPIProxyMaxBody.
+func checkDevAPIMaxBody(n int64) (int64, error) {
+	switch {
+	case n == 0:
+		return DevAPIProxyMaxBody, nil
+	case n < 0 || n > DevAPIProxyMaxBodyLimit:
+		return 0, fmt.Errorf("frontend: Config.DevAPIMaxBody must be between 1 and %d bytes, or 0 for the default",
+			DevAPIProxyMaxBodyLimit)
+	}
+	return n, nil
+}
+
 // devHostOK reports whether host is loopback, localhost or one label.
 func devHostOK(host string) bool {
 	if host == "" {
@@ -139,7 +155,7 @@ func devPrefixOK(p string) bool {
 // alone, bounds the body and the timeouts, drops the API's copies of the
 // frontend's security headers and answers a failure with one opaque 502.
 func newDevAPIProxy(target *url.URL, transport http.RoundTripper, resolver *clientip.Resolver,
-	logger *slog.Logger,
+	logger *slog.Logger, maxBody int64,
 ) http.Handler {
 	if transport == nil {
 		dialer := &net.Dialer{Timeout: devAPIDialTimeout}
@@ -197,7 +213,7 @@ func newDevAPIProxy(target *url.URL, transport http.RoundTripper, resolver *clie
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, DevAPIProxyMaxBody)
+			r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		}
 		proxy.ServeHTTP(w, r)
 	})

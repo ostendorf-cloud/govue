@@ -376,6 +376,41 @@ func TestAppForwardsTheAPIPrefixInDevelopment(t *testing.T) {
 	}
 }
 
+func TestAppAppliesTheDevAPIBodyLimit(t *testing.T) {
+	t.Parallel()
+	const limit = 1024
+	tune := func(max int64) func(*frontend.Config) {
+		return func(c *frontend.Config) {
+			c.Development = true
+			c.DevAPIProxy = "http://api:8081"
+			c.DevAPITransport = &upstream{}
+			c.DevAPIMaxBody = max
+		}
+	}
+	h := newApp(t, tune(limit)).Handler()
+	for _, tc := range []struct {
+		name   string
+		size   int
+		status int
+	}{
+		{"at the limit", limit, http.StatusOK},
+		{"above the limit", limit + 1, http.StatusRequestEntityTooLarge},
+	} {
+		res := send(t, h, http.MethodPost, "/api/v1/documents",
+			bytes.NewReader(bytes.Repeat([]byte("x"), tc.size)), nil, "203.0.113.7:4000")
+		_ = body(t, res)
+		if res.StatusCode != tc.status {
+			t.Errorf("%s: status %d, want %d", tc.name, res.StatusCode, tc.status)
+		}
+	}
+	cfg := appConfig(appBuildOf(), io.Discard)
+	tune(-1)(&cfg)
+	_, err := frontend.New(cfg)
+	if err == nil || !strings.Contains(err.Error(), "Config.DevAPIMaxBody") {
+		t.Errorf("a negative limit in app mode gave %v, want a Config.DevAPIMaxBody error", err)
+	}
+}
+
 func TestAppAnswersOtherMethodsWith405(t *testing.T) {
 	t.Parallel()
 	h := newApp(t, nil).Handler()

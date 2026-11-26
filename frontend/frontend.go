@@ -152,6 +152,12 @@ type Config struct {
 	// five second dial and a thirty second header timeout that ignores the
 	// proxy environment. A test passes one that answers in memory.
 	DevAPITransport http.RoundTripper
+	// DevAPIMaxBody is the largest request body in bytes that DevAPIProxy
+	// forwards, so an app can upload a file larger than the default through
+	// the proxy. A larger body answers 413. Zero is DevAPIProxyMaxBody, one
+	// MiB. A negative value and one above DevAPIProxyMaxBodyLimit, 256 MiB,
+	// are refused. The body is streamed, never buffered.
+	DevAPIMaxBody int64
 	// RateLimit, when set, is applied to every route. Nil applies none.
 	RateLimit *middleware.RateLimit
 	// Logger receives the access log and the server's own lines.
@@ -207,6 +213,10 @@ func New(cfg Config) (*Server, error) {
 		problems = append(problems, err)
 	}
 	devAPI, err := checkDevAPIProxy(cfg.DevAPIProxy, cfg.Development)
+	if err != nil {
+		problems = append(problems, err)
+	}
+	devAPIMaxBody, err := checkDevAPIMaxBody(cfg.DevAPIMaxBody)
 	if err != nil {
 		problems = append(problems, err)
 	}
@@ -288,7 +298,7 @@ func New(cfg Config) (*Server, error) {
 	// still seen.
 	site := views.Middleware(mux)
 	if devAPI != nil {
-		site = withDevAPIProxy(site, newDevAPIProxy(devAPI, cfg.DevAPITransport, resolver, cfg.Logger), route)
+		site = withDevAPIProxy(site, newDevAPIProxy(devAPI, cfg.DevAPITransport, resolver, cfg.Logger, devAPIMaxBody), route)
 	}
 	notFound := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { s.writeNotFound(w, s.fallback) })
 	srv.handler = publicChain(site, notFound, cfg.Logger, security, httpMetrics, accessLog)

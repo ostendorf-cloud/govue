@@ -132,6 +132,8 @@ func newApp(cfg Config) (*Server, error) {
 	fail(err)
 	devAPI, err := checkDevAPIProxy(cfg.DevAPIProxy, cfg.Development)
 	fail(err)
+	devAPIMaxBody, err := checkDevAPIMaxBody(cfg.DevAPIMaxBody)
+	fail(err)
 	security, err := bootSecurity(cfg.Security, cfg.ThemeBoot, appCfg.ThemeBoot)
 	fail(err)
 
@@ -198,7 +200,7 @@ func newApp(cfg Config) (*Server, error) {
 	})
 	var handler http.Handler = site
 	if devAPI != nil {
-		handler = withDevAPIProxy(site, newDevAPIProxy(devAPI, cfg.DevAPITransport, resolver, cfg.Logger), route)
+		handler = withDevAPIProxy(site, newDevAPIProxy(devAPI, cfg.DevAPITransport, resolver, cfg.Logger, devAPIMaxBody), route)
 	}
 
 	registry := metrics.NewRegistry()
