@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.12.0](https://github.com/ostendorf-cloud/govue/compare/v0.11.0...v0.12.0) (2026-11-26)
+
+### Features
+
+- **frontend:** make the dev API proxy body limit configurable ([#277](https://github.com/ostendorf-cloud/govue/pull/277))
+- **web:** add a waitlist form component ([#273](https://github.com/ostendorf-cloud/govue/pull/273))
+
 ## [v0.11.0](https://github.com/ostendorf-cloud/govue/compare/v0.10.1...v0.11.0) (2026-11-25)
 
 ### Features
