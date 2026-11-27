@@ -29,6 +29,9 @@ rule='.packageRules[] | select((.matchPackageNames // []) | join(",") == "typesc
 # Exactly one rule matches typescript alone.
 assert eq "[$rule] | length" 1
 assert eq "$rule | .allowedVersions" '<7'
+# The hold applies to every update type and stays switched on.
+assert eq "$rule | .enabled != false" true
+assert eq "$rule | has(\"matchUpdateTypes\")" false
 # The description names the removal condition.
 assert has "$rule | .description" 'Remove this rule when'
 assert has "$rule | .description" 'typescript-eslint'
