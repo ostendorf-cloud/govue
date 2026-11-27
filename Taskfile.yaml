@@ -111,9 +111,10 @@ tasks:
       - go test -race -count=1 ./...
 
   test:scripts:
-    desc: Shell test of the token boundary in checks.yaml
+    desc: Shell tests of the token boundary in checks.yaml and the TypeScript hold in renovate.json
     cmds:
       - bash .github/scripts/checks-workflow.test.sh
+      - bash .github/scripts/renovate-config.test.sh
 
   # The web/ half. Every target below runs inside web/ and depends on web:deps,
   # so one of them on its own is enough in a fresh checkout and in CI.

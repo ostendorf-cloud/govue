@@ -13,7 +13,8 @@ golangci-lint = "2.15.0"
 actionlint = "1"
 # Lints the shell scripts under .github/scripts. actionlint also uses it for run: blocks.
 shellcheck = "0.11.0"
-# The shell test under .github/scripts reads checks.yaml with yq.
+# The shell tests under .github/scripts use yq: one reads checks.yaml, and
+# .github/scripts/renovate-config.test.sh reads renovate.json.
 yq = "4.54.3"
 markdownlint-cli2 = "0.24.2"
 yamllint = "1"
