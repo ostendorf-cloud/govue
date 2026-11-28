@@ -147,11 +147,11 @@ assert eq "$mint | keys | sort | join(\",\")" id,uses,with
 assert eq "$mint.id" app-token
 assert pinned "$mint.uses" 'actions/create-github-app-token'
 
-# Its inputs are the app id, the private key and one permission. No owner and no
+# Its inputs are the client id, the private key and one permission. No owner and no
 # repositories, so the token is scoped to this repository only. No other permission, no
 # permission-contents or any other permission-* key, and no other input of the action.
-assert eq "$mint.with | keys | sort | join(\",\")" app-id,permission-pull-requests,private-key
-assert eq "$mint.with.\"app-id\"" "\${{ vars.GH_APP_DEPENDENCIES_APP_ID }}"
+assert eq "$mint.with | keys | sort | join(\",\")" client-id,permission-pull-requests,private-key
+assert eq "$mint.with.\"client-id\"" "\${{ vars.GH_APP_DEPENDENCIES_CLIENT_ID }}"
 assert eq "$mint.with.\"private-key\"" "$secret"
 assert eq "$mint.with.\"permission-pull-requests\"" write
 assert eq "$mint.with.owner" null

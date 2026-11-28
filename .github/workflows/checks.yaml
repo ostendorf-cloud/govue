@@ -304,7 +304,7 @@ jobs:
       - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc  # v3.4.0
         id: app-token
         with:
-          app-id: ${{ vars.GH_APP_DEPENDENCIES_APP_ID }}
+          client-id: ${{ vars.GH_APP_DEPENDENCIES_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_DEPENDENCIES_PRIVATE_KEY }}
           permission-pull-requests: write
       - uses: ostendorf-cloud/workflows/.github/actions/pnpm-release-age-comment@v0
