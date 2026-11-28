@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.12.1](https://github.com/ostendorf-cloud/govue/compare/v0.12.0...v0.12.1) (2026-11-28)
+
+### Bug Fixes
+
+- **ci:** use the client id for the dependencies app token ([#288](https://github.com/ostendorf-cloud/govue/pull/288))
+- **ci:** use the client id for the release app token ([#286](https://github.com/ostendorf-cloud/govue/pull/286))
+
 ## [v0.12.0](https://github.com/ostendorf-cloud/govue/compare/v0.11.0...v0.12.0) (2026-11-26)
 
 ### Features
